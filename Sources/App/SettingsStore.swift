@@ -1,0 +1,152 @@
+import AppKit
+import SwiftUI
+
+/// All of Toolbelt's settings, kept in one file:
+/// ~/Library/Application Support/Toolbelt/settings.plist
+@MainActor
+final class SettingsStore: ObservableObject {
+    static let shared = SettingsStore()
+
+    /// ~/Library/Application Support/Toolbelt/
+    static var folder: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return support.appendingPathComponent("Toolbelt", isDirectory: true)
+    }
+
+    private let file: URL
+    private var values: [String: Any] = [:]
+
+    private init() {
+        try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+        file = Self.folder.appendingPathComponent("settings.plist")
+
+        if let data = try? Data(contentsOf: file),
+           let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            values = dict
+        } else {
+            migrateFromV01()
+        }
+    }
+
+    func raw(_ key: String) -> Any? {
+        values[key]
+    }
+
+    func value<T>(_ key: String, default defaultValue: T) -> T {
+        values[key] as? T ?? defaultValue
+    }
+
+    /// Saves a value. Passing nil removes the key, so its default applies again.
+    func set(_ value: Any?, for key: String) {
+        objectWillChange.send()
+        values[key] = value
+        save()
+    }
+
+    func binding<T>(_ key: String, default defaultValue: T) -> Binding<T> {
+        Binding(
+            get: { MainActor.assumeIsolated { self.value(key, default: defaultValue) } },
+            set: { newValue in MainActor.assumeIsolated { self.set(newValue, for: key) } }
+        )
+    }
+
+    private func save() {
+        do {
+            let data = try PropertyListSerialization.data(fromPropertyList: values, format: .xml, options: 0)
+            try data.write(to: file, options: .atomic)
+        } catch {
+            NSLog("Toolbelt: could not save settings: \(error)")
+        }
+    }
+
+    /// v0.1 kept its settings in macOS's preferences system; bring them over once.
+    private func migrateFromV01() {
+        let old = UserDefaults.standard
+        for key in ["paused", "pasteAfterSelect", "historyLimit", "ignoredBundleIDs"] {
+            if let value = old.object(forKey: key) { values[key] = value }
+        }
+        save()
+    }
+}
+
+// MARK: - Typed settings
+
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "Match System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    @MainActor
+    func apply() {
+        switch self {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+@MainActor
+enum Prefs {
+    private static var store: SettingsStore { .shared }
+
+    static let defaultIgnoredApps = [
+        "com.1password.1password",
+        "com.agilebits.onepassword7",
+        "com.bitwarden.desktop",
+        "com.apple.keychainaccess",
+        "com.apple.Passwords",
+    ]
+
+    // App
+
+    /// Pauses every module at once, from the menu bar.
+    static var appPaused: Bool {
+        get { store.value("appPaused", default: false) }
+        set { store.set(newValue, for: "appPaused") }
+    }
+
+    static var appearance: AppearanceMode {
+        get { AppearanceMode(rawValue: store.value("appearance", default: "")) ?? .system }
+        set { store.set(newValue.rawValue, for: "appearance") }
+    }
+
+    static func isEnabled(_ module: ModuleID) -> Bool {
+        store.value("module.\(module.rawValue).enabled", default: true)
+    }
+
+    static func setEnabled(_ enabled: Bool, _ module: ModuleID) {
+        store.set(enabled, for: "module.\(module.rawValue).enabled")
+    }
+
+    // Clipboard
+
+    static var clipboardPaused: Bool {
+        get { store.value("paused", default: false) }
+        set { store.set(newValue, for: "paused") }
+    }
+
+    static var pasteAfterSelect: Bool {
+        get { store.value("pasteAfterSelect", default: true) }
+        set { store.set(newValue, for: "pasteAfterSelect") }
+    }
+
+    /// 0 means unlimited. Pinned items never count toward the limit.
+    static var historyLimit: Int {
+        get { store.value("historyLimit", default: 1000) }
+        set { store.set(newValue, for: "historyLimit") }
+    }
+
+    static var ignoredBundleIDs: [String] {
+        get { store.value("ignoredBundleIDs", default: defaultIgnoredApps) }
+        set { store.set(newValue, for: "ignoredBundleIDs") }
+    }
+}
