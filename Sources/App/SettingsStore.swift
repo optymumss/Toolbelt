@@ -8,7 +8,11 @@ final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
 
     /// ~/Library/Application Support/Toolbelt/
-    static var folder: URL {
+    /// (Automated tests point TOOLBELT_DATA_DIR at a scratch folder instead.)
+    nonisolated static var folder: URL {
+        if let custom = ProcessInfo.processInfo.environment["TOOLBELT_DATA_DIR"], !custom.isEmpty {
+            return URL(fileURLWithPath: custom, isDirectory: true)
+        }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return support.appendingPathComponent("Toolbelt", isDirectory: true)
     }

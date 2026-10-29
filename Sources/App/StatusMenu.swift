@@ -68,4 +68,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Toolbelt", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
+
+    /// Opens the menu as if the icon was clicked.
+    func open() {
+        statusItem.button?.performClick(nil)
+    }
 }

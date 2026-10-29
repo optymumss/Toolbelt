@@ -14,8 +14,7 @@ final class ClipboardStore: ObservableObject {
     private let imageCache = NSCache<NSString, NSImage>()
 
     init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        folder = support.appendingPathComponent("Toolbelt", isDirectory: true)
+        folder = SettingsStore.folder
         imagesFolder = folder.appendingPathComponent("images", isDirectory: true)
         historyFile = folder.appendingPathComponent("history.json")
         try? FileManager.default.createDirectory(at: imagesFolder, withIntermediateDirectories: true)
