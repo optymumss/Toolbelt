@@ -10,6 +10,9 @@ import SwiftUI
 enum ToolbeltTests {
     @MainActor
     static func main() {
+        // Windows (the large preview) need an app object, but no Dock icon.
+        NSApplication.shared.setActivationPolicy(.accessory)
+
         // Must run before anything touches SettingsStore, to test migration from v0.1.
         UserDefaults.standard.set(200, forKey: "historyLimit")
 
@@ -20,7 +23,10 @@ enum ToolbeltTests {
         t.group("Clipboard history", ClipboardStoreTests.run)
         t.group("Clipboard panel", PanelTests.run)
         t.group("Clipboard recording", MonitorTests.run)
+        t.group("Images, links and iPhone copies", RichCopyTests.run)
         t.group("Pasting", PasterTests.run)
+        t.group("Pasting images", ImagePasteTests.run)
+        t.group("Large preview", PreviewTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -389,5 +395,136 @@ enum PasterTests {
         let files = ClipItem(kind: .file, filePaths: ["/tmp/a.txt", "/tmp/b.txt"], hash: "y")
         paster.write(files, plainText: true)
         checkEqual(pb.string(forType: .string), "/tmp/a.txt\n/tmp/b.txt", "files paste as their paths in plain-text mode")
+    }
+}
+
+// MARK: - Images, links and copies from other devices
+
+@MainActor
+enum RichCopyTests {
+    static func pngData(width: Int, height: Int) -> Data {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)!
+        // Vary the pixels so each test image has a different hash.
+        rep.setColor(NSColor(red: CGFloat(width % 255) / 255, green: 0.5, blue: 0.2, alpha: 1), atX: 0, y: 0)
+        return rep.representation(using: .png, properties: [:])!
+    }
+
+    static func run() {
+        let store = ClipboardStore()
+        store.clearUnpinned()
+        for item in store.items { store.delete(item.id) }
+        let monitor = ClipboardMonitor(store: store)
+        let pb = NSPasteboard.general
+        Prefs.clipboardPaused = false
+        monitor.start()
+
+        // A screenshot copied with ⌃⇧⌘4 arrives as PNG data.
+        pb.clearContents()
+        pb.setData(pngData(width: 640, height: 400), forType: .png)
+        spin(1)
+        let shot = store.items.first
+        checkEqual(shot?.kind, .image, "screenshots copied to the clipboard are recorded as images")
+        checkEqual(shot.map { "\($0.imageWidth ?? 0)×\($0.imageHeight ?? 0)" }, "640×400", "and keep their size")
+
+        // "Copy Image" in Safari or Chrome: the image plus its web address as text.
+        pb.clearContents()
+        pb.declareTypes([.tiff, .string], owner: nil)
+        pb.setData(NSImage(data: pngData(width: 300, height: 200))!.tiffRepresentation!, forType: .tiff)
+        pb.setString("https://example.com/photos/cat.jpg", forType: .string)
+        spin(1)
+        checkEqual(store.items.first?.kind, .image, "an image copied in a browser is kept as an image, not just its address")
+        checkEqual(store.items.first?.text, "https://example.com/photos/cat.jpg", "and remembers where it came from")
+        let browserImage = store.items.first
+        check(browserImage.map { PanelModel.matches($0, "cat.jpg") } == true, "and can be found by searching its address")
+
+        // Text copied from a document that also carries a picture of the selection stays text.
+        pb.clearContents()
+        pb.declareTypes([.string, .png], owner: nil)
+        pb.setString("Quarterly results are up 12 percent", forType: .string)
+        pb.setData(pngData(width: 120, height: 40), forType: .png)
+        spin(1)
+        checkEqual(store.items.first?.kind, .text, "copied text that comes with a picture is kept as text")
+
+        // A link with its page title, as browsers copy it.
+        pb.clearContents()
+        pb.declareTypes([.string, NSPasteboard.PasteboardType("public.url-name")], owner: nil)
+        pb.setString("https://www.apple.com/macos/", forType: .string)
+        pb.setString("macOS - Apple", forType: NSPasteboard.PasteboardType("public.url-name"))
+        spin(1)
+        checkEqual(store.items.first?.kind, .link, "links are recorded as links")
+        checkEqual(store.items.first?.linkTitle, "macOS - Apple", "and keep the page title")
+        check(store.items.first.map { PanelModel.matches($0, "apple macos") } == true, "links can be found by their page title")
+
+        check(ClipboardMonitor.isLink("http://example.com/a?b=c"), "http links are recognised")
+        check(!ClipboardMonitor.isLink("see https://example.com for more"), "a sentence containing a link stays text")
+        check(!ClipboardMonitor.isLink("example.com"), "plain names without https:// stay text")
+
+        // Universal Clipboard: copied on an iPhone or iPad.
+        pb.clearContents()
+        pb.declareTypes([.string, ClipboardMonitor.remoteType], owner: nil)
+        pb.setString("Copied on my iPhone", forType: .string)
+        spin(1)
+        checkEqual(store.items.first?.text, "Copied on my iPhone", "copies from an iPhone or iPad are recorded")
+        checkEqual(store.items.first?.fromOtherDevice, true, "and marked as coming from another device")
+        checkEqual(store.items.first?.sourceAppName, "iPhone or iPad", "and labelled iPhone or iPad")
+
+        pb.clearContents()
+        pb.declareTypes([.png, ClipboardMonitor.remoteType], owner: nil)
+        pb.setData(pngData(width: 90, height: 160), forType: .png)
+        spin(1)
+        checkEqual(store.items.first?.kind, .image, "photos copied on an iPhone are recorded as images")
+
+        monitor.stop()
+
+        // Old history files (from v0.2 and earlier) still load.
+        let old = #"[{"id":"\#(UUID().uuidString)","kind":"text","text":"old","hash":"h","created":0,"lastUsed":0,"pinned":false}]"#
+        let decoded = try? JSONDecoder().decode([ClipItem].self, from: Data(old.utf8))
+        checkEqual(decoded?.first?.text, "old", "history saved by earlier versions still loads")
+    }
+}
+
+// MARK: - Large preview
+
+@MainActor
+enum PreviewTests {
+    static func run() {
+        check(!SpaceKey.isHold(pressedAt: 10, releasedAt: 10.1), "a quick tap of Space keeps the preview open")
+        check(SpaceKey.isHold(pressedAt: 10, releasedAt: 10.8), "holding Space closes the preview when released")
+
+        let store = ClipboardStore()
+        let controller = LargePreviewController(store: store)
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let item = ClipboardStoreTests.text("Preview me")
+        controller.show(item, over: parent)
+        check(controller.isVisible, "the preview opens")
+        let other = ClipboardStoreTests.text("Next item")
+        controller.update(other, over: parent)
+        checkEqual(controller.item?.text, "Next item", "the preview follows the selection")
+        controller.hide()
+        check(!controller.isVisible, "the preview closes")
+        controller.update(item, over: parent)
+        check(!controller.isVisible, "moving the selection doesn't reopen a closed preview")
+    }
+}
+
+// MARK: - Pasting images
+
+@MainActor
+enum ImagePasteTests {
+    static func run() {
+        let store = ClipboardStore()
+        let paster = Paster(store: store, monitor: ClipboardMonitor(store: store))
+        let png = RichCopyTests.pngData(width: 50, height: 30)
+        store.add(ClipItem(kind: .image, imageWidth: 50, imageHeight: 30, hash: Hashing.of(png)), imageData: png)
+        guard let item = store.items.first(where: { $0.kind == .image }) else {
+            check(false, "test setup: image item")
+            return
+        }
+        paster.write(item, plainText: false)
+        let pb = NSPasteboard.general
+        check(pb.data(forType: .png) != nil, "images paste as PNG")
+        check(pb.data(forType: .tiff) != nil, "and as TIFF, for older apps")
     }
 }

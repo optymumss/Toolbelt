@@ -1,9 +1,18 @@
-# Toolbelt — v0.2
+# Toolbelt — v0.3
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions) and the clipboard manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.3
+
+- **Large preview:** in the clipboard panel, press **Space** (or ⌘Y) to see the selected item big. Tap Space again to close, or hold Space and let go. Use ↑ ↓ while it's open to flip through items. Files open in macOS Quick Look, so PDFs, photos and documents show properly.
+- **Copies from your iPhone or iPad** (Universal Clipboard) are recorded and labelled *iPhone or iPad*.
+- **Images copied in a browser** ("Copy Image") are now kept as images. Before, only the image's web address was saved.
+- **Links keep their page title**, and you can search by it.
+- **Search finds every word you type**, in any order: "apple macos" finds a link titled "macOS – Apple".
+- **Images paste in more apps**: they go on the clipboard as both PNG and TIFF.
 
 ## What's new in 0.2
 
@@ -46,6 +55,7 @@ Without it everything still works, but choosing an item only copies it and you p
 | ↩ | Paste the selected item |
 | ⌥↩ | Paste as plain text (no formatting) |
 | ⌘1 – ⌘9 | Paste one of the first nine items |
+| Space or ⌘Y | Large preview (when the search box is empty) |
 | ⌘P | Pin / unpin (pinned items are never deleted automatically) |
 | ⌘⌫ | Delete item |
 | ⇥ | Switch filter: All, Pinned, Text, Links, Images, Files |
@@ -57,7 +67,7 @@ The menu bar icon has **Clipboard History**, **Pause Recording**, **Clear Histor
 
 ## What it records
 
-Text (with formatting), links, images and screenshots, and files copied in Finder. Duplicates move to the top instead of piling up. It skips items that password managers mark as private, and anything copied in apps on the "never record" list (1Password, Bitwarden, Passwords and Keychain Access by default).
+Text (with formatting), links (with their page title), images and screenshots (including images copied from web pages and screenshots taken with ⌃ held down, which go straight to the clipboard), files copied in Finder, and anything you copy on your iPhone or iPad when Universal Clipboard is on. Duplicates move to the top instead of piling up. It skips items that password managers mark as private, and anything copied in apps on the "never record" list (1Password, Bitwarden, Passwords and Keychain Access by default).
 
 History and settings are stored only on your Mac at `~/Library/Application Support/Toolbelt/`.
 

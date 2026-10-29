@@ -196,6 +196,12 @@ struct HistoryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 detailRow("Type", item.kind.label)
                 detailRow("From", item.sourceAppName ?? "Unknown")
+                if item.kind == .link, let title = item.linkTitle {
+                    detailRow("Page", title)
+                }
+                if item.kind == .image, let link = item.text {
+                    detailRow("Link", link)
+                }
                 detailRow("Copied", Formatters.full.string(from: item.created))
                 if let text = item.text, item.kind != .image {
                     detailRow("Length", "\(text.count) characters")
@@ -242,6 +248,7 @@ struct HistoryView: View {
         HStack(spacing: 14) {
             KeyHint(keys: "↩", label: "Paste")
             KeyHint(keys: "⌥↩", label: "Plain text")
+            KeyHint(keys: "space", label: "Preview")
             KeyHint(keys: "⌘1–9", label: "Quick paste")
             KeyHint(keys: "⌘P", label: "Pin")
             KeyHint(keys: "⌘⌫", label: "Delete")
@@ -305,6 +312,9 @@ struct ClipRow: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 30, height: 30)
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        } else if item.fromOtherDevice == true {
+            Image(systemName: "iphone")
+                .font(.system(size: 16))
         } else if let icon = AppIcons.icon(for: item.sourceBundleID) {
             Image(nsImage: icon)
                 .resizable()

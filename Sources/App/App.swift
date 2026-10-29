@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "settings-permissions": settings.show(tab: .permissions)
             case "settings-clipboard": settings.show(tab: .module(.clipboard))
             case "clipboard": modules.module(.clipboard)?.open()
+            case "clipboard-preview": (modules.module(.clipboard) as? ClipboardModule)?.openWithPreview()
             case "menu": statusMenu.open()
             default: break
             }
