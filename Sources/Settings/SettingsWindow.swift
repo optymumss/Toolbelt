@@ -32,6 +32,9 @@ final class SettingsWindowController {
             window.title = "Toolbelt Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
+            // Size the window before centring it; otherwise it's centred while
+            // still tiny and then grows off the right edge of the screen.
+            window.setContentSize(SettingsRootView.size)
             window.center()
             self.window = window
         }
@@ -67,8 +70,10 @@ struct SettingsRootView: View {
                 }
             }
         }
-        .frame(width: 600, height: 620)
+        .frame(width: Self.size.width, height: Self.size.height)
     }
+
+    static let size = NSSize(width: 600, height: 620)
 }
 
 /// A module's settings tab: its on/off switch, then the module's own settings.
@@ -77,31 +82,27 @@ struct ModuleTab: View {
     @ObservedObject var modules: ModuleManager
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    Toggle(isOn: modules.enabledBinding(module.id)) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Turn on \(module.id.title)")
-                            Text(module.id.summary)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if modules.appPaused {
-                        Text("Toolbelt is paused, so nothing runs until you resume it from the menu bar or the General tab.")
+        Form {
+            Section {
+                Toggle(isOn: modules.enabledBinding(module.id)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Turn on \(module.id.title)")
+                        Text(module.id.summary)
                             .font(.caption)
-                            .foregroundStyle(Color.orange)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                if modules.appPaused {
+                    Text("Toolbelt is paused, so nothing runs until you resume it from the menu bar or the General tab.")
+                        .font(.caption)
+                        .foregroundStyle(Color.orange)
+                }
             }
-            .formStyle(.grouped)
-            .frame(height: modules.appPaused ? 130 : 96)
-            .scrollDisabled(true)
 
             module.settingsView()
                 .disabled(!modules.isEnabled(module.id))
                 .opacity(modules.isEnabled(module.id) ? 1 : 0.5)
         }
+        .formStyle(.grouped)
     }
 }

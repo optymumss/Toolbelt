@@ -12,8 +12,9 @@ struct ClipboardSettingsTab: View {
 
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
+    /// Sections only: the module tab puts them in a form below the on/off switch.
     var body: some View {
-        Form {
+        Group {
             Section("History") {
                 Toggle("Pause recording", isOn: settings.binding("paused", default: false))
                 Picker("Keep up to", selection: settings.binding("historyLimit", default: 1000)) {
@@ -72,7 +73,6 @@ struct ClipboardSettingsTab: View {
                 Button("Clear History…", role: .destructive) { onClear() }
             }
         }
-        .formStyle(.grouped)
         .onReceive(refresh) { _ in
             accessibilityOK = Permission.accessibility.isGranted
         }
