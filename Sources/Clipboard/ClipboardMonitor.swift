@@ -26,6 +26,9 @@ final class ClipboardMonitor {
     }
 
     func start() {
+        guard timer == nil else { return }
+        // Don't record whatever was copied while the module was off.
+        lastChangeCount = NSPasteboard.general.changeCount
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -33,6 +36,11 @@ final class ClipboardMonitor {
             }
         }
         timer?.tolerance = 0.1
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
     }
 
     /// Called after Toolbelt itself writes to the clipboard,
@@ -46,7 +54,7 @@ final class ClipboardMonitor {
         guard pb.changeCount != lastChangeCount else { return }
         lastChangeCount = pb.changeCount
 
-        guard !Prefs.paused else { return }
+        guard !Prefs.clipboardPaused else { return }
 
         let types = pb.types ?? []
         if types.contains(where: { Self.skipTypes.contains($0.rawValue) }) { return }

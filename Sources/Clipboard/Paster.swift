@@ -18,11 +18,8 @@ final class Paster {
         store.touch(item.id)
 
         guard Prefs.pasteAfterSelect else { return }
-        guard Accessibility.isTrusted(prompt: false) else {
-            // The item is on the clipboard; ask for permission so next time it pastes itself.
-            _ = Accessibility.isTrusted(prompt: true)
-            return
-        }
+        // Without permission the item is still on the clipboard, ready for ⌘V.
+        guard PermissionGate.ensure(.accessibility, to: "paste for you") else { return }
 
         // Give the history panel a moment to close so the
         // previous app is receiving keystrokes again.
@@ -71,19 +68,5 @@ final class Paster {
         up?.flags = .maskCommand
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
-    }
-}
-
-enum Accessibility {
-    /// Accessibility permission is what lets Toolbelt press ⌘V for you.
-    static func isTrusted(prompt: Bool) -> Bool {
-        let options = ["AXTrustedCheckOptionPrompt": prompt] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
-    }
-
-    static func openSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
     }
 }

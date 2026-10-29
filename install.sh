@@ -6,49 +6,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="Toolbelt"
-BUILD_DIR="build"
-APP="$BUILD_DIR/$APP_NAME.app"
+APP="build/$APP_NAME.app"
 
 echo ""
 echo "=== Toolbelt installer ==="
 echo ""
 
-# 1. Apple's free command line developer tools provide the Swift compiler.
-if ! xcrun --find swiftc >/dev/null 2>&1; then
-    echo "Apple's developer tools aren't installed yet."
-    echo "A window will open: click Install and wait for it to finish (a few minutes),"
-    echo "then run this script again."
-    xcode-select --install 2>/dev/null || true
-    exit 1
-fi
+# 1. Build
+bash ./build.sh
 
-# 2. Compile
-echo "Building… (takes about a minute the first time)"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-
-ARCH="$(uname -m)"
-SDK="$(xcrun --show-sdk-path --sdk macosx)"
-
-xcrun swiftc \
-    -O \
-    -parse-as-library \
-    -swift-version 5 \
-    -target "${ARCH}-apple-macos14.0" \
-    -sdk "$SDK" \
-    -framework AppKit \
-    -framework SwiftUI \
-    -framework Carbon \
-    -framework ServiceManagement \
-    Sources/*.swift \
-    -o "$APP/Contents/MacOS/$APP_NAME"
-
-cp Info.plist "$APP/Contents/Info.plist"
-
-# 3. Sign it for this Mac only (no Apple developer account needed)
-codesign --force --sign - "$APP" >/dev/null 2>&1
-
-# 4. Install to Applications
+# 2. Install to Applications
 DEST="/Applications"
 if [ ! -w "$DEST" ]; then
     DEST="$HOME/Applications"
@@ -62,8 +29,12 @@ cp -R "$APP" "$DEST/"
 
 echo ""
 echo "Installed to $DEST/$APP_NAME.app"
-echo "Starting Toolbelt — look for the clipboard icon in your menu bar."
-echo "Press ⌘⇧V (Command-Shift-V) anywhere to open your history."
+echo "Starting Toolbelt — look for the toolbox icon (a wrench and screwdriver) in your menu bar."
+echo "Press ⌘⇧V (Command-Shift-V) anywhere to open your clipboard history."
+echo ""
+echo "Updated from an earlier version? macOS forgets Toolbelt's permissions after each update."
+echo "If auto-paste stops working: System Settings → Privacy & Security → Accessibility,"
+echo "select Toolbelt, click –, and Toolbelt will ask again the next time it pastes."
 echo ""
 
 open "$DEST/$APP_NAME.app"
