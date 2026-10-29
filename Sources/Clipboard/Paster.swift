@@ -43,8 +43,14 @@ final class Paster {
             pb.writeObjects([pbItem])
 
         case .image:
-            if let image = store.image(for: item) {
-                pb.writeObjects([image])
+            // PNG plus TIFF, so both modern apps and older ones accept the paste.
+            if let url = store.imageURL(for: item), let png = try? Data(contentsOf: url) {
+                let pbItem = NSPasteboardItem()
+                pbItem.setData(png, forType: .png)
+                if let tiff = NSImage(data: png)?.tiffRepresentation {
+                    pbItem.setData(tiff, forType: .tiff)
+                }
+                pb.writeObjects([pbItem])
             }
 
         case .file:

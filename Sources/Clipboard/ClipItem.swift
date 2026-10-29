@@ -24,6 +24,8 @@ enum ClipKind: String, Codable {
 }
 
 struct ClipItem: Identifiable, Codable, Equatable {
+    static let otherDeviceName = "iPhone or iPad"
+
     var id = UUID()
     var kind: ClipKind
     var text: String? = nil
@@ -38,6 +40,10 @@ struct ClipItem: Identifiable, Codable, Equatable {
     var created = Date()
     var lastUsed = Date()
     var pinned = false
+    /// Arrived from an iPhone or iPad through Universal Clipboard.
+    var fromOtherDevice: Bool? = nil
+    /// Page title that browsers put on the clipboard next to a copied link.
+    var linkTitle: String? = nil
 
     /// One-line label shown in the list.
     var title: String {
@@ -62,8 +68,9 @@ struct ClipItem: Identifiable, Codable, Equatable {
     /// Text used for search matching.
     var searchText: String {
         switch kind {
-        case .text, .link: return text ?? ""
-        case .image: return "image picture screenshot " + (sourceAppName ?? "")
+        case .text: return text ?? ""
+        case .link: return (text ?? "") + " " + (linkTitle ?? "")
+        case .image: return "image picture screenshot " + (sourceAppName ?? "") + " " + (text ?? "")
         case .file: return (filePaths ?? []).joined(separator: " ")
         }
     }

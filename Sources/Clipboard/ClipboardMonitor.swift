@@ -59,15 +59,28 @@ final class ClipboardMonitor {
         let types = pb.types ?? []
         if types.contains(where: { Self.skipTypes.contains($0.rawValue) }) { return }
 
+        // Universal Clipboard: copied on an iPhone or iPad. The app in front on the Mac
+        // didn't copy it, so it doesn't count as the source and the ignore list doesn't apply.
+        if types.contains(Self.remoteType) {
+            capture(from: pb, types: types, appName: ClipItem.otherDeviceName, bundleID: nil, remote: true)
+            return
+        }
+
         let front = NSWorkspace.shared.frontmostApplication
         if let bundleID = front?.bundleIdentifier, Prefs.ignoredBundleIDs.contains(bundleID) { return }
 
-        capture(from: pb, types: types, source: front)
+        capture(from: pb, types: types, appName: front?.localizedName, bundleID: front?.bundleIdentifier, remote: false)
     }
 
-    private func capture(from pb: NSPasteboard, types: [NSPasteboard.PasteboardType], source: NSRunningApplication?) {
-        let appName = source?.localizedName
-        let bundleID = source?.bundleIdentifier
+    /// Marks clipboard contents that came from another device through Universal Clipboard.
+    static let remoteType = NSPasteboard.PasteboardType("com.apple.is-remote-clipboard")
+    /// Page title browsers add next to a copied link.
+    private static let urlNameType = NSPasteboard.PasteboardType("public.url-name")
+
+    private func capture(from pb: NSPasteboard, types: [NSPasteboard.PasteboardType], appName: String?, bundleID: String?, remote: Bool) {
+        let string = pb.string(forType: .string)
+        let hasText = string.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+        let hasImage = types.contains(.png) || types.contains(.tiff)
 
         // 1. Files copied in Finder
         if types.contains(.fileURL),
@@ -79,43 +92,59 @@ final class ClipboardMonitor {
                 filePaths: paths,
                 hash: Hashing.of("file:" + paths.joined(separator: "\n")),
                 sourceAppName: appName,
-                sourceBundleID: bundleID
+                sourceBundleID: bundleID,
+                fromOtherDevice: remote ? true : nil
             ))
             return
         }
 
-        // 2. Text and links
-        if let string = pb.string(forType: .string),
-           !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // 2. Images. "Copy Image" in a browser also puts the image's web address on the
+        //    clipboard as text, so an image wins when the only text is a single link.
+        if hasImage, !hasText || Self.isLink(string ?? "") {
+            if addImage(from: pb, link: hasText ? string : nil, appName: appName, bundleID: bundleID, remote: remote) {
+                return
+            }
+        }
+
+        // 3. Text and links
+        if let string, hasText {
             guard string.utf8.count < 2_000_000 else { return } // skip enormous copies
             var rtf: Data? = nil
             if let data = pb.data(forType: .rtf), data.count < 1_000_000 { rtf = data }
+            let isLink = Self.isLink(string)
             store.add(ClipItem(
-                kind: Self.isLink(string) ? .link : .text,
+                kind: isLink ? .link : .text,
                 text: string,
                 rtf: rtf,
                 hash: Hashing.of("text:" + string),
                 sourceAppName: appName,
-                sourceBundleID: bundleID
+                sourceBundleID: bundleID,
+                fromOtherDevice: remote ? true : nil,
+                linkTitle: isLink ? pb.string(forType: Self.urlNameType) : nil
             ))
             return
         }
 
-        // 3. Images and screenshots
-        if let image = Self.pngData(from: pb) {
-            guard image.png.count < 25_000_000 else { return }
-            store.add(ClipItem(
-                kind: .image,
-                imageWidth: image.width,
-                imageHeight: image.height,
-                hash: Hashing.of(image.png),
-                sourceAppName: appName,
-                sourceBundleID: bundleID
-            ), imageData: image.png)
-        }
+        // 4. Images and screenshots with no text
+        _ = addImage(from: pb, link: nil, appName: appName, bundleID: bundleID, remote: remote)
     }
 
-    private static func isLink(_ string: String) -> Bool {
+    private func addImage(from pb: NSPasteboard, link: String?, appName: String?, bundleID: String?, remote: Bool) -> Bool {
+        guard let image = Self.pngData(from: pb), image.png.count < 25_000_000 else { return false }
+        store.add(ClipItem(
+            kind: .image,
+            text: link?.trimmingCharacters(in: .whitespacesAndNewlines),
+            imageWidth: image.width,
+            imageHeight: image.height,
+            hash: Hashing.of(image.png),
+            sourceAppName: appName,
+            sourceBundleID: bundleID,
+            fromOtherDevice: remote ? true : nil
+        ), imageData: image.png)
+        return true
+    }
+
+    static func isLink(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: { $0.isWhitespace }),
               let url = URL(string: trimmed),

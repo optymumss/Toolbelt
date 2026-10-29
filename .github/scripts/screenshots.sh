@@ -21,6 +21,8 @@ for text in "Meeting notes: send the report by Friday" "https://www.apple.com/ma
     printf '%s' "$text" | pbcopy
     sleep 1
 done
+# A real screenshot copied to the clipboard, like pressing ⌃⇧⌘3
+screencapture -c -x
 sleep 2
 if kill -0 "$pid" 2>/dev/null; then
     echo "✓ app starts and records copies"
@@ -32,7 +34,7 @@ kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 echo "History file: $(ls "$DATA_DIR")"
 
 # 2. One launch per screen
-for screen in menu settings-general settings-shortcuts settings-permissions settings-clipboard clipboard; do
+for screen in menu settings-general settings-shortcuts settings-permissions settings-clipboard clipboard clipboard-preview; do
     TOOLBELT_SHOW="$screen" "$APP_BIN" &
     pid=$!
     sleep 4

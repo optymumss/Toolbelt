@@ -38,6 +38,12 @@ final class ClipboardModule: ToolbeltModule {
         panel.show()
     }
 
+    /// Opens the history with the large preview of the newest item (for screenshots).
+    func openWithPreview() {
+        panel.show()
+        panel.togglePreview()
+    }
+
     func menuItems() -> [NSMenuItem] {
         let pause = ActionMenuItem("Pause Recording") {
             Prefs.clipboardPaused.toggle()

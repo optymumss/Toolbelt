@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 enum ClipFilter: String, CaseIterable, Identifiable {
@@ -38,10 +39,16 @@ final class PanelModel: ObservableObject {
     }
 
     var results: [ClipItem] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        return store.items.filter { item in
-            filter.matches(item) && (q.isEmpty || item.searchText.localizedCaseInsensitiveContains(q))
-        }
+        store.items.filter { filter.matches($0) && Self.matches($0, query) }
+    }
+
+    /// Every word typed must appear somewhere in the item, in any order and any case,
+    /// so "apple macos" finds a link titled "macOS - Apple".
+    static func matches(_ item: ClipItem, _ query: String) -> Bool {
+        let words = query.split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return true }
+        let text = item.searchText
+        return words.allSatisfy { text.localizedCaseInsensitiveContains($0) }
     }
 
     var selectedItem: ClipItem? {
@@ -99,13 +106,18 @@ final class HistoryPanelController: NSObject, NSWindowDelegate {
     private let panel: KeyPanel
     private let model: PanelModel
     private let paster: Paster
+    private let preview: LargePreviewController
     private var keyMonitor: Any?
+    private var selectionWatcher: AnyCancellable?
+    /// When Space opened the preview, so holding Space can close it on release.
+    private var spacePressedAt: TimeInterval?
 
     private let size = NSSize(width: 780, height: 500)
 
     init(store: ClipboardStore, paster: Paster) {
         self.paster = paster
         model = PanelModel(store: store)
+        preview = LargePreviewController(store: store)
         panel = KeyPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -133,6 +145,14 @@ final class HistoryPanelController: NSObject, NSWindowDelegate {
         let hosting = NSHostingView(rootView: root)
         hosting.frame = NSRect(origin: .zero, size: size)
         panel.contentView = hosting
+
+        // The large preview follows the selection (keys or mouse).
+        selectionWatcher = model.$selectedID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.preview.update(self.model.selectedItem, over: self.panel)
+            }
     }
 
     func toggle() {
@@ -161,6 +181,8 @@ final class HistoryPanelController: NSObject, NSWindowDelegate {
     }
 
     func hide() {
+        preview.hide()
+        spacePressedAt = nil
         panel.orderOut(nil)
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
@@ -175,14 +197,39 @@ final class HistoryPanelController: NSObject, NSWindowDelegate {
         hide()
     }
 
+    // MARK: Large preview
+
+    func togglePreview() {
+        if preview.isVisible {
+            preview.hide()
+        } else if let item = model.selectedItem {
+            preview.show(item, over: panel)
+        }
+    }
+
+    var isPreviewVisible: Bool { preview.isVisible }
+
     // MARK: Keyboard
 
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let handled = MainActor.assumeIsolated { self?.handle(event) ?? false }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                guard let self else { return false }
+                return event.type == .keyUp ? self.handleKeyUp(event) : self.handle(event)
+            }
             return handled ? nil : event
         }
+    }
+
+    /// Releasing Space after holding it closes the preview it opened.
+    private func handleKeyUp(_ event: NSEvent) -> Bool {
+        guard event.window === panel, event.keyCode == 49, let pressedAt = spacePressedAt else { return false }
+        spacePressedAt = nil
+        if SpaceKey.isHold(pressedAt: pressedAt, releasedAt: event.timestamp) {
+            preview.hide()
+        }
+        return true
     }
 
     /// Key codes for 1–9 on the top row.
@@ -194,7 +241,22 @@ final class HistoryPanelController: NSObject, NSWindowDelegate {
 
         switch event.keyCode {
         case 53: // esc
-            if model.query.isEmpty { hide() } else { model.query = "" }
+            if preview.isVisible {
+                preview.hide()
+            } else if model.query.isEmpty {
+                hide()
+            } else {
+                model.query = ""
+            }
+            return true
+        case 49 where flags.isDisjoint(with: [.command, .option, .control]): // space
+            // While searching, Space types a space; otherwise it opens the preview.
+            guard model.query.isEmpty || preview.isVisible else { return false }
+            if !event.isARepeat {
+                let wasVisible = preview.isVisible
+                togglePreview()
+                spacePressedAt = (!wasVisible && preview.isVisible) ? event.timestamp : nil
+            }
             return true
         case 125: // down
             model.move(1)
@@ -214,6 +276,10 @@ final class HistoryPanelController: NSObject, NSWindowDelegate {
 
         guard flags.contains(.command) else { return false }
 
+        if event.keyCode == 16 { // ⌘Y, the Quick Look shortcut
+            togglePreview()
+            return true
+        }
         if event.keyCode == 35 { // ⌘P
             if let item = model.selectedItem { model.togglePin(item) }
             return true
