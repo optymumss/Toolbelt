@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -11,7 +15,32 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Show compiler version
-        run: xcrun swiftc --version
+      - name: Show macOS and compiler versions
+        run: sw_vers && xcrun swiftc --version
       - name: Build Toolbelt.app
         run: bash build.sh
+      - name: Run automated tests
+        run: bash test.sh
+      - name: Launch the app and take screenshots
+        run: bash .github/scripts/screenshots.sh
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+      - name: Publish screenshots to the ci-screenshots branch
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: |
+          [ -d screenshots ] && [ -n "$(ls screenshots)" ] || exit 0
+          SRC="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          TMP="$(mktemp -d)"
+          cp screenshots/*.png "$TMP/"
+          cd "$TMP"
+          git init -q -b ci-screenshots
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          printf 'Screenshots of Toolbelt from %s at %s\n' "$SRC" "$GITHUB_SHA" > README.md
+          git add -A && git commit -q -m "Screenshots from $SRC ($GITHUB_SHA)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-screenshots

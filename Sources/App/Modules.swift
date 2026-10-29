@@ -21,7 +21,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
-        case .clipboard: return "Keeps everything you copy and pastes it back with ⌘⇧V."
+        case .clipboard: return "Keeps everything you copy so you can find it and paste it again."
         }
     }
 }
@@ -41,7 +41,7 @@ protocol ToolbeltModule: AnyObject {
     func open()
     /// Extra menu-bar items shown under the module while it's running.
     func menuItems() -> [NSMenuItem]
-    /// The module's tab in Settings, below its on/off switch.
+    /// The module's sections in its Settings tab, shown below its on/off switch.
     func settingsView() -> AnyView
     func willTerminate()
 }

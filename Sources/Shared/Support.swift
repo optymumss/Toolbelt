@@ -16,8 +16,19 @@ enum AppIcons {
         return icon
     }
 
+    /// Names for apps on the default "never record" list, in case they aren't installed.
+    private static let knownNames = [
+        "com.1password.1password": "1Password",
+        "com.agilebits.onepassword7": "1Password 7",
+        "com.bitwarden.desktop": "Bitwarden",
+        "com.apple.keychainaccess": "Keychain Access",
+        "com.apple.Passwords": "Passwords",
+    ]
+
     static func name(for bundleID: String) -> String {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return knownNames[bundleID] ?? bundleID
+        }
         return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
     }
 }

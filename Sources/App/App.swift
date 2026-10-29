@@ -37,6 +37,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         modules.refresh()
         warnAboutTakenShortcuts()
+        showForScreenshot()
+    }
+
+    /// Used by the automated screenshot check: TOOLBELT_SHOW opens one screen on launch.
+    private func showForScreenshot() {
+        guard let target = ProcessInfo.processInfo.environment["TOOLBELT_SHOW"] else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in
+            switch target {
+            case "settings-general": settings.show(tab: .general)
+            case "settings-shortcuts": settings.show(tab: .shortcuts)
+            case "settings-permissions": settings.show(tab: .permissions)
+            case "settings-clipboard": settings.show(tab: .module(.clipboard))
+            case "clipboard": modules.module(.clipboard)?.open()
+            case "menu": statusMenu.open()
+            default: break
+            }
+        }
     }
 
     /// Opening Toolbelt again while it's running (for example from Applications) shows Settings.

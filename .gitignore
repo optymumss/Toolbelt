@@ -1,4 +1,5 @@
 build/
+screenshots/
 .DS_Store
 *.xcuserstate
 DerivedData/
