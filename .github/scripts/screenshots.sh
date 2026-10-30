@@ -33,9 +33,27 @@ fi
 kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 echo "History file: $(ls "$DATA_DIR")"
 
-# 2. One launch per screen
-for screen in menu settings-general settings-shortcuts settings-permissions settings-clipboard clipboard clipboard-preview; do
-    TOOLBELT_SHOW="$screen" "$APP_BIN" &
+# 2. One launch per screen: "file name=what TOOLBELT_SHOW opens"
+SCREENS=(
+    "menu=menu"
+    "settings-general=settings-general"
+    "settings-shortcuts=settings-shortcuts"
+    "settings-permissions=settings-permissions"
+    "settings-clipboard=settings-clipboard"
+    "clipboard=clipboard"
+    "clipboard-preview=clipboard-preview"
+    "settings-launcher=settings-launcher"
+    "launcher-empty=launcher:"
+    "launcher-apps=launcher:saf"
+    "launcher-calculator=launcher:(12 + 8) * 15%"
+    "launcher-convert=launcher:5 km in miles"
+    "launcher-quicklink=launcher:g cats"
+    "launcher-command=launcher:lock"
+    "launcher-clipboard=launcher:example street"
+)
+for entry in "${SCREENS[@]}"; do
+    screen="${entry%%=*}"
+    TOOLBELT_SHOW="${entry#*=}" "$APP_BIN" &
     pid=$!
     sleep 4
     if kill -0 "$pid" 2>/dev/null; then

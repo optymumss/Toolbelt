@@ -72,24 +72,28 @@ struct Shortcut: Hashable {
 /// Every global shortcut in Toolbelt. Each module adds its own here.
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case clipboardHistory
+    case openLauncher
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .clipboardHistory: return "Open clipboard history"
+        case .openLauncher: return "Open launcher"
         }
     }
 
     var module: ModuleID {
         switch self {
         case .clipboardHistory: return .clipboard
+        case .openLauncher: return .launcher
         }
     }
 
     var defaultShortcut: Shortcut? {
         switch self {
         case .clipboardHistory: return Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey)
+        case .openLauncher: return Shortcut(keyCode: kVK_Space, modifiers: optionKey)
         }
     }
 

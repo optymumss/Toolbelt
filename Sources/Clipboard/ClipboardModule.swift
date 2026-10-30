@@ -60,6 +60,8 @@ final class ClipboardModule: ToolbeltModule {
         AnyView(ClipboardSettingsTab(shortcuts: shortcuts, onClear: { [weak self] in self?.confirmClear() }))
     }
 
+    private(set) lazy var launcherProvider: LauncherProvider? = ClipboardLauncherProvider(store: store, paster: paster)
+
     func willTerminate() {
         store.saveNow()
     }
@@ -75,5 +77,40 @@ final class ClipboardModule: ToolbeltModule {
         if alert.runModal() == .alertFirstButtonReturn {
             store.clearUnpinned()
         }
+    }
+}
+
+/// Lets the launcher find things in the clipboard history; choosing one pastes it.
+@MainActor
+final class ClipboardLauncherProvider: LauncherProvider {
+    private let store: ClipboardStore
+    private let paster: Paster
+
+    init(store: ClipboardStore, paster: Paster) {
+        self.store = store
+        self.paster = paster
+    }
+
+    func results(for query: String) -> [LauncherResult] {
+        guard query.trimmingCharacters(in: .whitespaces).count >= 2 else { return [] }
+        return store.items
+            .filter { PanelModel.matches($0, query) }
+            .prefix(5)
+            .enumerated()
+            .map { index, item in
+                let icon: LauncherIcon
+                if item.kind == .image, let image = store.image(for: item) {
+                    icon = .image(image)
+                } else {
+                    icon = .symbol(item.kind.symbol)
+                }
+                return LauncherResult(
+                    id: "clip:" + item.id.uuidString, title: item.title,
+                    subtitle: "\(item.sourceAppName ?? item.kind.label) · \(Formatters.ago(item.lastUsed)) · ↩ pastes it",
+                    kind: "Clipboard", icon: icon, score: 40 - Double(index)
+                ) { [paster] in
+                    paster.paste(item, plainText: false)
+                }
+            }
     }
 }

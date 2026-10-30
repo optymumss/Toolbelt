@@ -27,6 +27,10 @@ enum ToolbeltTests {
         t.group("Pasting", PasterTests.run)
         t.group("Pasting images", ImagePasteTests.run)
         t.group("Large preview", PreviewTests.run)
+        t.group("Launcher: calculator", CalculatorTests.run)
+        t.group("Launcher: unit converter", ConverterTests.run)
+        t.group("Launcher: matching and ranking", LauncherSearchTests.run)
+        t.group("Launcher: quicklinks and commands", LauncherProviderTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -526,5 +530,134 @@ enum ImagePasteTests {
         let pb = NSPasteboard.general
         check(pb.data(forType: .png) != nil, "images paste as PNG")
         check(pb.data(forType: .tiff) != nil, "and as TIFF, for older apps")
+    }
+}
+
+// MARK: - Launcher
+
+@MainActor
+enum CalculatorTests {
+    static func run() {
+        checkEqual(Calculator.evaluate("12 * 7 + 1"), 85, "12 * 7 + 1 = 85")
+        checkEqual(Calculator.evaluate("(3 + 4)^2"), 49, "brackets and powers")
+        checkEqual(Calculator.evaluate("2^3^2"), 512, "powers work right to left")
+        checkEqual(Calculator.evaluate("-2^2"), -4, "minus applies after the power, like on paper")
+        checkEqual(Calculator.evaluate("10 / 4"), 2.5, "division with a decimal answer")
+        checkEqual(Calculator.evaluate("250 * 15%"), 37.5, "percentages")
+        checkEqual(Calculator.evaluate("sqrt(16) + abs(-3)"), 7, "functions")
+        checkEqual(Calculator.evaluate("1,000 + 1"), 1001, "thousands separators")
+        checkEqual(Calculator.evaluate("6 × 7 ÷ 2"), 21, "× and ÷ signs")
+        checkEqual(Calculator.evaluate("2 +"), nil, "an unfinished sum gives no answer")
+        checkEqual(Calculator.evaluate("1 / 0"), nil, "dividing by zero gives no answer")
+        checkEqual(Calculator.format(0.1 + 0.2), "0.3", "answers are tidied (0.1 + 0.2 shows 0.3)")
+        checkEqual(Calculator.format(1024), "1024", "whole numbers have no decimals")
+        check(Calculator.isCalculation("12*7"), "12*7 is treated as a sum")
+        check(!Calculator.isCalculation("2048"), "a plain number isn't")
+        check(!Calculator.isCalculation("iphone 15"), "words with numbers aren't")
+        check(!Calculator.isCalculation("e"), "a single letter isn't")
+    }
+}
+
+@MainActor
+enum ConverterTests {
+    static func value(_ text: String) -> Double? {
+        UnitConverter.convert(text).map { ($0.value * 1000).rounded() / 1000 }
+    }
+
+    static func run() {
+        checkEqual(value("5 km in miles"), 3.107, "5 km in miles")
+        checkEqual(value("100 f to c"), 37.778, "100 °F in °C")
+        checkEqual(value("1 kg in lb"), 2.205, "kilograms to pounds")
+        checkEqual(value("3 ft in cm"), 91.44, "feet to centimetres")
+        checkEqual(value("5 in in cm"), 12.7, "inches (\"in in\") to centimetres")
+        checkEqual(value("2 GB to MB"), 2000, "gigabytes to megabytes")
+        checkEqual(value("1.5 hours in minutes"), 90, "hours to minutes")
+        checkEqual(value("2 weeks in days"), 14, "weeks to days")
+        checkEqual(value("60 mph in kph"), 96.561, "speeds")
+        checkEqual(UnitConverter.convert("5 km in miles")?.text, "3.10686 miles", "the answer is shown with its unit")
+        checkEqual(value("5 kg in km"), nil, "different kinds of unit don't convert")
+        checkEqual(value("5 bananas in apples"), nil, "unknown units are ignored")
+    }
+}
+
+@MainActor
+final class StaticProvider: LauncherProvider {
+    let list: [LauncherResult]
+    init(_ list: [LauncherResult]) { self.list = list }
+    func results(for query: String) -> [LauncherResult] { list }
+}
+
+@MainActor
+enum LauncherSearchTests {
+    static func run() {
+        check(FuzzyMatch.score("saf", "Safari") > FuzzyMatch.score("saf", "Kids Safari Game"), "names starting with the text come first")
+        check(FuzzyMatch.score("vsc", "Visual Studio Code") > 0, "initials find apps (vsc → Visual Studio Code)")
+        check(FuzzyMatch.score("code", "Visual Studio Code") > 0, "any word in the name matches")
+        check(FuzzyMatch.score("sfri", "Safari") > 0, "letters in order with gaps match")
+        checkEqual(FuzzyMatch.score("xyz", "Safari"), 0, "unrelated text doesn't match")
+        checkEqual(FuzzyMatch.score("Safari", "Safari"), 100, "an exact name scores highest")
+
+        let apps = AppsProvider()
+        let safari = apps.results(for: "safari").first
+        checkEqual(safari?.title, "Safari", "finds Safari in Applications")
+        check(apps.results(for: "calc").contains { $0.title == "Calculator" }, "finds Calculator")
+        check(apps.results(for: "sys set").contains { $0.title == "System Settings" }, "finds System Settings from \"sys set\"")
+        check(apps.results(for: "finder").contains { $0.title == "Finder" }, "finds Finder")
+
+        Prefs.launcherSearchFiles = false
+        let model = LauncherModel { [CalculatorProvider(), apps, StaticProvider([
+            LauncherResult(id: "a", title: "A", kind: "Test", icon: .symbol("a"), score: 10) {},
+            LauncherResult(id: "b", title: "B", kind: "Test", icon: .symbol("b"), score: 50) {},
+        ])] }
+        model.query = "2+2"
+        checkEqual(model.results.first?.title, "= 4", "sums are answered first")
+        model.query = "saf"
+        checkEqual(model.results.first?.title, "Safari", "best match is selected first")
+        checkEqual(model.selectedIndex, 0, "selection starts at the top")
+        model.move(1)
+        checkEqual(model.selectedIndex, 1, "↓ moves down")
+        model.move(-5)
+        checkEqual(model.selectedIndex, 0, "↑ stops at the top")
+        model.query = ""
+        check(model.results.isEmpty, "an empty search shows the tips instead of results")
+        Prefs.launcherSearchFiles = true
+    }
+}
+
+@MainActor
+enum LauncherProviderTests {
+    static func run() {
+        let google = Quicklink(keyword: "g", name: "Google", url: "https://www.google.com/search?q={query}")
+        checkEqual(google.address(for: "big cats")?.absoluteString, "https://www.google.com/search?q=big%20cats", "quicklink search words go into the address")
+        checkEqual(google.address(for: "a&b")?.absoluteString, "https://www.google.com/search?q=a%26b", "special characters are made safe")
+        checkEqual(google.homePage?.absoluteString, "https://www.google.com", "without search words it opens the home page")
+
+        let provider = QuicklinksProvider()
+        Prefs.quicklinks = Quicklink.defaults
+        checkEqual(provider.results(for: "g cats").first?.title, "Search Google for “cats”", "\"g cats\" searches Google")
+        checkEqual(provider.results(for: "yt lofi").first?.title, "Search YouTube for “lofi”", "\"yt lofi\" searches YouTube")
+        check(provider.results(for: "zz cats").isEmpty, "an unknown keyword does nothing")
+        Prefs.quicklinks = [Quicklink(keyword: "imdb", name: "IMDb", url: "https://www.imdb.com/find?q={query}")]
+        checkEqual(provider.results(for: "imdb dune").first?.title, "Search IMDb for “dune”", "your own quicklinks work")
+        checkEqual(Prefs.quicklinks.first?.keyword, "imdb", "quicklinks are saved")
+        Prefs.quicklinks = Quicklink.defaults
+
+        let commands = SystemCommandsProvider()
+        checkEqual(commands.results(for: "lock").first?.title, "Lock Screen", "\"lock\" finds Lock Screen")
+        check(commands.results(for: "dark").contains { $0.title == "Toggle Dark Mode" }, "\"dark\" finds Toggle Dark Mode")
+        check(commands.results(for: "trash").contains { $0.title == "Empty Bin" }, "\"trash\" finds Empty Bin")
+        check(commands.results(for: "reboot").contains { $0.title == "Restart" }, "\"reboot\" finds Restart")
+        check(commands.results(for: "sleep").contains { $0.title == "Sleep" }, "\"sleep\" finds Sleep")
+
+        let store = ClipboardStore()
+        store.add(ClipboardStoreTests.text("42 Example Street, London"))
+        let clips = ClipboardLauncherProvider(store: store, paster: Paster(store: store, monitor: ClipboardMonitor(store: store)))
+        checkEqual(clips.results(for: "example street").first?.title, "42 Example Street, London", "the launcher finds clipboard history")
+        checkEqual(clips.results(for: "example street").first?.kind, "Clipboard", "and labels it Clipboard")
+
+        let center = ShortcutCenter()
+        let clash = center.assign(Shortcut(keyCode: kVK_Space, modifiers: optionKey), to: .clipboardHistory)
+        check(clash?.contains("Toolbelt already uses") == true, "warns when another Toolbelt shortcut (the launcher's ⌥Space) has the keys", clash ?? "no warning")
+        checkEqual(ShortcutAction.openLauncher.defaultShortcut?.display, "⌥Space", "the launcher opens with ⌥Space")
     }
 }

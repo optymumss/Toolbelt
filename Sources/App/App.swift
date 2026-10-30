@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcuts = ShortcutCenter()
         modules = ModuleManager(shortcuts: shortcuts)
         modules.register(ClipboardModule(shortcuts: shortcuts))
+        modules.register(LauncherModule(shortcuts: shortcuts, modules: modules) { [weak self] in
+            self?.settings.show(tab: nil)
+        })
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -52,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "clipboard": modules.module(.clipboard)?.open()
             case "clipboard-preview": (modules.module(.clipboard) as? ClipboardModule)?.openWithPreview()
             case "menu": statusMenu.open()
+            case "settings-launcher": settings.show(tab: .module(.launcher))
+            case let show where show.hasPrefix("launcher:"):
+                (modules.module(.launcher) as? LauncherModule)?.open(query: String(show.dropFirst("launcher:".count)))
             default: break
             }
         }
