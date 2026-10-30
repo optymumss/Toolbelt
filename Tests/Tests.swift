@@ -604,6 +604,10 @@ enum LauncherSearchTests {
         check(apps.results(for: "sys set").contains { $0.title == "System Settings" }, "finds System Settings from \"sys set\"")
         check(apps.results(for: "finder").contains { $0.title == "Finder" }, "finds Finder")
 
+        check(FileSearch.isProgramData("/Users/me/code/app/node_modules/lodash/index.js"), "program folders like node_modules are left out of file results")
+        check(FileSearch.isProgramData("/Users/me/.config/thing"), "hidden folders are left out")
+        check(!FileSearch.isProgramData("/Users/me/Documents/Taxes 2026.pdf"), "your documents are kept")
+
         Prefs.launcherSearchFiles = false
         let model = LauncherModel { [CalculatorProvider(), apps, StaticProvider([
             LauncherResult(id: "a", title: "A", kind: "Test", icon: .symbol("a"), score: 10) {},

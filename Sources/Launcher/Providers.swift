@@ -155,12 +155,14 @@ final class FileSearch {
         for index in 0..<min(query.resultCount, 60) {
             guard let item = query.result(at: index) as? NSMetadataItem,
                   let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
-            // Apps are listed by the apps search; Library folders are mostly app data.
-            if path.hasSuffix(".app") || path.contains("/Library/") || path.contains("/.") { continue }
+            // Apps are listed by the apps search; the rest is program data, not your files.
+            if path.hasSuffix(".app") || isProgramData(path) { continue }
             let url = URL(fileURLWithPath: path)
             let name = url.lastPathComponent
-            let score = FuzzyMatch.score(text, name)
+            var score = FuzzyMatch.score(text, name)
             guard score > 0 else { continue }
+            // Files you've actually opened are more likely to be what you want.
+            if item.value(forAttribute: "kMDItemLastUsedDate") != nil { score += 15 }
             let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
             let home = NSHomeDirectory()
             let shortPath = url.deletingLastPathComponent().path.replacingOccurrences(of: home, with: "~")
@@ -174,6 +176,16 @@ final class FileSearch {
             })
         }
         return Array(results.sorted { $0.score > $1.score }.prefix(8))
+    }
+
+    /// Folders full of program files that nobody searches for by hand.
+    private static let programFolders = [
+        "/Library/", "/node_modules/", "/DerivedData/", "/Caches/", "/site-packages/",
+        "/.venv/", "/venv/", "/vendor/", "/Pods/", "/hostedtoolcache/", "/actions-runner/",
+    ]
+
+    static func isProgramData(_ path: String) -> Bool {
+        path.contains("/.") || programFolders.contains { path.contains($0) }
     }
 }
 
