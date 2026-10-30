@@ -63,6 +63,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "clipboard": modules.module(.clipboard)?.open()
             case "clipboard-preview": (modules.module(.clipboard) as? ClipboardModule)?.openWithPreview()
             case "menu": statusMenu.open()
+            case "energy-settings":
+                // Open every Settings tab, then close the window, as a person might.
+                let tabs: [SettingsTab] = [.general, .shortcuts, .permissions] + ModuleID.allCases.map { .module($0) }
+                for (i, tab) in tabs.enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.4) { [self] in settings.show(tab: tab) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(tabs.count) * 0.4 + 0.5) { [self] in settings.close() }
             case "settings-launcher": settings.show(tab: .module(.launcher))
             case "settings-windows": settings.show(tab: .module(.windows))
             case "settings-snippets": settings.show(tab: .module(.snippets))

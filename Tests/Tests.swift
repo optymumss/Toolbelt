@@ -43,6 +43,7 @@ enum ToolbeltTests {
         t.group("Shelf: dropping and dragging out", ShelfStoreTests.run)
         t.group("Downloads: planning parts", DownloadPlanTests.run)
         t.group("Downloads: real downloads from a test server", DownloadTests.run)
+        t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -1228,5 +1229,176 @@ enum DownloadTests {
         let provider = DownloadsLauncherProvider(module: module)
         checkEqual(provider.results(for: "https://example.com/big.iso").first?.title, "Download big.iso", "pasting a link in the launcher offers to download it")
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+// MARK: - End to end
+
+/// Starts the real Toolbelt app and uses it with real key presses, checking the results in
+/// TextEdit and Calculator — the closest an automated test gets to a person using it.
+@MainActor
+enum EndToEndTests {
+    static let letters: [Character: Int] = [
+        "a": kVK_ANSI_A, "b": kVK_ANSI_B, "c": kVK_ANSI_C, "d": kVK_ANSI_D, "e": kVK_ANSI_E, "f": kVK_ANSI_F,
+        "g": kVK_ANSI_G, "h": kVK_ANSI_H, "i": kVK_ANSI_I, "j": kVK_ANSI_J, "k": kVK_ANSI_K, "l": kVK_ANSI_L,
+        "m": kVK_ANSI_M, "n": kVK_ANSI_N, "o": kVK_ANSI_O, "p": kVK_ANSI_P, "q": kVK_ANSI_Q, "r": kVK_ANSI_R,
+        "s": kVK_ANSI_S, "t": kVK_ANSI_T, "u": kVK_ANSI_U, "v": kVK_ANSI_V, "w": kVK_ANSI_W, "x": kVK_ANSI_X,
+        "y": kVK_ANSI_Y, "z": kVK_ANSI_Z, "0": kVK_ANSI_0, "1": kVK_ANSI_1, "2": kVK_ANSI_2, "3": kVK_ANSI_3,
+        "4": kVK_ANSI_4, "5": kVK_ANSI_5, "6": kVK_ANSI_6, "7": kVK_ANSI_7, "8": kVK_ANSI_8, "9": kVK_ANSI_9,
+        " ": kVK_Space, ";": kVK_ANSI_Semicolon,
+    ]
+
+    static func press(_ key: Int, _ flags: CGEventFlags = []) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        // A real keyboard marks arrow keys as keypad + Fn keys; shortcuts with arrows rely on it.
+        var flags = flags
+        if [kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow].contains(key) {
+            flags.formUnion([.maskNumericPad, .maskSecondaryFn])
+        }
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key), keyDown: down)
+            event?.flags = flags
+            event?.post(tap: .cghidEventTap)
+        }
+        spin(0.08)
+    }
+
+    static func type(_ text: String) {
+        for ch in text {
+            if ch == "*" { press(kVK_ANSI_8, .maskShift) } else if let key = letters[ch] { press(key) }
+        }
+    }
+
+    /// Windows Toolbelt has on screen (panels, shelves, Settings).
+    static func windowCount(of pid: pid_t) -> Int {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return list.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 }.count
+    }
+
+    static func run() {
+        let appPath = "build/Toolbelt.app/Contents/MacOS/Toolbelt"
+        guard FileManager.default.fileExists(atPath: appPath) else {
+            print("  – skipped: build the app first (bash build.sh)")
+            return
+        }
+        guard AXIsProcessTrusted(), Permission.inputMonitoring.isGranted else {
+            print("  – skipped: this Mac hasn't given the test program Input Monitoring and Accessibility")
+            return
+        }
+
+        // Toolbelt with its own scratch data, and one snippet.
+        let data = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-e2e-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+        try? #"[{"id":"8E3C1E2A-0000-4000-8000-000000000001","keyword":";ee","name":"E2E","text":"End to end works"}]"#
+            .write(to: data.appendingPathComponent("snippets.json"), atomically: true, encoding: .utf8)
+        let app = Process()
+        app.executableURL = URL(fileURLWithPath: appPath)
+        var environment = ProcessInfo.processInfo.environment
+        environment["TOOLBELT_DATA_DIR"] = data.path
+        app.environment = environment
+        do { try app.run() } catch { check(false, "Toolbelt starts", "\(error)"); return }
+        spin(4)
+        check(app.isRunning, "Toolbelt starts and keeps running")
+        let pid = app.processIdentifier
+
+        // TextEdit with an empty document, in front.
+        let document = FileManager.default.temporaryDirectory.appendingPathComponent("e2e-\(UUID().uuidString).txt")
+        FileManager.default.createFile(atPath: document.path, contents: Data())
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "TextEdit", document.path]
+        try? open.run()
+        open.waitUntilExit()
+        spin(3)
+        guard let textEdit = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").first else {
+            check(false, "TextEdit opens")
+            app.terminate()
+            return
+        }
+        func focusTextEdit() {
+            textEdit.activate()
+            spin(0.8)
+        }
+        func clearDocument() {
+            focusTextEdit()
+            press(kVK_ANSI_A, .maskCommand)
+            press(kVK_Delete)
+        }
+        focusTextEdit()
+
+        // 1. Clipboard: copy, ⌘⇧V, Return → pasted into TextEdit
+        let unique = "Copied for the end to end test \(Int.random(in: 1000...9999))"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(unique, forType: .string)
+        spin(1.5)
+        clearDocument()
+        let before = windowCount(of: pid)
+        press(kVK_ANSI_V, [.maskCommand, .maskShift])
+        spin(1)
+        check(windowCount(of: pid) > before, "⌘⇧V opens the clipboard history over TextEdit")
+        press(kVK_Return)
+        spin(1.5)
+        checkEqual(SnippetTypingTests.text(in: textEdit), unique, "pressing Return pastes the copied text into TextEdit")
+
+        // 2. Snippets in the real app
+        clearDocument()
+        type(";ee")
+        spin(1.5)
+        checkEqual(SnippetTypingTests.text(in: textEdit), "End to end works", "typing ;ee in TextEdit expands the snippet")
+
+        // 3. Window shortcuts on TextEdit's window
+        focusTextEdit()
+        if let window = AXWindow.focused(in: textEdit.processIdentifier), let start = window.frame {
+            press(kVK_LeftArrow, [.maskControl, .maskAlternate])
+            spin(1)
+            let area = Screens.all[Screens.index(containing: start)].area
+            let moved = window.frame ?? .zero
+            check(abs(moved.minX - area.minX) < 2 && abs(moved.width - area.width / 2) < 3, "⌃⌥← moves TextEdit's window to the left half", "\(moved) in \(area)")
+            press(kVK_Return, [.maskControl, .maskAlternate])
+            spin(1)
+            let full = window.frame ?? .zero
+            check(abs(full.width - area.width) < 3, "⌃⌥↩ fills the screen", "\(full) in \(area)")
+            press(kVK_Delete, [.maskControl, .maskAlternate])
+            spin(1)
+            check(abs((window.frame ?? .zero).width - full.width) > 3, "⌃⌥⌫ puts it back")
+        } else {
+            check(false, "TextEdit's window can be found")
+        }
+
+        // 4. Launcher: sums and opening apps
+        focusTextEdit()
+        let beforeLauncher = windowCount(of: pid)
+        press(kVK_Space, .maskAlternate)
+        spin(1)
+        check(windowCount(of: pid) > beforeLauncher, "⌥Space opens the launcher")
+        type("6*7")
+        spin(0.5)
+        press(kVK_Return)
+        spin(1)
+        checkEqual(NSPasteboard.general.string(forType: .string), "42", "typing 6*7 and Return copies the answer, 42")
+
+        focusTextEdit()
+        press(kVK_Space, .maskAlternate)
+        spin(1)
+        type("calculator")
+        spin(1)
+        press(kVK_Return)
+        spin(3)
+        let calculator = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.calculator").first
+        check(calculator != nil, "typing calculator and Return opens Calculator")
+        calculator?.forceTerminate()
+
+        // 5. Shelf shortcut
+        focusTextEdit()
+        let windowsBefore = windowCount(of: pid)
+        press(kVK_ANSI_S, [.maskControl, .maskAlternate])
+        spin(1)
+        check(windowCount(of: pid) > windowsBefore, "⌃⌥S opens a new shelf")
+
+        check(app.isRunning, "Toolbelt is still running after all that")
+        app.terminate()
+        textEdit.forceTerminate()
+        try? FileManager.default.removeItem(at: data)
+        try? FileManager.default.removeItem(at: document)
     }
 }

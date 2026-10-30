@@ -4,7 +4,9 @@ import SwiftUI
 struct PermissionsTab: View {
     @State private var granted: [Permission: Bool] = Self.check()
 
-    private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// Re-checks permissions when a window comes to the front (for example after you return from
+    /// System Settings), instead of a timer that would keep waking the Mac while Settings is closed.
+    private let refresh = NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)
 
     var body: some View {
         Form {

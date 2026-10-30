@@ -31,8 +31,9 @@ while IFS= read -r file; do
     SOURCES+=("$file")
 done < <(find Sources -name '*.swift' | sort)
 
+# -O with whole-module optimisation: the fastest, most energy-efficient code on Apple silicon (M-series).
 xcrun swiftc \
-    -O \
+    -O -whole-module-optimization \
     -parse-as-library \
     -swift-version 5 \
     -target "${ARCH}-apple-macos14.0" \

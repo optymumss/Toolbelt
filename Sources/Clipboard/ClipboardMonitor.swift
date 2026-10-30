@@ -29,13 +29,14 @@ final class ClipboardMonitor {
         guard timer == nil else { return }
         // Don't record whatever was copied while the module was off.
         lastChangeCount = NSPasteboard.general.changeCount
-        timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.poll()
             }
         }
-        timer?.tolerance = 0.1
+        // Generous tolerance lets macOS line this up with other wake-ups (saves battery).
+        timer?.tolerance = 0.25
     }
 
     func stop() {

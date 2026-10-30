@@ -10,7 +10,9 @@ struct ClipboardSettingsTab: View {
     @State private var ignored: [String] = Prefs.ignoredBundleIDs
     @State private var accessibilityOK = Permission.accessibility.isGranted
 
-    private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// Re-checks permissions when a window comes to the front (for example after you return from
+    /// System Settings), instead of a timer that would keep waking the Mac while Settings is closed.
+    private let refresh = NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)
 
     /// Sections only: the module tab puts them in a form below the on/off switch.
     var body: some View {
