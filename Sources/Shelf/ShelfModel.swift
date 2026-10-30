@@ -129,7 +129,8 @@ final class ShelfStore: ObservableObject {
     /// Adds whatever is on a pasteboard (a drop, or the clipboard) to a shelf.
     /// Returns how many items were added.
     @discardableResult
-    func add(from pasteboard: NSPasteboard, to shelfID: UUID, copyFiles: Bool = Prefs.shelfCopiesFiles) -> Int {
+    func add(from pasteboard: NSPasteboard, to shelfID: UUID, copyFiles: Bool? = nil) -> Int {
+        let copyFiles = copyFiles ?? Prefs.shelfCopiesFiles
         var newItems: [ShelfItem] = []
         let storage = storage(for: shelfID)
         try? FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
