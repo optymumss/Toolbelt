@@ -95,6 +95,8 @@ SCREENS=(
     "settings-downloads=settings-downloads"
     "downloads=downloads"
     "launcher-download=launcher:https://example.com/files/big-file.zip"
+    "launcher-switcher=launcher-switcher"
+    "notes-demo=notes-demo"
 )
 for entry in "${SCREENS[@]}"; do
     screen="${entry%%=*}"
@@ -109,6 +111,8 @@ for entry in "${SCREENS[@]}"; do
         failed=1
     fi
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    # Notes stay on screen by design; remove the demo ones so later screens are clear.
+    [ "$screen" = "notes-demo" ] && rm -f "$DATA_DIR/notes.json"
     sleep 1
 done
 

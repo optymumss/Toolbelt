@@ -74,11 +74,13 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     case clipboardHistory
     case pasteNextFromStack
     case openLauncher
+    case appSwitcher
+    case newNote
     case window(WindowAction)
     case newShelf
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .pasteNextFromStack, .openLauncher] + WindowAction.allCases.map { .window($0) } + [.newShelf]
+        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + [.newShelf]
     }
 
     /// Stable name used to save the shortcut.
@@ -87,6 +89,8 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory: return "clipboardHistory"
         case .pasteNextFromStack: return "pasteNextFromStack"
         case .openLauncher: return "openLauncher"
+        case .appSwitcher: return "appSwitcher"
+        case .newNote: return "newNote"
         case .window(let action): return "window.\(action.rawValue)"
         case .newShelf: return "newShelf"
         }
@@ -99,6 +103,8 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory: return "Open clipboard history"
         case .pasteNextFromStack: return "Paste next from paste stack"
         case .openLauncher: return "Open launcher"
+        case .appSwitcher: return "Switch apps and windows"
+        case .newNote: return "New floating note"
         case .window(let action): return action.title
         case .newShelf: return "New shelf"
         }
@@ -107,7 +113,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     var module: ModuleID {
         switch self {
         case .clipboardHistory, .pasteNextFromStack: return .clipboard
-        case .openLauncher: return .launcher
+        case .openLauncher, .appSwitcher, .newNote: return .launcher
         case .window: return .windows
         case .newShelf: return .shelf
         }
@@ -119,6 +125,8 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory: return Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey)
         case .pasteNextFromStack: return Shortcut(keyCode: kVK_ANSI_V, modifiers: ctrlOpt)
         case .openLauncher: return Shortcut(keyCode: kVK_Space, modifiers: optionKey)
+        case .appSwitcher: return Shortcut(keyCode: kVK_Tab, modifiers: optionKey)
+        case .newNote: return Shortcut(keyCode: kVK_ANSI_N, modifiers: ctrlOpt)
         case .newShelf: return Shortcut(keyCode: kVK_ANSI_S, modifiers: ctrlOpt)
         case .window(let action):
             switch action {

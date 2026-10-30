@@ -1,9 +1,15 @@
-# Toolbelt — v0.10
+# Toolbelt — v0.11
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.11: more launcher
+
+- **App and window switcher:** press **⌥⇥** (Option-Tab). Running apps and their windows are listed, most recently used first. Type to narrow it down, ↩ to switch, **⌘Q** to quit, **⌘H** to hide, **⌘W** to close a window.
+- **Floating notes:** press **⌃⌥N** (or type "new note" in the launcher) for a sticky note that stays on top of other windows. Have as many as you like. Drag to move, drag the edges to resize, use the palette for a colour, and click the close button to delete one. Notes are kept between restarts and can be found from the launcher.
+- **Recently used first:** what you pick often in the launcher moves up the list.
 
 ## What's new in 0.10: more clipboard
 

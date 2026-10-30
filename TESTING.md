@@ -65,3 +65,6 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Clipboard | Named clipboards | Tests (incl. launcher) |
 | Clipboard | Search text in images (OCR) | Tests "Clipboard: text in images" |
 | Clipboard | Text transforms | Tests "transforms, editing and the paste stack" |
+| Launcher | App and window switcher (quit, hide, close) | Tests "recently used, switcher and notes"; end-to-end ⌥⇥ ⌘H / Return; screenshot `launcher-switcher` |
+| Launcher | Floating notes | Tests; end-to-end ⌃⌥N; screenshot `notes-demo` |
+| Launcher | Recently used first | Tests "recently used, switcher and notes" |

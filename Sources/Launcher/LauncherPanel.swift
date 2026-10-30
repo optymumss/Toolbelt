@@ -14,6 +14,11 @@ final class LauncherModel: ObservableObject {
     private let providers: () -> [LauncherProvider]
     private let files = FileSearch()
     private var instantResults: [LauncherResult] = []
+    /// Ranks results you've picked before higher.
+    var usage: LauncherUsage?
+    /// When set, the launcher is the app and window switcher: only this provider, and
+    /// everything is listed even before you type.
+    @Published var switcher: LauncherProvider?
 
     init(providers: @escaping () -> [LauncherProvider]) {
         self.providers = providers
@@ -31,6 +36,10 @@ final class LauncherModel: ObservableObject {
     func refresh() {
         let q = query.trimmingCharacters(in: .whitespaces)
         files.cancel()
+        if let switcher {
+            publish(switcher.results(for: q), keepSelection: false)
+            return
+        }
         guard !q.isEmpty else {
             instantResults = []
             results = []
@@ -50,7 +59,11 @@ final class LauncherModel: ObservableObject {
 
     private func publish(_ list: [LauncherResult], keepSelection: Bool) {
         let selectedID = keepSelection ? selected?.id : nil
-        results = Self.rank(list)
+        var boosted = list
+        if let usage {
+            for i in boosted.indices { boosted[i].score += usage.boost(for: boosted[i].id) }
+        }
+        results = Self.rank(boosted)
         selectedIndex = selectedID.flatMap { id in results.firstIndex { $0.id == id } } ?? 0
     }
 
@@ -103,8 +116,10 @@ final class LauncherPanelController: NSObject, NSWindowDelegate {
         panel.isVisible ? hide() : show()
     }
 
-    func show(query: String = "") {
+    func show(query: String = "", switcher: LauncherProvider? = nil) {
+        model.switcher = switcher
         model.query = query
+        if switcher != nil { model.refresh() }
 
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main
@@ -130,6 +145,7 @@ final class LauncherPanelController: NSObject, NSWindowDelegate {
 
     private func run(_ result: LauncherResult) {
         hide()
+        model.usage?.record(result.id)
         result.action()
     }
 
@@ -153,6 +169,14 @@ final class LauncherPanelController: NSObject, NSWindowDelegate {
             return true
         case 126: // up
             model.move(-1)
+            return true
+        case 12 where flags.contains(.command), 4 where flags.contains(.command), 13 where flags.contains(.command):
+            // ⌘Q quit, ⌘H hide, ⌘W close window (plain Q, H and W are typed into the search)
+            let key: Character = event.keyCode == 12 ? "q" : event.keyCode == 4 ? "h" : "w"
+            guard let action = model.selected?.extraActions[key] else { return true }
+            action()
+            // Give the app a moment, then show the updated list.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.model.refresh() }
             return true
         case 36, 76: // return, enter
             guard let result = model.selected else { return true }
@@ -180,7 +204,7 @@ struct LauncherView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 20))
                     .foregroundStyle(.secondary)
-                TextField("Search apps, files, commands, sums…", text: $model.query)
+                TextField(model.switcher == nil ? "Search apps, files, commands, sums…" : "Switch to an app or window…", text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 22))
                     .focused($focused)
@@ -200,7 +224,13 @@ struct LauncherView: View {
             Divider()
             HStack(spacing: 14) {
                 KeyHint(keys: "↩", label: "Open")
-                KeyHint(keys: "⌘↩", label: "Show in Finder")
+                if model.switcher == nil {
+                    KeyHint(keys: "⌘↩", label: "Show in Finder")
+                } else {
+                    KeyHint(keys: "⌘Q", label: "Quit")
+                    KeyHint(keys: "⌘H", label: "Hide")
+                    KeyHint(keys: "⌘W", label: "Close window")
+                }
                 KeyHint(keys: "↑↓", label: "Move")
                 Spacer()
                 KeyHint(keys: "esc", label: "Close")
