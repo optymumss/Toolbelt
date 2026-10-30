@@ -45,6 +45,7 @@ jobs:
       - name: Run automated tests
         run: bash test.sh
       - name: Test the Chrome extension in Chrome
+        if: env.FULL == 'true'
         run: bash .github/scripts/chrome.sh
       - name: Check battery use while idle
         if: env.FULL == 'true'
