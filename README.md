@@ -1,9 +1,24 @@
-# Toolbelt — v0.3
+# Toolbelt — v0.4
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
-**Built so far:** the app shell (menu, settings, shortcuts, permissions) and the clipboard manager.
+**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager and the launcher.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.4: the launcher
+
+Press **⌥Space** (Option-Space) anywhere to open a search bar. Type and press Return:
+
+| Type | What happens |
+|---|---|
+| `saf` | Opens Safari. Finds apps, files and folders. ⌘Return shows a file in Finder. |
+| `12 * 7 + 1` | Works out the sum. Return copies the answer. Supports `( )`, `^`, `%`, `sqrt()` and more. |
+| `5 km in miles` | Converts units: length, weight, temperature, volume, speed, area, time and data sizes. |
+| `g cats` | Searches Google for "cats". Also `yt` YouTube, `w` Wikipedia, `maps`, `ddg`, `gh`. Add your own in Settings → Launcher. |
+| `lock`, `sleep`, `restart`, `shut down`, `log out`, `empty bin`, `dark mode`, `eject` | System commands. |
+| anything you copied | Finds it in your clipboard history; Return pastes it. |
+
+The first time you use **Empty Bin** or **Toggle Dark Mode**, macOS asks whether Toolbelt may control Finder or System Events. Click **Allow**.
 
 ## What's new in 0.3
 
@@ -49,6 +64,7 @@ Without it everything still works, but choosing an item only copies it and you p
 
 | Keys | Action |
 |---|---|
+| ⌥Space | Open the launcher, from any app |
 | ⌘⇧V | Open history, from any app |
 | Type | Search |
 | ↑ ↓ | Move selection |

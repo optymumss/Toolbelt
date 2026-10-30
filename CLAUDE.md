@@ -14,7 +14,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 
 ## Build order
 
-1 App shell ✅ (v0.2) · 2 Clipboard (v0.1 base; finish [Core]) · 3 Launcher · 4 Window management ·
+1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ·
 5 Snippets · 6 Drop shelf · 7 Download manager · 8 Screenshots · 9 Gestures · 10 Automation/macros.
 [Core] items of every module first, then [Next], then [Later].
 
@@ -26,6 +26,8 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 - `Sources/Settings/` — Settings window: General, Shortcuts, Permissions, and one tab per module.
 - `Sources/<Module>/` — one folder per module. A module conforms to `ToolbeltModule`, adds a
   `ModuleID` case, its `ShortcutAction` cases, and is registered in `AppDelegate`.
+- A module can make its items searchable from the launcher by returning a `LauncherProvider`
+  from `launcherProvider` (see `ClipboardLauncherProvider`).
 - All data lives in `~/Library/Application Support/Toolbelt/` (settings in `settings.plist`, not UserDefaults).
 
 ## Building

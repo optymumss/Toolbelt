@@ -4,24 +4,28 @@ import SwiftUI
 /// Every module Toolbelt has. New modules are added here as they're built.
 enum ModuleID: String, CaseIterable, Identifiable {
     case clipboard
+    case launcher
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .clipboard: return "Clipboard"
+        case .launcher: return "Launcher"
         }
     }
 
     var symbol: String {
         switch self {
         case .clipboard: return "doc.on.clipboard"
+        case .launcher: return "magnifyingglass"
         }
     }
 
     var summary: String {
         switch self {
         case .clipboard: return "Keeps everything you copy so you can find it and paste it again."
+        case .launcher: return "A search bar for apps, files, sums, unit conversions, web searches and commands."
         }
     }
 }
@@ -44,6 +48,12 @@ protocol ToolbeltModule: AnyObject {
     /// The module's sections in its Settings tab, shown below its on/off switch.
     func settingsView() -> AnyView
     func willTerminate()
+    /// Lets the launcher search this module's items (nil if there's nothing to search).
+    var launcherProvider: LauncherProvider? { get }
+}
+
+extension ToolbeltModule {
+    var launcherProvider: LauncherProvider? { nil }
 }
 
 /// Starts and stops modules as they're turned on and off, or Toolbelt is paused.

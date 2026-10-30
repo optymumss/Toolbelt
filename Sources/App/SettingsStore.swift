@@ -131,6 +131,26 @@ enum Prefs {
         store.set(enabled, for: "module.\(module.rawValue).enabled")
     }
 
+    // Launcher
+
+    static var launcherSearchFiles: Bool {
+        get { store.value("launcher.files", default: true) }
+        set { store.set(newValue, for: "launcher.files") }
+    }
+
+    static var launcherSearchClipboard: Bool {
+        get { store.value("launcher.clipboard", default: true) }
+        set { store.set(newValue, for: "launcher.clipboard") }
+    }
+
+    static var quicklinks: [Quicklink] {
+        get {
+            guard let stored = store.raw("launcher.quicklinks") as? [[String: String]] else { return Quicklink.defaults }
+            return stored.compactMap(Quicklink.init(plist:))
+        }
+        set { store.set(newValue.map(\.plist), for: "launcher.quicklinks") }
+    }
+
     // Clipboard
 
     static var clipboardPaused: Bool {
