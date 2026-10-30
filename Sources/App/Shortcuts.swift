@@ -77,11 +77,13 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     case appSwitcher
     case newNote
     case window(WindowAction)
+    /// Puts saved layout 1–9 back.
+    case layout(Int)
     case newShelf
     case snippetPicker
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + [.newShelf, .snippetPicker]
+        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + (1...9).map { .layout($0) } + [.newShelf, .snippetPicker]
     }
 
     /// Stable name used to save the shortcut.
@@ -93,6 +95,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .appSwitcher: return "appSwitcher"
         case .newNote: return "newNote"
         case .window(let action): return "window.\(action.rawValue)"
+        case .layout(let n): return "layout.\(n)"
         case .newShelf: return "newShelf"
         case .snippetPicker: return "snippetPicker"
         }
@@ -108,6 +111,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .appSwitcher: return "Switch apps and windows"
         case .newNote: return "New floating note"
         case .window(let action): return action.title
+        case .layout(let n): return "Apply saved layout \(n)"
         case .newShelf: return "New shelf"
         case .snippetPicker: return "Find and insert a snippet"
         }
@@ -117,7 +121,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         switch self {
         case .clipboardHistory, .pasteNextFromStack: return .clipboard
         case .openLauncher, .appSwitcher, .newNote: return .launcher
-        case .window: return .windows
+        case .window, .layout: return .windows
         case .newShelf: return .shelf
         case .snippetPicker: return .snippets
         }
@@ -133,6 +137,9 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .newNote: return Shortcut(keyCode: kVK_ANSI_N, modifiers: ctrlOpt)
         case .newShelf: return Shortcut(keyCode: kVK_ANSI_S, modifiers: ctrlOpt)
         case .snippetPicker: return Shortcut(keyCode: kVK_ANSI_Semicolon, modifiers: ctrlOpt)
+        case .layout(let n):
+            return Shortcut(keyCode: [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
+                                      kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9][n - 1], modifiers: ctrlOpt | cmdKey)
         case .window(let action):
             switch action {
             case .leftHalf: return Shortcut(keyCode: kVK_LeftArrow, modifiers: ctrlOpt)

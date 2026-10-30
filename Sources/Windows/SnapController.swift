@@ -5,6 +5,8 @@ import AppKit
 @MainActor
 final class SnapController {
     private let manager: WindowManager
+    /// Your own snap areas (used while ⌥ is held).
+    var areas: SnapAreaStore?
     private let overlay = SnapOverlay()
     /// Lets the screenshot check show the snap preview without a real drag.
     var overlayForScreenshot: SnapOverlay { overlay }
@@ -88,6 +90,19 @@ final class SnapController {
             return
         }
         let screen = Screens.all[screenIndex]
+
+        // Holding ⌥ over one of your own snap areas snaps to that area.
+        if NSEvent.modifierFlags.contains(.option), let areas, NSScreen.screens.indices.contains(screenIndex) {
+            let display = DisplayID.name(of: NSScreen.screens[screenIndex])
+            if let frame = SnapAreaStore.area(at: point, among: areas.areas(on: display), in: screen.area) {
+                if target?.frame != frame {
+                    target = (.maximize, frame)
+                    overlay.show(frame)
+                }
+                return
+            }
+        }
+
         guard let action = SnapZone.action(for: point, in: screen.frame),
               let frame = WindowLayout.frame(for: action, in: screen.area, current: startFrame, gap: CGFloat(Prefs.windowGap)) else {
             clearTarget()

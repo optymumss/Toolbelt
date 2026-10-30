@@ -71,3 +71,5 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Snippets | Fill-in blanks | Tests "fill-in blanks, picker and folders"; end-to-end ";hi" → form → "Hello sam!"; screenshot `snippet-form` |
 | Snippets | Searchable picker with a shortcut | Tests; end-to-end ⌃⌥; ; screenshot `snippet-picker` |
 | Snippets | Folders | Tests |
+| Windows | Saved layouts | Tests "saved layouts and snap areas" (save, move, apply, reopen app); end-to-end ⌃⌥⌘1 |
+| Windows | Custom snap areas (draw, review, edit) | Tests (hit-testing, saving); screenshot `snap-areas-editor`; **Manual** for drawing and ⌥-dragging |

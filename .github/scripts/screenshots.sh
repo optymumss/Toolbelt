@@ -89,6 +89,7 @@ SCREENS=(
     "windows-top-right=windows-top-right"
     "windows-center=windows-center"
     "windows-snap-preview=windows-snap-preview"
+    "snap-areas-editor=snap-areas-editor"
     "settings-snippets=settings-snippets"
     "launcher-snippet=launcher:address"
     "snippet-picker=snippet-picker"
@@ -116,6 +117,7 @@ for entry in "${SCREENS[@]}"; do
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
     # Notes stay on screen by design; remove the demo ones so later screens are clear.
     [ "$screen" = "notes-demo" ] && rm -f "$DATA_DIR/notes.json"
+    [ "$screen" = "snap-areas-editor" ] && rm -f "$DATA_DIR/snapareas.json"
     [ "$screen" = "shelf-demo" ] && rm -f "$DATA_DIR/shelves.json"
     sleep 1
 done

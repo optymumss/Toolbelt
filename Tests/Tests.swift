@@ -48,6 +48,7 @@ enum ToolbeltTests {
         t.group("Clipboard: text in images", ImageTextTests.run)
         t.group("Launcher: recently used, switcher and notes", LauncherNextTests.run)
         t.group("Snippets: fill-in blanks, picker and folders", SnippetsNextTests.run)
+        t.group("Windows: saved layouts and snap areas", WindowsNextTests.run)
         t.group("Settings backup", BackupTests.run)
         t.group("Services menu and right-click", ServicesTests.run)
         t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
@@ -1293,9 +1294,15 @@ enum EndToEndTests {
             return
         }
 
-        // Toolbelt with its own scratch data, and one snippet.
+        // Toolbelt with its own scratch data, some snippets, and a saved layout for TextEdit.
         let data = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-e2e-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+        if let screen = NSScreen.screens.first {
+            let layout = SavedLayout(name: "Writing", entries: [SavedLayout.Entry(
+                bundleID: "com.apple.TextEdit", appName: "TextEdit", display: DisplayID.name(of: screen),
+                place: RelativeRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5))])
+            try? JSONEncoder().encode([layout]).write(to: data.appendingPathComponent("layouts.json"))
+        }
         try? #"[{"id":"8E3C1E2A-0000-4000-8000-000000000001","keyword":";ee","name":"E2E","text":"End to end works"},{"id":"8E3C1E2A-0000-4000-8000-000000000002","keyword":";hi","name":"Greeting","text":"Hello {input:Name}!"}]"#
             .write(to: data.appendingPathComponent("snippets.json"), atomically: true, encoding: .utf8)
         let app = Process()
@@ -1410,6 +1417,16 @@ enum EndToEndTests {
             check(abs((window.frame ?? .zero).width - full.width) > 3, "⌃⌥⌫ puts it back")
         } else {
             check(false, "TextEdit's window can be found")
+        }
+
+        // 3b. Saved layout 1 (⌃⌥⌘1) puts TextEdit in the bottom-right quarter
+        focusTextEdit()
+        press(kVK_ANSI_1, [.maskControl, .maskAlternate, .maskCommand])
+        spin(1.5)
+        if let window = AXWindow.focused(in: textEdit.processIdentifier), let frame = window.frame {
+            let area = Screens.all[0].area
+            check(abs(frame.minX - area.midX) < 3 && abs(frame.width - area.width / 2) < 3,
+                  "⌃⌥⌘1 applies a saved layout", "\(frame) in \(area)")
         }
 
         // 4. Launcher: sums and opening apps
@@ -1815,5 +1832,73 @@ enum SnippetsNextTests {
         form.ask(title: "Another", fields: [("X", "")]) { _ in }
         check(answered == .some(nil), "opening another form cancels the first")
         spin(0.3)
+    }
+}
+
+// MARK: - Windows [Next]
+
+@MainActor
+enum WindowsNextTests {
+    static func run() {
+        let area = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        let frame = CGRect(x: 360, y: 243, width: 720, height: 438)
+        let relative = RelativeRect(frame, in: area)
+        checkEqual(relative.frame(in: area), frame, "window places are stored relative to the screen and come back exactly")
+        let bigger = CGRect(x: 0, y: 25, width: 2880, height: 1750)
+        checkEqual(relative.frame(in: bigger).width, 1440, "and scale to a different screen size")
+
+        let areas = [
+            SnapArea(display: "D", place: RelativeRect(x: 0, y: 0, width: 1, height: 1)),
+            SnapArea(display: "D", place: RelativeRect(x: 0, y: 0, width: 0.25, height: 0.5)),
+        ]
+        checkEqual(SnapAreaStore.area(at: CGPoint(x: 100, y: 100), among: areas, in: area),
+                   CGRect(x: 0, y: 25, width: 360, height: 438), "where snap areas overlap, the smaller one wins")
+        checkEqual(SnapAreaStore.area(at: CGPoint(x: 1000, y: 800), among: areas, in: area), area, "a point in only the big area uses it")
+        check(SnapAreaStore.area(at: CGPoint(x: 100, y: 100), among: [], in: area) == nil, "no areas, no snapping")
+        let store = SnapAreaStore()
+        store.areas = areas
+        checkEqual(SnapAreaStore().areas.count, 2, "snap areas are saved")
+        store.areas = []
+
+        // Save the current layout, mess the windows up, then put the layout back.
+        guard AXIsProcessTrusted() else {
+            print("  – skipped the real-window part: Accessibility isn't allowed for the test program")
+            return
+        }
+        let document = FileManager.default.temporaryDirectory.appendingPathComponent("layout-\(UUID().uuidString).txt")
+        FileManager.default.createFile(atPath: document.path, contents: Data())
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "TextEdit", document.path]
+        try? open.run()
+        open.waitUntilExit()
+        spin(3)
+        guard let textEdit = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").first,
+              let window = LayoutRunner.mainWindow(of: textEdit.processIdentifier) else {
+            check(false, "TextEdit opens for the layout test")
+            return
+        }
+        let manager = WindowManager()
+        manager.perform(.topLeft, on: window)
+        spin(0.8)
+        let saved = window.frame ?? .zero
+        let entries = LayoutRunner.capture()
+        check(entries.contains { $0.bundleID == "com.apple.TextEdit" }, "“Save Current Layout” records each visible app's window")
+        manager.perform(.bottomRight, on: window)
+        spin(0.8)
+        LayoutRunner.apply(SavedLayout(name: "Test", entries: entries.filter { $0.bundleID == "com.apple.TextEdit" }), manager: manager)
+        spin(2)
+        let restored = window.frame ?? .zero
+        check(abs(restored.minX - saved.minX) < 3 && abs(restored.minY - saved.minY) < 3 && abs(restored.width - saved.width) < 3,
+              "applying the layout puts the window back where it was saved", "now \(restored), saved \(saved)")
+        textEdit.forceTerminate()
+        spin(1)
+        LayoutRunner.apply(SavedLayout(name: "Test", entries: entries.filter { $0.bundleID == "com.apple.TextEdit" }), manager: manager)
+        _ = DownloadTests.waitFor(8) { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").isEmpty }
+        check(!NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").isEmpty,
+              "applying a layout opens apps that aren't running")
+        spin(3)
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").first?.forceTerminate()
+        try? FileManager.default.removeItem(at: document)
     }
 }

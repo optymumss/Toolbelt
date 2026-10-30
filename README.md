@@ -1,9 +1,14 @@
-# Toolbelt — v0.12
+# Toolbelt — v0.13
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.13: more window management
+
+- **Saved layouts:** arrange your apps how you like them, then choose **Move Front Window → Save Current Layout…** from the menu bar icon (or Settings → Windows). Press **⌃⌥⌘1** (to ⌃⌥⌘9 for later layouts) to put everything back. Apps that aren't running are opened first.
+- **Custom snap areas:** choose **Edit Snap Areas…** and drag on each display to draw your own areas (click one and press ⌫ to delete it; esc when done). Then, while dragging a window, **hold ⌥** over an area to snap the window into it.
 
 ## What's new in 0.12: more snippets
 
