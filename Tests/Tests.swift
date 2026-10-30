@@ -1255,6 +1255,11 @@ enum EndToEndTests {
 
     static func press(_ key: Int, _ flags: CGEventFlags = []) {
         let source = CGEventSource(stateID: .hidSystemState)
+        // A real keyboard marks arrow keys as keypad + Fn keys; shortcuts with arrows rely on it.
+        var flags = flags
+        if [kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow].contains(key) {
+            flags.formUnion([.maskNumericPad, .maskSecondaryFn])
+        }
         for down in [true, false] {
             let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key), keyDown: down)
             event?.flags = flags
