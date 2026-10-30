@@ -8,6 +8,14 @@ struct Snippet: Identifiable, Codable, Equatable {
     var name: String
     /// What it turns into. May contain placeholders like {date} and {cursor}.
     var text: String
+    /// Optional folder name, for keeping snippets organised.
+    var folder: String? = nil
+
+    var folderName: String { folder?.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? "No folder" }
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Keeps snippets in ~/Library/Application Support/Toolbelt/snippets.json
@@ -53,6 +61,22 @@ enum Placeholders {
         let cursorFromEnd: Int
     }
 
+    /// The blanks to fill in, in order: {input:Name} or {input:Name|default}.
+    static func fields(in template: String) -> [(name: String, defaultValue: String)] {
+        var fields: [(String, String)] = []
+        var rest = Substring(template)
+        while let open = rest.range(of: "{input:") {
+            guard let close = rest[open.upperBound...].firstIndex(of: "}") else { break }
+            let spec = rest[open.upperBound..<close]
+            let parts = spec.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = String(parts[0]).trimmingCharacters(in: .whitespaces)
+            let value = parts.count > 1 ? String(parts[1]) : ""
+            if !name.isEmpty, !fields.contains(where: { $0.0 == name }) { fields.append((name, value)) }
+            rest = rest[rest.index(after: close)...]
+        }
+        return fields
+    }
+
     static let help = [
         ("{date}", "today's date"),
         ("{time}", "the time now"),
@@ -60,9 +84,12 @@ enum Placeholders {
         ("{date:dd/MM/yyyy}", "date in your own format"),
         ("{clipboard}", "whatever you last copied"),
         ("{cursor}", "where the cursor ends up"),
+        ("{input:Name}", "a blank you fill in when it expands"),
+        ("{input:Name|Sam}", "a blank with a suggested answer"),
     ]
 
-    static func render(_ template: String, now: Date = Date(), clipboard: String? = nil, locale: Locale = .current) -> Result {
+    static func render(_ template: String, now: Date = Date(), clipboard: String? = nil, locale: Locale = .current,
+                       inputs: [String: String] = [:]) -> Result {
         var output = ""
         var cursorIndex: Int?
         var rest = Substring(template)
@@ -77,6 +104,10 @@ enum Placeholders {
             let name = String(rest[rest.index(after: open)..<close])
             if name == "cursor" {
                 cursorIndex = output.count
+            } else if name.hasPrefix("input:") {
+                let parts = name.dropFirst("input:".count).split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+                let field = String(parts[0]).trimmingCharacters(in: .whitespaces)
+                output += inputs[field] ?? (parts.count > 1 ? String(parts[1]) : "")
             } else if let value = value(for: name, now: now, clipboard: clipboard, locale: locale) {
                 output += value
             } else {

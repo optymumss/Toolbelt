@@ -68,3 +68,6 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Launcher | App and window switcher (quit, hide, close) | Tests "recently used, switcher and notes"; end-to-end ⌥⇥ ⌘H / Return; screenshot `launcher-switcher` |
 | Launcher | Floating notes | Tests; end-to-end ⌃⌥N; screenshot `notes-demo` |
 | Launcher | Recently used first | Tests "recently used, switcher and notes" |
+| Snippets | Fill-in blanks | Tests "fill-in blanks, picker and folders"; end-to-end ";hi" → form → "Hello sam!"; screenshot `snippet-form` |
+| Snippets | Searchable picker with a shortcut | Tests; end-to-end ⌃⌥; ; screenshot `snippet-picker` |
+| Snippets | Folders | Tests |

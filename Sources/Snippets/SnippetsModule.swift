@@ -10,13 +10,25 @@ final class SnippetsModule: ToolbeltModule {
 
     let store = SnippetStore()
     private(set) lazy var expander = SnippetExpander(store: store)
+    let form = SnippetFormController()
+    private(set) lazy var pickerProvider = SnippetsLauncherProvider(store: store, listAll: true) { [weak self] snippet in
+        self?.insertSoon(snippet)
+    }
+    private(set) lazy var picker: LauncherPanelController = {
+        let model = LauncherModel { [weak self] in self.map { [$0.pickerProvider] } ?? [] }
+        model.prompt = "Find a snippet…"
+        return LauncherPanelController(model: model)
+    }()
     private let openSettings: () -> Void
+    private let shortcuts: ShortcutCenter
     private var running = false
     private var watcher: AnyCancellable?
     private var askedThisLaunch = false
 
-    init(openSettings: @escaping () -> Void) {
+    init(shortcuts: ShortcutCenter, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
+        self.shortcuts = shortcuts
+        shortcuts.setHandler(for: .snippetPicker) { [weak self] in self?.openPicker() }
         // Start listening as soon as there's a snippet to expand.
         watcher = store.$snippets.dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateListening() } }
@@ -31,6 +43,41 @@ final class SnippetsModule: ToolbeltModule {
     func stop() {
         running = false
         expander.stop()
+        picker.hide()
+    }
+
+    /// The searchable snippet picker (⌃⌥;).
+    func openPicker() {
+        if picker.isVisible { picker.hide() } else { picker.show(switcher: pickerProvider) }
+    }
+
+    /// Types a snippet into the app in front, after deleting `count` typed characters.
+    /// Fill-in snippets ask for their blanks first.
+    func insert(_ snippet: Snippet, deleting count: Int) {
+        guard PermissionGate.ensure(.accessibility, to: "type your snippets") else { return }
+        let fields = Placeholders.fields(in: snippet.text)
+        guard !fields.isEmpty else {
+            TextInserter.replace(typed: count, with: Placeholders.render(snippet.text))
+            return
+        }
+        for _ in 0..<count { TextInserter.press(CGKeyCode(51)) } // ⌫ the keyword
+        let previous = NSWorkspace.shared.frontmostApplication
+        form.ask(title: snippet.name.isEmpty ? snippet.keyword : snippet.name, fields: fields) { values in
+            guard let values else { return }
+            previous?.activate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                MainActor.assumeIsolated {
+                    TextInserter.paste(Placeholders.render(snippet.text, inputs: values))
+                }
+            }
+        }
+    }
+
+    /// From the launcher or picker: wait for the panel to close, then insert.
+    func insertSoon(_ snippet: Snippet) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            MainActor.assumeIsolated { [weak self] in self?.insert(snippet, deleting: 0) }
+        }
     }
 
     /// Listens only when it's needed: the module is on, typing expansion is on,
@@ -42,6 +89,7 @@ final class SnippetsModule: ToolbeltModule {
             return
         }
         guard !expander.isRunning else { return }
+        expander.onMatch = { [weak self] snippet, count in self?.insert(snippet, deleting: count) }
         if !expander.start(), !askedThisLaunch {
             askedThisLaunch = true
             _ = PermissionGate.ensure(.inputMonitoring, to: "expand snippets as you type")
@@ -60,41 +108,45 @@ final class SnippetsModule: ToolbeltModule {
 
     func willTerminate() {}
 
-    private(set) lazy var launcherProvider: LauncherProvider? = SnippetsLauncherProvider(store: store)
+    private(set) lazy var launcherProvider: LauncherProvider? = SnippetsLauncherProvider(store: store) { [weak self] snippet in
+        self?.insertSoon(snippet)
+    }
 }
 
 /// Snippets can be searched in the launcher; ↩ types the snippet into the app you were using.
 @MainActor
 final class SnippetsLauncherProvider: LauncherProvider {
     private let store: SnippetStore
+    /// The picker lists every snippet before you type; the launcher waits for two letters.
+    private let listAll: Bool
+    private let insert: (Snippet) -> Void
 
-    init(store: SnippetStore) {
+    init(store: SnippetStore, listAll: Bool = false, insert: @escaping (Snippet) -> Void = { _ in }) {
         self.store = store
+        self.listAll = listAll
+        self.insert = insert
     }
 
     func results(for query: String) -> [LauncherResult] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard q.count >= 2 else { return [] }
-        return store.snippets.compactMap { snippet in
-            let score = max(
+        guard q.count >= 2 || (listAll && q.isEmpty) else { return [] }
+        return store.snippets.enumerated().compactMap { order, snippet in
+            let score = q.isEmpty ? 100 - Double(order) * 0.01 : max(
                 FuzzyMatch.score(q, snippet.name),
                 FuzzyMatch.score(q, snippet.keyword),
+                FuzzyMatch.score(q, snippet.folderName) * 0.8,
                 snippet.text.localizedCaseInsensitiveContains(q) ? 45 : 0
             )
             guard score > 0 else { return nil }
             let preview = Placeholders.render(snippet.text).text.replacingOccurrences(of: "\n", with: " ")
+            let folder = snippet.folder?.nilIfEmpty.map { "\($0) · " } ?? ""
             return LauncherResult(
                 id: "snippet:" + snippet.id.uuidString,
                 title: snippet.name.isEmpty ? snippet.keyword : snippet.name,
-                subtitle: "\(snippet.keyword) · \(preview)",
+                subtitle: "\(folder)\(snippet.keyword) · \(preview)",
                 kind: "Snippet", icon: .symbol("text.badge.plus"), score: score
-            ) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    MainActor.assumeIsolated {
-                        guard PermissionGate.ensure(.accessibility, to: "type your snippets") else { return }
-                        TextInserter.paste(Placeholders.render(snippet.text))
-                    }
-                }
+            ) { [insert] in
+                insert(snippet)
             }
         }
     }
@@ -144,6 +196,11 @@ struct SnippetsSettingsTab: View {
                                 .frame(width: 110)
                                 .font(.system(.body, design: .monospaced))
                             TextField("Name", text: $snippet.name, prompt: Text("Name"))
+                            TextField("Folder", text: Binding(
+                                get: { snippet.folder ?? "" },
+                                set: { snippet.folder = $0.isEmpty ? nil : $0 }
+                            ), prompt: Text("Folder"))
+                            .frame(width: 100)
                             Button {
                                 store.snippets.removeAll { $0.id == snippet.id }
                             } label: {

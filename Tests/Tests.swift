@@ -47,6 +47,7 @@ enum ToolbeltTests {
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
         t.group("Launcher: recently used, switcher and notes", LauncherNextTests.run)
+        t.group("Snippets: fill-in blanks, picker and folders", SnippetsNextTests.run)
         t.group("Settings backup", BackupTests.run)
         t.group("Services menu and right-click", ServicesTests.run)
         t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
@@ -1295,7 +1296,7 @@ enum EndToEndTests {
         // Toolbelt with its own scratch data, and one snippet.
         let data = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-e2e-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
-        try? #"[{"id":"8E3C1E2A-0000-4000-8000-000000000001","keyword":";ee","name":"E2E","text":"End to end works"}]"#
+        try? #"[{"id":"8E3C1E2A-0000-4000-8000-000000000001","keyword":";ee","name":"E2E","text":"End to end works"},{"id":"8E3C1E2A-0000-4000-8000-000000000002","keyword":";hi","name":"Greeting","text":"Hello {input:Name}!"}]"#
             .write(to: data.appendingPathComponent("snippets.json"), atomically: true, encoding: .utf8)
         let app = Process()
         app.executableURL = URL(fileURLWithPath: appPath)
@@ -1370,6 +1371,27 @@ enum EndToEndTests {
         type(";ee")
         spin(1.5)
         checkEqual(SnippetTypingTests.text(in: textEdit), "End to end works", "typing ;ee in TextEdit expands the snippet")
+
+        // 2b. A fill-in snippet asks for the blank, then types the result
+        clearDocument()
+        let beforeForm = windowCount(of: pid)
+        type(";hi")
+        spin(1.5)
+        check(windowCount(of: pid) > beforeForm, "a fill-in snippet asks for its blanks")
+        type("sam")
+        press(kVK_Return)
+        spin(2)
+        checkEqual(SnippetTypingTests.text(in: textEdit), "Hello sam!", "and types the snippet with the answer filled in")
+
+        // 2c. The snippet picker
+        clearDocument()
+        press(kVK_ANSI_Semicolon, [.maskControl, .maskAlternate])
+        spin(1)
+        type("end to end")
+        spin(0.6)
+        press(kVK_Return)
+        spin(1.5)
+        checkEqual(SnippetTypingTests.text(in: textEdit), "End to end works", "⌃⌥; finds a snippet and Return types it")
 
         // 3. Window shortcuts on TextEdit's window
         focusTextEdit()
@@ -1508,7 +1530,7 @@ enum ServicesTests {
         let shortcuts = ShortcutCenter()
         let manager = ModuleManager(shortcuts: shortcuts)
         let shelf = ShelfModule(shortcuts: shortcuts)
-        let snippets = SnippetsModule {}
+        let snippets = SnippetsModule(shortcuts: shortcuts) {}
         let clipboard = ClipboardModule(shortcuts: shortcuts)
         manager.register(shelf)
         manager.register(snippets)
@@ -1750,5 +1772,48 @@ enum LauncherNextTests {
         check(provider.results(for: "milk").contains { $0.title == "Remember the milk and eggs" }, "and find notes by what's in them")
         for note in notes.store.notes { notes.delete(note.id) }
         checkEqual(NotesStore().notes.count, 0, "deleted notes are gone")
+    }
+}
+
+// MARK: - Snippets [Next]
+
+@MainActor
+enum SnippetsNextTests {
+    static func run() {
+        let template = "Hi {input:Name}, your order {input:Order|#000} ships today. Thanks again, {input:Name}!"
+        let fields = Placeholders.fields(in: template)
+        checkEqual(fields.map(\.name), ["Name", "Order"], "the blanks in a fill-in snippet are found, each once")
+        checkEqual(fields.map(\.defaultValue), ["", "#000"], "with their suggested answers")
+        checkEqual(Placeholders.render(template, inputs: ["Name": "Sam", "Order": "#4471"]).text,
+                   "Hi Sam, your order #4471 ships today. Thanks again, Sam!", "answers are filled in everywhere")
+        checkEqual(Placeholders.render("Order {input:Order|#000}").text, "Order #000", "an unanswered blank uses its suggestion")
+        check(Placeholders.fields(in: "No blanks here {date}").isEmpty, "ordinary snippets have no blanks")
+
+        let old = #"[{"id":"9E3C1E2A-0000-4000-8000-000000000001","keyword":";a","name":"Old","text":"x"}]"#
+        let decoded = try? JSONDecoder().decode([Snippet].self, from: Data(old.utf8))
+        checkEqual(decoded?.first?.folderName, "No folder", "snippets saved before folders existed still load")
+
+        let store = SnippetStore()
+        store.snippets = [
+            Snippet(keyword: ";sig", name: "Sign-off", text: "Best wishes", folder: "Email"),
+            Snippet(keyword: ";addr", name: "Address", text: "42 Example Street", folder: "Personal"),
+        ]
+        checkEqual(SnippetStore().snippets.first?.folder, "Email", "folders are saved")
+        var inserted: [String] = []
+        let picker = SnippetsLauncherProvider(store: store, listAll: true) { inserted.append($0.keyword) }
+        checkEqual(picker.results(for: "").count, 2, "the picker lists every snippet before you type")
+        checkEqual(picker.results(for: "personal").first?.title, "Address", "snippets can be found by folder")
+        picker.results(for: "sign").first?.action()
+        checkEqual(inserted, [";sig"], "choosing one in the picker inserts it")
+        check(SnippetsLauncherProvider(store: store).results(for: "").isEmpty, "the launcher itself waits for you to type")
+
+        let form = SnippetFormController()
+        var answered: [String: String]?? = .none
+        form.ask(title: "Test", fields: [("Name", "Sam")]) { answered = .some($0) }
+        spin(0.5)
+        check(form.isVisible, "a fill-in form opens")
+        form.ask(title: "Another", fields: [("X", "")]) { _ in }
+        check(answered == .some(nil), "opening another form cancels the first")
+        spin(0.3)
     }
 }

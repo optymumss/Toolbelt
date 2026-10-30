@@ -37,7 +37,8 @@ echo "History file: $(ls "$DATA_DIR")"
 cat > "$DATA_DIR/snippets.json" <<'JSON'
 [
   {"id": "5D3C1E2A-0000-4000-8000-000000000001", "keyword": ";addr", "name": "Home address", "text": "42 Example Street\nLondon N1 1AA"},
-  {"id": "5D3C1E2A-0000-4000-8000-000000000002", "keyword": ";sig", "name": "Email sign-off", "text": "Best wishes,\n{cursor}\n\nSent {date}"}
+  {"id": "5D3C1E2A-0000-4000-8000-000000000002", "keyword": ";sig", "name": "Email sign-off", "text": "Best wishes,\n{cursor}\n\nSent {date}", "folder": "Email"},
+  {"id": "5D3C1E2A-0000-4000-8000-000000000003", "keyword": ";thx", "name": "Thank you", "text": "Hi {input:Name}, thanks for {input:What|your help}!", "folder": "Email"}
 ]
 JSON
 
@@ -90,6 +91,8 @@ SCREENS=(
     "windows-snap-preview=windows-snap-preview"
     "settings-snippets=settings-snippets"
     "launcher-snippet=launcher:address"
+    "snippet-picker=snippet-picker"
+    "snippet-form=snippet-form"
     "settings-shelf=settings-shelf"
     "shelf-demo=shelf-demo"
     "settings-downloads=settings-downloads"
@@ -113,6 +116,7 @@ for entry in "${SCREENS[@]}"; do
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
     # Notes stay on screen by design; remove the demo ones so later screens are clear.
     [ "$screen" = "notes-demo" ] && rm -f "$DATA_DIR/notes.json"
+    [ "$screen" = "shelf-demo" ] && rm -f "$DATA_DIR/shelves.json"
     sleep 1
 done
 
