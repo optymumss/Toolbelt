@@ -46,6 +46,22 @@ mkdir -p "$HOME/Desktop"
 printf 'Agenda\n1. Budget\n2. Launch date\n' > "$HOME/Desktop/Meeting notes.txt"
 screencapture -x "$HOME/Desktop/Screenshot.png"
 
+# Downloads in each state: paused part-way, finished, and failed
+mkdir -p "$HOME/Downloads/Programs"
+mkfile -n 50m "$HOME/Downloads/Programs/macOS-Tools.dmg"
+cat > "$DATA_DIR/downloads.json" <<JSON
+[
+  {"id": "6E3C1E2A-0000-4000-8000-000000000001", "url": "https://example.com/files/Holiday-video.mp4", "name": "Holiday-video.mp4",
+   "state": "paused", "received": 157286400, "total": 367001600, "segments": [], "acceptsRanges": true, "added": 0},
+  {"id": "6E3C1E2A-0000-4000-8000-000000000002", "url": "https://example.com/macOS-Tools.dmg", "name": "macOS-Tools.dmg",
+   "state": "completed", "received": 52428800, "total": 52428800, "segments": [], "acceptsRanges": true,
+   "finalPath": "$HOME/Downloads/Programs/macOS-Tools.dmg", "added": 0, "finished": 0},
+  {"id": "6E3C1E2A-0000-4000-8000-000000000003", "url": "https://example.com/report.pdf", "name": "Quarterly report.pdf",
+   "state": "failed", "received": 0, "segments": [], "acceptsRanges": false,
+   "error": "The server answered 404 (not found).", "added": 0}
+]
+JSON
+
 # 2. One launch per screen: "file name=what TOOLBELT_SHOW opens"
 SCREENS=(
     "menu=menu"
@@ -73,6 +89,9 @@ SCREENS=(
     "launcher-snippet=launcher:address"
     "settings-shelf=settings-shelf"
     "shelf-demo=shelf-demo"
+    "settings-downloads=settings-downloads"
+    "downloads=downloads"
+    "launcher-download=launcher:https://example.com/files/big-file.zip"
 )
 for entry in "${SCREENS[@]}"; do
     screen="${entry%%=*}"

@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import Network
 import SwiftUI
 
 // Automated checks for Toolbelt's logic. Run with: bash test.sh
@@ -40,6 +41,8 @@ enum ToolbeltTests {
         t.group("Snippets: expanding in a real text field", SnippetTypingTests.run)
         t.group("Shelf: shaking to open", ShakeTests.run)
         t.group("Shelf: dropping and dragging out", ShelfStoreTests.run)
+        t.group("Downloads: planning parts", DownloadPlanTests.run)
+        t.group("Downloads: real downloads from a test server", DownloadTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -1007,5 +1010,223 @@ enum ShelfStoreTests {
         checkEqual(provider.results(for: "holiday").first?.title, "Holiday photos", "the launcher finds shelves")
         check(provider.results(for: "new shelf").contains { $0.title == "New Shelf" }, "and can open a new one")
         module.store.remove(second.id)
+    }
+}
+
+// MARK: - Downloads
+
+@MainActor
+enum DownloadPlanTests {
+    static func run() {
+        let mb: Int64 = 1024 * 1024
+        let plan = SegmentPlanner.plan(total: 10 * mb, connections: 8)
+        checkEqual(plan.count, 8, "a 10 MB file is split into 8 parts")
+        checkEqual(plan.first?.start, 0, "starting at the first byte")
+        checkEqual(plan.last?.end, 10 * mb - 1, "ending at the last byte")
+        check(zip(plan, plan.dropFirst()).allSatisfy { $0.end + 1 == $1.start }, "with no gaps or overlaps")
+        checkEqual(SegmentPlanner.plan(total: 100 * 1024, connections: 8).count, 1, "small files use one connection")
+        checkEqual(SegmentPlanner.plan(total: 0, connections: 8).first?.end, -1, "unknown sizes use one open-ended part")
+
+        var segments = [Segment(start: 0, end: 10 * mb - 1, received: 2 * mb), Segment(start: 10 * mb, end: 11 * mb - 1, received: mb)]
+        let split = SegmentPlanner.split(segments, busy: [0, 1])
+        checkEqual(split?.shortened, 0, "a free connection helps with the biggest part left")
+        checkEqual(split?.new.start, 2 * mb + 4 * mb, "taking the second half of what's left")
+        segments[0].received = 10 * mb - 100
+        checkEqual(SegmentPlanner.split(segments, busy: [0]) == nil, true, "nearly finished parts aren't split")
+
+        checkEqual(DownloadCategory.of("Holiday.MP4"), .video, "videos go to Video")
+        checkEqual(DownloadCategory.of("song.flac"), .music, "music goes to Music")
+        checkEqual(DownloadCategory.of("Invoice.pdf"), .documents, "PDFs go to Documents")
+        checkEqual(DownloadCategory.of("Installer.dmg"), .programs, "disk images go to Programs")
+        checkEqual(DownloadCategory.of("photos.zip"), .archives, "zips go to Archives")
+        checkEqual(DownloadCategory.of("data.bin"), .other, "anything else goes to Other")
+
+        checkEqual(ByteFormat.timeLeft(42), "42 s left", "time left in seconds")
+        checkEqual(ByteFormat.timeLeft(150), "3 min left", "in minutes")
+        checkEqual(ByteFormat.timeLeft(3 * 3600 + 600), "3 h 10 min left", "in hours")
+
+        check(DownloadManager.downloadableURL(from: "https://example.com/file.zip") != nil, "https links can be downloaded")
+        check(DownloadManager.downloadableURL(from: "ftp://ftp.example.com/pub/file.iso") != nil, "so can FTP links")
+        check(DownloadManager.downloadableURL(from: "not a link") == nil, "plain text can't")
+        check(DownloadManager.downloadableURL(from: "file:///etc/hosts") == nil, "nor files on this Mac")
+        let ftp = FTPDownloadJob.arguments(url: URL(string: "ftp://h/f.iso")!, output: URL(fileURLWithPath: "/tmp/f.part"), retries: 5)
+        check(ftp.contains("--continue-at") && ftp.contains("--retry"), "FTP downloads resume and retry")
+    }
+}
+
+/// A tiny web server for the download tests. Serves the same made-up file at every address;
+/// the address chooses how it behaves (no parts, dropped connections, slow, a file name…).
+final class TestServer: @unchecked Sendable {
+    let body: Data
+    private let listener: NWListener
+    private let lock = NSLock()
+    private var _partRequests = 0
+    private var _resumedFrom: Int = 0
+    private var flakyCount = 0
+
+    var partRequests: Int { lock.lock(); defer { lock.unlock() }; return _partRequests }
+    /// The largest starting point asked for, to tell resuming from restarting.
+    var resumedFrom: Int { lock.lock(); defer { lock.unlock() }; return _resumedFrom }
+
+    init(size: Int) throws {
+        body = Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ $0 / 997) })
+        listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in self?.serve(connection) }
+        listener.start(queue: .global())
+    }
+
+    var port: UInt16 { listener.port?.rawValue ?? 0 }
+
+    func url(_ path: String) -> String { "http://127.0.0.1:\(port)\(path)" }
+
+    func resetCounts() {
+        lock.lock(); _partRequests = 0; _resumedFrom = 0; flakyCount = 0; lock.unlock()
+    }
+
+    private func serve(_ connection: NWConnection) {
+        connection.start(queue: .global())
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] data, _, _, _ in
+            guard let data, let request = String(data: data, encoding: .utf8) else { connection.cancel(); return }
+            let lines = request.components(separatedBy: "\r\n")
+            let path = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+            var start = 0, end = body.count - 1, isRange = false
+            for line in lines where line.lowercased().hasPrefix("range: bytes=") {
+                let spec = line.dropFirst("range: bytes=".count).split(separator: "-", omittingEmptySubsequences: false)
+                if let s = Int(spec[0]) { start = s; isRange = true }
+                if spec.count > 1, let e = Int(spec[1]) { end = min(e, body.count - 1) }
+            }
+            let ranges = isRange && !path.hasPrefix("/noranges")
+            if !ranges { start = 0; end = body.count - 1 }
+            lock.lock()
+            if ranges { _partRequests += 1; _resumedFrom = max(_resumedFrom, start) }
+            var dropHalfway = false
+            if path.hasPrefix("/flaky") {
+                flakyCount += 1
+                dropHalfway = flakyCount <= 3
+            }
+            lock.unlock()
+
+            var header = ranges ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n"
+            header += "Content-Length: \(end - start + 1)\r\n"
+            if ranges { header += "Content-Range: bytes \(start)-\(end)/\(body.count)\r\n" }
+            if !path.hasPrefix("/noranges") { header += "Accept-Ranges: bytes\r\n" }
+            if path.hasPrefix("/named") { header += "Content-Disposition: attachment; filename=\"report.pdf\"\r\n" }
+            header += "Content-Type: application/octet-stream\r\nConnection: close\r\n\r\n"
+            var slice = body[start...end]
+            if dropHalfway { slice = slice.prefix(slice.count / 2) }
+
+            if path.hasPrefix("/slow") {
+                // About half a megabyte a second per connection, in small pieces.
+                DispatchQueue.global().async {
+                    connection.send(content: Data(header.utf8), completion: .idempotent)
+                    var offset = slice.startIndex
+                    while offset < slice.endIndex {
+                        let next = min(offset + 16_384, slice.endIndex)
+                        let done = DispatchSemaphore(value: 0)
+                        connection.send(content: Data(slice[offset..<next]), completion: .contentProcessed { _ in done.signal() })
+                        if done.wait(timeout: .now() + 5) == .timedOut { break }
+                        offset = next
+                        Thread.sleep(forTimeInterval: 0.03)
+                        if connection.state != .ready { break }
+                    }
+                    connection.cancel()
+                }
+            } else {
+                connection.send(content: Data(header.utf8) + Data(slice), completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+    }
+}
+
+@MainActor
+enum DownloadTests {
+    static func waitFor(_ seconds: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            spin(0.1)
+        }
+        return condition()
+    }
+
+    static func run() {
+        guard let server = try? TestServer(size: 6 * 1024 * 1024) else {
+            check(false, "the test web server starts")
+            return
+        }
+        _ = waitFor(5) { server.port != 0 }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-downloads-\(UUID().uuidString)")
+        Prefs.downloadFolder = folder
+        Prefs.downloadSortByType = true
+        Prefs.downloadConnections = 8
+        Prefs.downloadRetries = 5
+        let manager = DownloadManager()
+
+        func download(_ path: String, _ name: String, timeout: TimeInterval = 30) -> DownloadItem? {
+            guard let item = manager.add(server.url(path)) else { return nil }
+            _ = waitFor(timeout) { manager.item(item.id)?.state != .downloading }
+            return manager.item(item.id)
+        }
+        func contentMatches(_ item: DownloadItem?) -> Bool {
+            guard let path = item?.finalPath, let data = FileManager.default.contents(atPath: path) else { return false }
+            return data == server.body
+        }
+
+        // 1. Several parts at once
+        server.resetCounts()
+        let fast = download("/files/data.bin", "data.bin")
+        checkEqual(fast?.state, .completed, "a 6 MB download finishes")
+        check(contentMatches(fast), "and the file is exactly right, byte for byte")
+        check(server.partRequests >= 4, "it was downloaded in several parts at once", "\(server.partRequests) part requests")
+        checkEqual(fast?.finalPath, folder.appendingPathComponent("Other/data.bin").path, "and sorted into a folder by type")
+
+        // 2. A server that can't send parts
+        let whole = download("/noranges/whole.bin", "whole.bin")
+        checkEqual(whole?.state, .completed, "servers that can't split files still work")
+        check(contentMatches(whole), "with the right content")
+
+        // 3. Dropped connections
+        let flaky = download("/flaky/flaky.bin", "flaky.bin", timeout: 60)
+        checkEqual(flaky?.state, .completed, "dropped connections are retried automatically")
+        check(contentMatches(flaky), "and the file still comes out right")
+
+        // 4. The server's own file name
+        let named = download("/named/download", "report.pdf")
+        checkEqual(named.flatMap { $0.finalPath.map { URL(fileURLWithPath: $0).lastPathComponent } }, "report.pdf", "the file name the server gives is used")
+        check(named?.finalPath?.contains("/Documents/") == true, "and a PDF goes into Documents")
+
+        // 5. Pause and resume
+        server.resetCounts()
+        guard let slow = manager.add(server.url("/slow/pause.bin")) else { check(false, "slow download starts"); return }
+        _ = waitFor(10) { (manager.item(slow.id)?.received ?? 0) > 500_000 }
+        manager.pause(slow.id)
+        let paused = manager.item(slow.id)
+        checkEqual(paused?.state, .paused, "a download can be paused")
+        check((paused?.received ?? 0) > 0 && (paused?.received ?? 0) < Int64(server.body.count), "part-way through", "\(paused?.received ?? 0) bytes")
+        spin(1)
+        checkEqual(manager.item(slow.id)?.received, paused?.received, "and stays paused")
+        manager.resume(slow.id)
+        _ = waitFor(40) { manager.item(slow.id)?.state != .downloading }
+        checkEqual(manager.item(slow.id)?.state, .completed, "then resumed to the end")
+        check(contentMatches(manager.item(slow.id)), "with the right content")
+
+        // 6. Quitting part-way (or a power cut) and starting again
+        server.resetCounts()
+        guard let interrupted = manager.add(server.url("/slow/restart.bin")) else { check(false, "download starts"); return }
+        _ = waitFor(10) { (manager.item(interrupted.id)?.received ?? 0) > 1_000_000 }
+        manager.stopAll() // like quitting Toolbelt
+        let reopened = DownloadManager() // like opening it again
+        checkEqual(reopened.item(interrupted.id)?.state, .downloading, "an interrupted download is remembered")
+        reopened.resumeInterrupted()
+        _ = waitFor(40) { reopened.item(interrupted.id)?.state != .downloading }
+        checkEqual(reopened.item(interrupted.id)?.state, .completed, "and finishes after a restart")
+        check(contentMatches(reopened.item(interrupted.id)), "with the right content")
+        check(server.resumedFrom > 0, "carrying on from where it stopped, not from the start")
+        reopened.stopAll()
+
+        let module = DownloadsModule()
+        let provider = DownloadsLauncherProvider(module: module)
+        checkEqual(provider.results(for: "https://example.com/big.iso").first?.title, "Download big.iso", "pasting a link in the launcher offers to download it")
+        try? FileManager.default.removeItem(at: folder)
     }
 }
