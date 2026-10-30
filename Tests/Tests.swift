@@ -1983,7 +1983,7 @@ enum AutomationTests {
         spin(0.3)
         checkEqual(module.history.filter { $0 == "When TextEdit is in front" }.count, ranBefore, "switching to another app doesn't")
         FileManager.default.createFile(atPath: folder.appendingPathComponent("INV-7.pdf").path, contents: Data("pdf".utf8))
-        _ = DownloadTests.waitFor(5) { module.history.last == "New invoice" }
+        _ = DownloadTests.waitFor(5) { module.history.last == "New invoice" && module.lastRun?.value(of: "File").isEmpty == false }
         checkEqual(module.history.last, "New invoice", "adding a file to a watched folder runs its macro")
         check(module.lastRun?.value(of: "File").hasSuffix("INV-7.pdf") == true, "with the file in %Trigger%")
         check(module.gestureRules().contains { $0.gesture == .keySequence(";;inv") && $0.action == MacroAction(kind: .macro, value: "New invoice") },
@@ -2251,7 +2251,9 @@ enum EndToEndTests {
         type("calculator")
         spin(1)
         press(kVK_Return)
-        spin(3)
+        // Opening an app can take a while on a busy Mac; wait for it (and for it to settle in front).
+        _ = DownloadTests.waitFor(15) { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.calculator").isEmpty }
+        spin(2)
         let calculator = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.calculator").first
         check(calculator != nil, "typing calculator and Return opens Calculator")
         calculator?.forceTerminate()

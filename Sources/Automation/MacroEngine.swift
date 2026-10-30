@@ -133,6 +133,8 @@ final class MacroRun {
                 await run(step.steps)
             }
         case .repeatWhile:
+            // Each loop counts from the start, whatever an earlier loop left in %Index%.
+            variables["Index"] = "0"
             var count = 0
             while isTrue(step.condition), count < Self.loopLimit, !stopped {
                 count += 1

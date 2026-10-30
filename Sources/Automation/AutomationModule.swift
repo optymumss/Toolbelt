@@ -79,8 +79,9 @@ final class AutomationModule: ToolbeltModule {
     }
 
     /// A trigger happened: run the macro if it (and its group) apply in the app in front.
-    private func fire(_ macro: Macro, value: String = "") {
-        guard running, store.isActive(macro, in: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) else { return }
+    /// `app` is the app the trigger is about when it's the one coming to the front (otherwise the app in front).
+    private func fire(_ macro: Macro, value: String = "", app: String? = nil) {
+        guard running, store.isActive(macro, in: app ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier) else { return }
         run(macro, trigger: value)
     }
 
@@ -185,7 +186,7 @@ final class AutomationModule: ToolbeltModule {
 
     func appEvent(_ kind: MacroTrigger.Kind, bundleID: String?, name: String?) {
         for (macro, trigger) in triggers([kind]) where trigger.text.isEmpty || trigger.text == bundleID {
-            fire(macro, value: name ?? bundleID ?? "")
+            fire(macro, value: name ?? bundleID ?? "", app: kind == .appActivated ? bundleID : nil)
         }
     }
 
