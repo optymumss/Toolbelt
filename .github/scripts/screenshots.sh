@@ -50,12 +50,18 @@ SCREENS=(
     "launcher-quicklink=launcher:g cats"
     "launcher-command=launcher:lock"
     "launcher-clipboard=launcher:example street"
+    "launcher-windows=launcher:left half"
+    "settings-windows=settings-windows"
+    "windows-left-half=windows-left-half"
+    "windows-top-right=windows-top-right"
+    "windows-center=windows-center"
+    "windows-snap-preview=windows-snap-preview"
 )
 for entry in "${SCREENS[@]}"; do
     screen="${entry%%=*}"
     TOOLBELT_SHOW="${entry#*=}" "$APP_BIN" &
     pid=$!
-    sleep 4
+    sleep 5
     if kill -0 "$pid" 2>/dev/null; then
         screencapture -x "$OUT/$screen.png"
         echo "✓ $screen"

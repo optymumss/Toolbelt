@@ -1,9 +1,28 @@
-# Toolbelt — v0.4
+# Toolbelt — v0.5
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
-**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager and the launcher.
+**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher and window management.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.5: window management
+
+Move the window you're working in with the keyboard (change any of these in Settings → Shortcuts):
+
+| Keys | Moves the window to |
+|---|---|
+| ⌃⌥← ⌃⌥→ ⌃⌥↑ ⌃⌥↓ | Left, right, top or bottom half |
+| ⌃⌥U ⌃⌥I ⌃⌥J ⌃⌥K | Top-left, top-right, bottom-left or bottom-right quarter |
+| ⌃⌥D ⌃⌥F ⌃⌥G | First, centre or last third |
+| ⌃⌥E ⌃⌥T | First or last two thirds |
+| ⌃⌥↩ | Fill the screen |
+| ⌃⌥C | Centre |
+| ⌃⌥⌫ | Back where it was |
+| ⌃⌥⌘→ ⌃⌥⌘← | Next or previous display |
+
+Or **drag a window by its title bar** to the left or right edge of the screen (half), a corner (quarter) or the top edge (full screen). A blue outline shows where it will go before you let go. The same moves are in the menu bar icon under **Move Front Window**, and in the launcher (type "left half").
+
+Moving windows needs the **Accessibility** permission. Toolbelt asks the first time.
 
 ## What's new in 0.4: the launcher
 

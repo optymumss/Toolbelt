@@ -70,9 +70,23 @@ struct Shortcut: Hashable {
 // MARK: - Actions that can have a shortcut
 
 /// Every global shortcut in Toolbelt. Each module adds its own here.
-enum ShortcutAction: String, CaseIterable, Identifiable {
+enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     case clipboardHistory
     case openLauncher
+    case window(WindowAction)
+
+    static var allCases: [ShortcutAction] {
+        [.clipboardHistory, .openLauncher] + WindowAction.allCases.map { .window($0) }
+    }
+
+    /// Stable name used to save the shortcut.
+    var rawValue: String {
+        switch self {
+        case .clipboardHistory: return "clipboardHistory"
+        case .openLauncher: return "openLauncher"
+        case .window(let action): return "window.\(action.rawValue)"
+        }
+    }
 
     var id: String { rawValue }
 
@@ -80,6 +94,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .clipboardHistory: return "Open clipboard history"
         case .openLauncher: return "Open launcher"
+        case .window(let action): return action.title
         }
     }
 
@@ -87,13 +102,36 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .clipboardHistory: return .clipboard
         case .openLauncher: return .launcher
+        case .window: return .windows
         }
     }
 
     var defaultShortcut: Shortcut? {
+        let ctrlOpt = controlKey | optionKey
         switch self {
         case .clipboardHistory: return Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey)
         case .openLauncher: return Shortcut(keyCode: kVK_Space, modifiers: optionKey)
+        case .window(let action):
+            switch action {
+            case .leftHalf: return Shortcut(keyCode: kVK_LeftArrow, modifiers: ctrlOpt)
+            case .rightHalf: return Shortcut(keyCode: kVK_RightArrow, modifiers: ctrlOpt)
+            case .topHalf: return Shortcut(keyCode: kVK_UpArrow, modifiers: ctrlOpt)
+            case .bottomHalf: return Shortcut(keyCode: kVK_DownArrow, modifiers: ctrlOpt)
+            case .topLeft: return Shortcut(keyCode: kVK_ANSI_U, modifiers: ctrlOpt)
+            case .topRight: return Shortcut(keyCode: kVK_ANSI_I, modifiers: ctrlOpt)
+            case .bottomLeft: return Shortcut(keyCode: kVK_ANSI_J, modifiers: ctrlOpt)
+            case .bottomRight: return Shortcut(keyCode: kVK_ANSI_K, modifiers: ctrlOpt)
+            case .firstThird: return Shortcut(keyCode: kVK_ANSI_D, modifiers: ctrlOpt)
+            case .centerThird: return Shortcut(keyCode: kVK_ANSI_F, modifiers: ctrlOpt)
+            case .lastThird: return Shortcut(keyCode: kVK_ANSI_G, modifiers: ctrlOpt)
+            case .firstTwoThirds: return Shortcut(keyCode: kVK_ANSI_E, modifiers: ctrlOpt)
+            case .lastTwoThirds: return Shortcut(keyCode: kVK_ANSI_T, modifiers: ctrlOpt)
+            case .maximize: return Shortcut(keyCode: kVK_Return, modifiers: ctrlOpt)
+            case .center: return Shortcut(keyCode: kVK_ANSI_C, modifiers: ctrlOpt)
+            case .restore: return Shortcut(keyCode: kVK_Delete, modifiers: ctrlOpt)
+            case .nextDisplay: return Shortcut(keyCode: kVK_RightArrow, modifiers: ctrlOpt | cmdKey)
+            case .previousDisplay: return Shortcut(keyCode: kVK_LeftArrow, modifiers: ctrlOpt | cmdKey)
+            }
         }
     }
 
@@ -176,7 +214,7 @@ final class ShortcutCenter: ObservableObject {
     /// Call only while suspended, so Toolbelt's own registrations don't get in the way.
     private func conflict(for shortcut: Shortcut, action: ShortcutAction) -> String? {
         if let other = ShortcutAction.allCases.first(where: { $0 != action && self.shortcut(for: $0) == shortcut }) {
-            return "Toolbelt already uses \(shortcut.display) to \(other.title.lowercased())."
+            return "Toolbelt already uses \(shortcut.display) for “\(other.title)”."
         }
         if SystemShortcuts.contains(shortcut) {
             return "macOS already uses \(shortcut.display). Pick another, or turn it off in System Settings › Keyboard › Keyboard Shortcuts."

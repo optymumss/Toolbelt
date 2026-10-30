@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.register(LauncherModule(shortcuts: shortcuts, modules: modules) { [weak self] in
             self?.settings.show(tab: nil)
         })
+        modules.register(WindowsModule(shortcuts: shortcuts) { [weak self] in
+            self?.settings.show(tab: .module(.windows))
+        })
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -56,6 +59,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "clipboard-preview": (modules.module(.clipboard) as? ClipboardModule)?.openWithPreview()
             case "menu": statusMenu.open()
             case "settings-launcher": settings.show(tab: .module(.launcher))
+            case "settings-windows": settings.show(tab: .module(.windows))
+            case "windows-left-half", "windows-top-right", "windows-center":
+                // Opens Settings, then moves it with the window manager, like pressing the shortcut.
+                settings.show(tab: .module(.windows))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in
+                    let action: WindowAction = target == "windows-left-half" ? .leftHalf : target == "windows-top-right" ? .topRight : .center
+                    let window = AXWindow.focused(in: ProcessInfo.processInfo.processIdentifier)
+                    (modules.module(.windows) as? WindowsModule)?.manager.perform(action, on: window)
+                }
+            case "windows-snap-preview":
+                if let screen = Screens.all.first,
+                   let frame = WindowLayout.frame(for: .leftHalf, in: screen.area, current: .zero) {
+                    (modules.module(.windows) as? WindowsModule)?.snapping.overlayForScreenshot.show(frame)
+                }
             case let show where show.hasPrefix("launcher:"):
                 (modules.module(.launcher) as? LauncherModule)?.open(query: String(show.dropFirst("launcher:".count)))
             default: break
@@ -78,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !taken.isEmpty else { return }
 
         let list = taken
-            .map { "• \(shortcuts.shortcut(for: $0)?.display ?? "") to \($0.title.lowercased())" }
+            .map { "• \(shortcuts.shortcut(for: $0)?.display ?? "") for “\($0.title)”" }
             .joined(separator: "\n")
         NSApp.activate()
         let alert = NSAlert()
