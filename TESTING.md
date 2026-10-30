@@ -95,3 +95,12 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Screenshots | Copy and save the marked-up picture | Tests (clipboard picture size, PNG file, never overwrites) |
 | Screenshots | Copy text from a screenshot / from the screen (OCR) | Tests (reads "Invoice 42" back from a marked-up picture); **Manual** for ⌥⇧⌘2 |
 | Screenshots | Shortcuts and launcher commands | Tests; screenshot `launcher-screenshot` |
+| Gestures | Trackpad taps, swipes, pinches, clicks with 3+ fingers, corner clicks | Tests (recogniser fed made-up touches); **Manual** on a real trackpad (CI Macs have none) |
+| Gestures | Magic Mouse gestures | Tests (recogniser); **Manual** with a Magic Mouse |
+| Gestures | Extra mouse buttons | End-to-end: a real button-4 press runs its gesture in the app |
+| Gestures | Mouse strokes (hold a button and draw) | Tests (stroke shapes); end-to-end: right-button stroke left runs its gesture |
+| Gestures | Modifier taps (e.g. double-tap Shift) | Tests (taps, holds, combos ignored); end-to-end: double-tap right Shift |
+| Gestures | Typed sequences | End-to-end: typing ;;z in TextEdit runs its gesture (types text in its place) |
+| Gestures | Rules for certain apps only / except | Tests (only, except, app rule wins) |
+| Gestures | Actions: Toolbelt commands, shell, AppleScript, open, keys, text, Mac controls | Tests (command, shell, AppleScript, addresses); end-to-end (shell, type text) |
+| Gestures | Listens only while a rule needs it | Tests (tap starts and stops with the rules); battery check |

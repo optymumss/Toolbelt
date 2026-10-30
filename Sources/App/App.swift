@@ -42,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.register(ShelfModule(shortcuts: shortcuts))
         modules.register(DownloadsModule())
         modules.register(ScreenshotsModule(shortcuts: shortcuts))
+        modules.register(GesturesModule(shortcuts: shortcuts) { [weak self] in
+            self?.settings.show(tab: .module(.gestures))
+        })
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -116,6 +119,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "settings-shelf": settings.show(tab: .module(.shelf))
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-screenshots": settings.show(tab: .module(.screenshots))
+            case "settings-gestures":
+                // A few example gestures, one opened for editing.
+                guard let gestures = modules.module(.gestures) as? GesturesModule else { break }
+                gestures.store.rules = [
+                    GestureRule(gesture: .touch(.trackpad, .tap, fingers: 3), action: .toolbelt(.openLauncher)),
+                    GestureRule(gesture: .modifierTap(.rightCommand, taps: 2), action: .toolbelt(.clipboardHistory)),
+                    GestureRule(gesture: .stroke(button: 1, path: "L"), action: .system(.back), scope: .only, apps: ["com.apple.Safari"]),
+                    GestureRule(gesture: .mouseButton(3), action: .system(.missionControl)),
+                ]
+                settings.show(tab: .module(.gestures))
             case "screenshot-editor":
                 // The screenshot the screenshot check took, marked up as a person might.
                 let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/Screenshot.png")

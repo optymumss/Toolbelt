@@ -113,6 +113,7 @@ SCREENS=(
     "settings-screenshots=settings-screenshots"
     "screenshot-editor=screenshot-editor"
     "launcher-screenshot=launcher:screenshot"
+    "settings-gestures=settings-gestures"
     "launcher-switcher=launcher-switcher"
     "notes-demo=notes-demo"
 )
@@ -132,6 +133,7 @@ for entry in "${SCREENS[@]}"; do
     # Notes stay on screen by design; remove the demo ones so later screens are clear.
     [ "$screen" = "notes-demo" ] && rm -f "$DATA_DIR/notes.json"
     [ "$screen" = "snap-areas-editor" ] && rm -f "$DATA_DIR/snapareas.json"
+    [ "$screen" = "settings-gestures" ] && rm -f "$DATA_DIR/gestures.json"
     sleep 1
 done
 

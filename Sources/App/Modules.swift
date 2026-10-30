@@ -10,6 +10,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
     case shelf
     case downloads
     case screenshots
+    case gestures
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .shelf: return "Shelf"
         case .downloads: return "Downloads"
         case .screenshots: return "Screenshots"
+        case .gestures: return "Gestures"
         }
     }
 
@@ -34,6 +36,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .shelf: return "tray.and.arrow.down"
         case .downloads: return "arrow.down.circle"
         case .screenshots: return "camera.viewfinder"
+        case .gestures: return "hand.draw"
         }
     }
 
@@ -46,6 +49,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .shelf: return "Floating shelves to park files, images, text and links on, then drag them all out later."
         case .downloads: return "Fast downloads in several parts at once, which pause, resume and survive restarts."
         case .screenshots: return "Screenshots of an area, a window or the screen, marked up with arrows, boxes, text and blur, or read as text."
+        case .gestures: return "Trackpad and Magic Mouse gestures, extra mouse buttons, mouse strokes and key taps, each doing whatever you choose."
         }
     }
 }

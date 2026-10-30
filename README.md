@@ -63,6 +63,20 @@ In Settings → Clipboard:
   If they don't show up straight away, log out and back in once, or turn them on in System Settings → Keyboard → Keyboard Shortcuts → Services.
 - **Uses less battery:** no background timers while Settings is closed, fewer wake-ups, and an optimised build for Apple silicon.
 
+## What's new in 0.17: gestures
+
+A new **Gestures** module (Settings → Gestures → *Add Gesture*). Each gesture does one thing you choose: a Toolbelt command (open the launcher, the clipboard, a window position…), open an app, file or website, press keys, type text, a Mac control (Mission Control, show desktop, volume, play/pause, brightness, lock screen…), or run a shell script or AppleScript.
+
+- **Trackpad:** taps, swipes and pinches with up to five fingers, clicks with three or more fingers, and clicks in a corner.
+- **Magic Mouse:** swipes and taps.
+- **Extra mouse buttons** (for example the back/forward buttons on a Logitech mouse).
+- **Mouse strokes:** hold the right (or middle) button and draw, for example left (←) or down-then-right (↓→). A right-click without drawing still works as normal.
+- **Key taps:** tap a modifier on its own, once or twice (for example tap Right ⌘ twice). **Typed sequences:** type something like `;;` to run an action.
+- Each gesture can work **everywhere, only in some apps, or everywhere except some apps**.
+- Toolbelt only listens to the trackpad, mouse or keyboard while a gesture needs it, so it doesn't cost battery otherwise.
+
+Trackpad and Magic Mouse gestures use the same private part of macOS that BetterTouchTool uses; if Apple ever changes it, those gestures stop working until Toolbelt is updated, and nothing else is affected. If a gesture also does something in macOS (for example four-finger swipes switch Spaces), switch that off in System Settings → Trackpad.
+
 ## What's new in 0.16: screenshots
 
 A new **Screenshots** module (Settings → Screenshots):
