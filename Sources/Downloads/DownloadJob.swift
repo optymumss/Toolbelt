@@ -33,6 +33,8 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
 
     private let maxConnections: Int
     private let maxRetries: Int
+    private let headers: [String: String]
+    private let throttle: DownloadThrottle
     private let lock = NSLock()
     private let queue: OperationQueue
     private var session: URLSession?
@@ -48,8 +50,11 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
     private var stopped = true
     private var finished = false
 
-    init(url: URL, tempURL: URL, segments: [Segment], total: Int64?, acceptsRanges: Bool, connections: Int, retries: Int) {
+    init(url: URL, tempURL: URL, segments: [Segment], total: Int64?, acceptsRanges: Bool, connections: Int, retries: Int,
+         headers: [String: String] = [:], throttle: DownloadThrottle = .shared) {
         self.url = url
+        self.headers = headers
+        self.throttle = throttle
         self.tempURL = tempURL
         self.segments = segments
         self.total = total
@@ -80,6 +85,8 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
         configuration.httpMaximumConnectionsPerHost = maxConnections + 1
         configuration.timeoutIntervalForRequest = 30
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        // Cookies handed over by the browser are sent as they are.
+        if headers["Cookie"] != nil { configuration.httpShouldSetCookies = false }
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
 
         let partial = segments.contains { $0.received > 0 }
@@ -134,6 +141,7 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
 
     private func request(_ index: Int, in session: URLSession) {
         var request = URLRequest(url: url)
+        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
         let segment = segments[index]
         if segment.end >= 0 {
             request.setValue("bytes=\(segment.next)-\(segment.end)", forHTTPHeaderField: "Range")
@@ -196,16 +204,30 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let wait = store(data, from: dataTask)
+        // Over the speed limit: this job's callbacks wait for a moment, so its connections stop
+        // reading and the server slows down. (Suspending the task isn't enough: data it has
+        // already received keeps arriving.) Longer waits, for the hourly cap, are handled by
+        // DownloadManager, which stops the download until the next hour.
+        if wait > 2 {
+            dataTask.suspend() // the hourly cap: hold this connection until the manager stops the download
+        } else if wait > 0 {
+            Thread.sleep(forTimeInterval: wait)
+        }
+    }
+
+    /// Writes a piece into place. Returns how long to wait before reading more (speed limit).
+    private func store(_ data: Data, from dataTask: URLSessionDataTask) -> TimeInterval {
         lock.lock()
         defer { lock.unlock() }
-        guard !stopped, let index = running[dataTask.taskIdentifier] else { return }
+        guard !stopped, let index = running[dataTask.taskIdentifier] else { return 0 }
         var chunk = data
         let segment = segments[index]
         if segment.end >= 0 {
             let room = segment.end - segment.next + 1
             if room <= 0 {
                 dataTask.cancel()
-                return
+                return 0
             }
             if Int64(chunk.count) > room { chunk = chunk.prefix(Int(room)) }
         }
@@ -214,7 +236,7 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
             try handle?.write(contentsOf: chunk)
         } catch {
             failLocked("Couldn't write the file: \(error.localizedDescription)")
-            return
+            return 0
         }
         segments[index].received += Int64(chunk.count)
         attempts[index] = 0
@@ -222,6 +244,7 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
             // This part is done (perhaps because another connection took its second half).
             dataTask.cancel()
         }
+        return throttle.take(Int64(chunk.count))
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -299,9 +322,14 @@ final class FTPDownloadJob: DownloadWorker, @unchecked Sendable {
         self.retries = retries
     }
 
-    static func arguments(url: URL, output: URL, retries: Int) -> [String] {
-        ["--silent", "--show-error", "--fail", "--location", "--retry", String(retries), "--retry-delay", "2",
-         "--continue-at", "-", "--output", output.path, url.absoluteString]
+    /// Speed limit in bytes a second (0: none). FTP downloads follow the speed limit but not the hourly cap.
+    var speedLimit: Int = 0
+
+    static func arguments(url: URL, output: URL, retries: Int, speedLimit: Int = 0) -> [String] {
+        var arguments = ["--silent", "--show-error", "--fail", "--location", "--retry", String(retries), "--retry-delay", "2",
+                         "--continue-at", "-", "--output", output.path]
+        if speedLimit > 0 { arguments += ["--limit-rate", String(speedLimit)] }
+        return arguments + [url.absoluteString]
     }
 
     func start() {
@@ -313,7 +341,7 @@ final class FTPDownloadJob: DownloadWorker, @unchecked Sendable {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        process.arguments = Self.arguments(url: url, output: tempURL, retries: retries)
+        process.arguments = Self.arguments(url: url, output: tempURL, retries: retries, speedLimit: speedLimit)
         let errors = Pipe()
         process.standardError = errors
         process.terminationHandler = { [weak self] finished in

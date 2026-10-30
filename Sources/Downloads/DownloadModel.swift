@@ -13,7 +13,8 @@ struct Segment: Codable, Equatable {
 }
 
 enum DownloadState: String, Codable {
-    case downloading, paused, completed, failed
+    /// `queued`: waiting for its queue to start or for a free place in it.
+    case queued, downloading, paused, completed, failed
 }
 
 struct DownloadItem: Identifiable, Codable, Equatable {
@@ -30,13 +31,19 @@ struct DownloadItem: Identifiable, Codable, Equatable {
     var error: String? = nil
     var added = Date()
     var finished: Date? = nil
+    /// Which queue it's in (nil: the first queue).
+    var queueID: UUID? = nil
+    /// Sent with every request, for links handed over by the browser: Cookie, Referer, User-Agent.
+    var headers: [String: String]? = nil
+    /// The name was chosen (by the browser), so the server's name doesn't replace it.
+    var nameIsFixed: Bool? = nil
 
     // Shown while downloading; not saved.
     var speed: Double = 0
     var connections = 0
 
     enum CodingKeys: String, CodingKey {
-        case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished
+        case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers, nameIsFixed
     }
 
     var progress: Double? {

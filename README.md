@@ -63,6 +63,20 @@ In Settings → Clipboard:
   If they don't show up straight away, log out and back in once, or turn them on in System Settings → Keyboard → Keyboard Shortcuts → Services.
 - **Uses less battery:** no background timers while Settings is closed, fewer wake-ups, and an optimised build for Apple silicon.
 
+## What's new in 0.15: downloads [Next]
+
+- **Queues.** Settings → Downloads → Queues: make queues (for example “Overnight”), choose how many files each downloads at once, and give it start and stop times. Right-click a download to move it to another queue. The Downloads window has a tab per queue with a Start/Stop button.
+- **When done.** At the bottom of the Downloads window (or in the menu bar under *When Downloads Finish*), choose *Sleep the Mac* or *Shut Down the Mac*. When the last download finishes you get a one-minute countdown with a Cancel button. It only happens once; then it goes back to *Do Nothing*.
+- **Speed limit and hourly cap** (Settings → Downloads → Limits), shared by all downloads.
+- **Notification** when a download finishes; click it to see the file in Finder. macOS asks once whether Toolbelt may show notifications.
+- **Choose what the list shows**: the list icon at the bottom of the Downloads window turns size, speed, time left, connections, queue and date on or off, and the Open / Show in Finder / Remove / Pause buttons.
+- **Chrome extension.** Settings → Downloads → **Set Up Chrome…**. Toolbelt opens Chrome's Extensions page and shows the extension's folder; in Chrome turn on *Developer mode*, click *Load unpacked* and choose that folder. After that:
+  - downloads you start in Chrome go to Toolbelt instead (switch this off, or skip small files, from the Toolbelt button in Chrome's toolbar);
+  - right-click a link, picture or video → **Download with Toolbelt**;
+  - videos played straight from a file get a **⬇ Download** button. It doesn't appear on streamed or copy-protected videos (YouTube, Netflix and the like), or where the site asks browsers not to offer downloading.
+
+  Loading it with *Load unpacked* is free. Putting it on the Chrome Web Store would need a Google developer account ($5) and isn't necessary for your own Mac.
+
 ## What's new in 0.8: the download manager
 
 Open **Downloads…** from the menu bar icon, then paste or drop a link and click **Download**. You can also choose **Download Link from Clipboard** from the menu, or paste a link into the launcher (⌥Space).

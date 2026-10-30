@@ -48,9 +48,21 @@ xcrun swiftc \
     "${SOURCES[@]}" \
     -o "$APP/Contents/MacOS/$APP_NAME"
 
+# The small helper Chrome talks to (see Bridge/main.swift), and the Chrome extension.
+xcrun swiftc \
+    -O \
+    -swift-version 5 \
+    -target "${ARCH}-apple-macos14.0" \
+    -sdk "$SDK" \
+    -framework AppKit \
+    Bridge/main.swift \
+    -o "$APP/Contents/MacOS/ToolbeltBridge"
+cp -R Chrome "$APP/Contents/Resources/ChromeExtension"
+
 cp Info.plist "$APP/Contents/Info.plist"
 
 # Sign it for this Mac only (no Apple developer account needed)
+codesign --force --sign - "$APP/Contents/MacOS/ToolbeltBridge" >/dev/null 2>&1
 codesign --force --sign - "$APP" >/dev/null 2>&1
 
 echo "Built $APP"

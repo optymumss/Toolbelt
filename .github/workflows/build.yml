@@ -40,8 +40,13 @@ jobs:
         run: sw_vers && xcrun swiftc --version
       - name: Build Toolbelt.app
         run: bash build.sh
+      - name: Check the Chrome extension's scripts
+        run: set -e; for f in Chrome/*.js; do node --check "$f"; echo "✓ $f"; done
       - name: Run automated tests
         run: bash test.sh
+      - name: Test the Chrome extension in Chrome
+        if: env.FULL == 'true'
+        run: bash .github/scripts/chrome.sh
       - name: Check battery use while idle
         if: env.FULL == 'true'
         run: bash .github/scripts/energy.sh

@@ -28,6 +28,9 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   `ModuleID` case, its `ShortcutAction` cases, and is registered in `AppDelegate`.
 - A module can make its items searchable from the launcher by returning a `LauncherProvider`
   from `launcherProvider` (see `ClipboardLauncherProvider`).
+- `Chrome/` — the Chrome extension (Manifest V3, loaded unpacked; its fixed ID comes from the `key`).
+  `Bridge/main.swift` — `ToolbeltBridge`, the native-messaging helper Chrome starts; it writes requests into
+  `<data>/inbox/`, which `BrowserInbox` watches. `build.sh` builds both into the app bundle.
 - All data lives in `~/Library/Application Support/Toolbelt/` (settings in `settings.plist`, not UserDefaults).
 
 ## Building
