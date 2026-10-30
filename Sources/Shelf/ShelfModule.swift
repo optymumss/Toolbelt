@@ -12,6 +12,9 @@ final class ShelfModule: ToolbeltModule {
     private var monitors: [Any] = []
     private var shake = ShakeDetector()
     private var dragChangeCount = 0
+    /// Whether the current drag is a real drag-and-drop (decided once per drag).
+    private var isDragAndDrop = false
+    private var lastDragCheck: TimeInterval = 0
     private let shortcuts: ShortcutCenter
 
     init(shortcuts: ShortcutCenter) {
@@ -71,8 +74,10 @@ final class ShelfModule: ToolbeltModule {
         guard monitors.isEmpty else { return }
         let down = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.shake.reset()
-                self?.dragChangeCount = NSPasteboard(name: .drag).changeCount
+                guard let self, Prefs.shelfShakeToOpen else { return }
+                self.shake.reset()
+                self.isDragAndDrop = false
+                self.dragChangeCount = NSPasteboard(name: .drag).changeCount
             }
         }
         let dragged = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
@@ -84,7 +89,13 @@ final class ShelfModule: ToolbeltModule {
     private func mouseDragged(_ event: NSEvent) {
         guard Prefs.shelfShakeToOpen else { return }
         // Only a real drag-and-drop changes the drag pasteboard; moving a window doesn't.
-        guard NSPasteboard(name: .drag).changeCount != dragChangeCount else { return }
+        // Asking the pasteboard costs a little, so ask at most ten times a second.
+        if !isDragAndDrop {
+            guard event.timestamp - lastDragCheck > 0.1 else { return }
+            lastDragCheck = event.timestamp
+            guard NSPasteboard(name: .drag).changeCount != dragChangeCount else { return }
+            isDragAndDrop = true
+        }
         if shake.add(x: NSEvent.mouseLocation.x, time: event.timestamp) {
             newShelf(at: NSEvent.mouseLocation)
         }

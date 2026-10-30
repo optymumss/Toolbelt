@@ -12,6 +12,8 @@ final class SnapController {
 
     private var window: AXWindow?
     private var startFrame: CGRect?
+    /// Where the button went down; the window under it is only looked up once a drag starts.
+    private var downPoint: CGPoint?
     private var isMovingWindow = false
     private var lastCheck: TimeInterval = 0
     private var target: (action: WindowAction, frame: CGRect)?
@@ -57,11 +59,18 @@ final class SnapController {
         reset()
         // Snapping needs Accessibility; don't nag about it on every click.
         guard Prefs.windowSnapping, AXIsProcessTrusted() else { return }
-        window = AXWindow.at(pointer)
-        startFrame = window?.frame
+        downPoint = pointer
     }
 
     private func mouseDragged(_ event: NSEvent) {
+        // Ordinary clicks cost nothing: the window is looked up only when a drag really starts.
+        if window == nil, let downPoint {
+            let p = pointer
+            guard hypot(p.x - downPoint.x, p.y - downPoint.y) > 3 else { return }
+            self.downPoint = nil
+            window = AXWindow.at(downPoint)
+            startFrame = window?.frame
+        }
         guard let window, let startFrame else { return }
 
         if !isMovingWindow {
@@ -103,6 +112,7 @@ final class SnapController {
     }
 
     private func reset() {
+        downPoint = nil
         window = nil
         startFrame = nil
         isMovingWindow = false

@@ -21,6 +21,8 @@ jobs:
         run: bash build.sh
       - name: Run automated tests
         run: bash test.sh
+      - name: Check battery use while idle
+        run: bash .github/scripts/energy.sh
       - name: Launch the app and take screenshots
         run: bash .github/scripts/screenshots.sh
       - name: Keep screenshots

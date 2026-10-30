@@ -89,7 +89,9 @@ struct WindowsSettingsTab: View {
     @ObservedObject var shortcuts: ShortcutCenter
     @ObservedObject private var settings = SettingsStore.shared
     @State private var accessibilityOK = Permission.accessibility.isGranted
-    private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// Re-checks permissions when a window comes to the front (for example after you return from
+    /// System Settings), instead of a timer that would keep waking the Mac while Settings is closed.
+    private let refresh = NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)
 
     var body: some View {
         Group {
