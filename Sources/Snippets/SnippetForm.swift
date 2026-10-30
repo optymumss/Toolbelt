@@ -13,10 +13,15 @@ final class SnippetFormController: NSObject, NSWindowDelegate {
         finish(nil) // only one form at a time
         self.completion = completion
         let view = SnippetFormView(title: title, fields: fields) { [weak self] values in self?.finish(values) }
+        // A snippet is typed into another app, which stays in front: macOS doesn't let Toolbelt
+        // take over from typing alone. So this panel takes the keyboard without activating
+        // Toolbelt, and doesn't hide when Toolbelt isn't the active app.
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 120),
-                            styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+                            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "Fill in the blanks"
         panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = false
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.delegate = self
