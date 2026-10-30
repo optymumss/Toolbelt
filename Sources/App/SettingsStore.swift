@@ -151,6 +151,19 @@ enum Prefs {
         set { store.set(newValue.map(\.plist), for: "launcher.quicklinks") }
     }
 
+    // Shelf
+
+    static var shelfShakeToOpen: Bool {
+        get { store.value("shelf.shake", default: true) }
+        set { store.set(newValue, for: "shelf.shake") }
+    }
+
+    /// false: shelves keep a link to dropped files; true: they keep their own copy.
+    static var shelfCopiesFiles: Bool {
+        get { store.value("shelf.copy", default: false) }
+        set { store.set(newValue, for: "shelf.copy") }
+    }
+
     // Snippets
 
     static var snippetsExpandWhileTyping: Bool {

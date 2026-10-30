@@ -211,7 +211,7 @@ private struct RichTextView: NSViewRepresentable {
 }
 
 /// macOS's own Quick Look, which previews PDFs, images, documents, video and more.
-private struct QuickLookView: NSViewRepresentable {
+struct QuickLookView: NSViewRepresentable {
     let url: URL
 
     func makeNSView(context: Context) -> QLPreviewView {

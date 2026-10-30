@@ -7,6 +7,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
     case launcher
     case windows
     case snippets
+    case shelf
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .launcher: return "Launcher"
         case .windows: return "Windows"
         case .snippets: return "Snippets"
+        case .shelf: return "Shelf"
         }
     }
 
@@ -25,6 +27,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .launcher: return "magnifyingglass"
         case .windows: return "rectangle.split.2x1"
         case .snippets: return "text.badge.plus"
+        case .shelf: return "tray.and.arrow.down"
         }
     }
 
@@ -34,6 +37,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .launcher: return "A search bar for apps, files, sums, unit conversions, web searches and commands."
         case .windows: return "Moves windows to halves, thirds, quarters and other displays with shortcuts or by dragging to an edge."
         case .snippets: return "Type a short keyword like ;addr anywhere and it turns into the full text."
+        case .shelf: return "Floating shelves to park files, images, text and links on, then drag them all out later."
         }
     }
 }

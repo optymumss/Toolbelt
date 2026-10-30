@@ -74,9 +74,10 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     case clipboardHistory
     case openLauncher
     case window(WindowAction)
+    case newShelf
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .openLauncher] + WindowAction.allCases.map { .window($0) }
+        [.clipboardHistory, .openLauncher] + WindowAction.allCases.map { .window($0) } + [.newShelf]
     }
 
     /// Stable name used to save the shortcut.
@@ -85,6 +86,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory: return "clipboardHistory"
         case .openLauncher: return "openLauncher"
         case .window(let action): return "window.\(action.rawValue)"
+        case .newShelf: return "newShelf"
         }
     }
 
@@ -95,6 +97,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory: return "Open clipboard history"
         case .openLauncher: return "Open launcher"
         case .window(let action): return action.title
+        case .newShelf: return "New shelf"
         }
     }
 
@@ -103,6 +106,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory: return .clipboard
         case .openLauncher: return .launcher
         case .window: return .windows
+        case .newShelf: return .shelf
         }
     }
 
@@ -111,6 +115,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         switch self {
         case .clipboardHistory: return Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey)
         case .openLauncher: return Shortcut(keyCode: kVK_Space, modifiers: optionKey)
+        case .newShelf: return Shortcut(keyCode: kVK_ANSI_S, modifiers: ctrlOpt)
         case .window(let action):
             switch action {
             case .leftHalf: return Shortcut(keyCode: kVK_LeftArrow, modifiers: ctrlOpt)
