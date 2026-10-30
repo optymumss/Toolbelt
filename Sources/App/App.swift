@@ -36,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.register(WindowsModule(shortcuts: shortcuts) { [weak self] in
             self?.settings.show(tab: .module(.windows))
         })
-        modules.register(SnippetsModule { [weak self] in
+        modules.register(SnippetsModule(shortcuts: shortcuts) { [weak self] in
             self?.settings.show(tab: .module(.snippets))
         })
         modules.register(ShelfModule(shortcuts: shortcuts))
@@ -99,6 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 launcher.notes.store.update(second) { $0.x = 700; $0.y = 300 }
             case "settings-windows": settings.show(tab: .module(.windows))
             case "settings-snippets": settings.show(tab: .module(.snippets))
+            case "snippet-picker": (modules.module(.snippets) as? SnippetsModule)?.openPicker()
+            case "snippet-form":
+                (modules.module(.snippets) as? SnippetsModule)?.form.ask(
+                    title: "Meeting follow-up",
+                    fields: [("Name", "Sam"), ("Date", "Thursday")]) { _ in }
             case "settings-shelf": settings.show(tab: .module(.shelf))
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()

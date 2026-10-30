@@ -19,6 +19,8 @@ final class LauncherModel: ObservableObject {
     /// When set, the launcher is the app and window switcher: only this provider, and
     /// everything is listed even before you type.
     @Published var switcher: LauncherProvider?
+    /// What the search box says when empty (the default suits the launcher).
+    var prompt: String?
 
     init(providers: @escaping () -> [LauncherProvider]) {
         self.providers = providers
@@ -203,7 +205,7 @@ struct LauncherView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 20))
                     .foregroundStyle(.secondary)
-                TextField(model.switcher == nil ? "Search apps, files, commands, sums…" : "Switch to an app or window…", text: $model.query)
+                TextField(model.prompt ?? (model.switcher == nil ? "Search apps, files, commands, sums…" : "Switch to an app or window…"), text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 22))
                     .focused($focused)
@@ -225,7 +227,7 @@ struct LauncherView: View {
                 KeyHint(keys: "↩", label: "Open")
                 if model.switcher == nil {
                     KeyHint(keys: "⌘↩", label: "Show in Finder")
-                } else {
+                } else if model.switcher is SwitcherProvider {
                     KeyHint(keys: "⌘Q", label: "Quit")
                     KeyHint(keys: "⌘H", label: "Hide")
                     KeyHint(keys: "⌘W", label: "Close window")

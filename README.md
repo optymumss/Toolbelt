@@ -1,9 +1,15 @@
-# Toolbelt — v0.11
+# Toolbelt — v0.12
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.12: more snippets
+
+- **Fill-in snippets:** put `{input:Name}` where a blank goes (or `{input:Name|Sam}` to suggest an answer). When the snippet expands, a small form asks for the blanks, then types the finished text.
+- **Snippet picker:** press **⌃⌥;** to search your snippets by name, keyword, folder or text, and press Return to type one.
+- **Folders:** give snippets a folder (Settings → Snippets) to keep them organised and to search by folder.
 
 ## What's new in 0.11: more launcher
 

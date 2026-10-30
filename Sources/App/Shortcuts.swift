@@ -78,9 +78,10 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     case newNote
     case window(WindowAction)
     case newShelf
+    case snippetPicker
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + [.newShelf]
+        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + [.newShelf, .snippetPicker]
     }
 
     /// Stable name used to save the shortcut.
@@ -93,6 +94,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .newNote: return "newNote"
         case .window(let action): return "window.\(action.rawValue)"
         case .newShelf: return "newShelf"
+        case .snippetPicker: return "snippetPicker"
         }
     }
 
@@ -107,6 +109,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .newNote: return "New floating note"
         case .window(let action): return action.title
         case .newShelf: return "New shelf"
+        case .snippetPicker: return "Find and insert a snippet"
         }
     }
 
@@ -116,6 +119,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .openLauncher, .appSwitcher, .newNote: return .launcher
         case .window: return .windows
         case .newShelf: return .shelf
+        case .snippetPicker: return .snippets
         }
     }
 
@@ -128,6 +132,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .appSwitcher: return Shortcut(keyCode: kVK_Tab, modifiers: optionKey)
         case .newNote: return Shortcut(keyCode: kVK_ANSI_N, modifiers: ctrlOpt)
         case .newShelf: return Shortcut(keyCode: kVK_ANSI_S, modifiers: ctrlOpt)
+        case .snippetPicker: return Shortcut(keyCode: kVK_ANSI_Semicolon, modifiers: ctrlOpt)
         case .window(let action):
             switch action {
             case .leftHalf: return Shortcut(keyCode: kVK_LeftArrow, modifiers: ctrlOpt)

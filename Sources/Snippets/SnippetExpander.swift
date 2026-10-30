@@ -6,6 +6,8 @@ import Carbon
 @MainActor
 final class SnippetExpander {
     private let store: SnippetStore
+    /// What to do when a keyword is typed: the snippet, and how many characters to delete first.
+    var onMatch: ((Snippet, Int) -> Void)?
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var buffer = TypingBuffer()
@@ -86,8 +88,12 @@ final class SnippetExpander {
             let keywordLength = snippet.keyword.count
             // Let the last key of the keyword reach the app before replacing it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-                MainActor.assumeIsolated {
-                    TextInserter.replace(typed: keywordLength, with: Placeholders.render(snippet.text))
+                MainActor.assumeIsolated { [weak self] in
+                    if let onMatch = self?.onMatch {
+                        onMatch(snippet, keywordLength)
+                    } else {
+                        TextInserter.replace(typed: keywordLength, with: Placeholders.render(snippet.text))
+                    }
                 }
             }
         }
