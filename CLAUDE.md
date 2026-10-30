@@ -14,7 +14,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 
 ## Build order
 
-1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ·
+1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
 5 Snippets · 6 Drop shelf · 7 Download manager · 8 Screenshots · 9 Gestures · 10 Automation/macros.
 [Core] items of every module first, then [Next], then [Later].
 

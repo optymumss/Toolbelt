@@ -151,6 +151,19 @@ enum Prefs {
         set { store.set(newValue.map(\.plist), for: "launcher.quicklinks") }
     }
 
+    // Windows
+
+    static var windowSnapping: Bool {
+        get { store.value("windows.snap", default: true) }
+        set { store.set(newValue, for: "windows.snap") }
+    }
+
+    /// Space in points left between snapped windows and screen edges.
+    static var windowGap: Int {
+        get { store.value("windows.gap", default: 0) }
+        set { store.set(newValue, for: "windows.gap") }
+    }
+
     // Clipboard
 
     static var clipboardPaused: Bool {

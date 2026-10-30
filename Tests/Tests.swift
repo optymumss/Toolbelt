@@ -31,6 +31,9 @@ enum ToolbeltTests {
         t.group("Launcher: unit converter", ConverterTests.run)
         t.group("Launcher: matching and ranking", LauncherSearchTests.run)
         t.group("Launcher: quicklinks and commands", LauncherProviderTests.run)
+        t.group("Windows: layouts", WindowLayoutTests.run)
+        t.group("Windows: snapping and displays", SnapTests.run)
+        t.group("Windows: moving a real window", RealWindowTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -663,5 +666,111 @@ enum LauncherProviderTests {
         let clash = center.assign(Shortcut(keyCode: kVK_Space, modifiers: optionKey), to: .clipboardHistory)
         check(clash?.contains("Toolbelt already uses") == true, "warns when another Toolbelt shortcut (the launcher's ⌥Space) has the keys", clash ?? "no warning")
         checkEqual(ShortcutAction.openLauncher.defaultShortcut?.display, "⌥Space", "the launcher opens with ⌥Space")
+    }
+}
+
+// MARK: - Window management
+
+@MainActor
+enum WindowLayoutTests {
+    // A 1440 × 900 screen with a 25-point menu bar and no Dock, in top-left coordinates.
+    static let area = CGRect(x: 0, y: 25, width: 1440, height: 875)
+    static let window = CGRect(x: 100, y: 100, width: 800, height: 600)
+
+    static func frame(_ action: WindowAction, gap: CGFloat = 0) -> CGRect? {
+        WindowLayout.frame(for: action, in: area, current: window, gap: gap)
+    }
+
+    static func run() {
+        checkEqual(frame(.leftHalf), CGRect(x: 0, y: 25, width: 720, height: 875), "left half")
+        checkEqual(frame(.rightHalf), CGRect(x: 720, y: 25, width: 720, height: 875), "right half")
+        checkEqual(frame(.topHalf), CGRect(x: 0, y: 25, width: 1440, height: 438), "top half (rounded to whole points)")
+        checkEqual(frame(.bottomHalf)?.maxY, 900, "bottom half reaches the bottom")
+        checkEqual(frame(.topLeft), CGRect(x: 0, y: 25, width: 720, height: 438), "top left quarter")
+        checkEqual(frame(.bottomRight)?.origin, CGPoint(x: 720, y: 462), "bottom right quarter")
+        checkEqual(frame(.firstThird), CGRect(x: 0, y: 25, width: 480, height: 875), "first third")
+        checkEqual(frame(.centerThird)?.minX, 480, "centre third")
+        checkEqual(frame(.lastThird)?.minX, 960, "last third")
+        checkEqual(frame(.firstTwoThirds)?.width, 960, "first two thirds")
+        checkEqual(frame(.lastTwoThirds), CGRect(x: 480, y: 25, width: 960, height: 875), "last two thirds")
+        checkEqual(frame(.maximize), area, "maximise fills the usable area")
+        checkEqual(frame(.center), CGRect(x: 320, y: 163, width: 800, height: 600), "centre keeps the size")
+        let big = WindowLayout.frame(for: .center, in: area, current: CGRect(x: 0, y: 0, width: 3000, height: 2000))
+        checkEqual(big, area, "centre shrinks a window bigger than the screen")
+        checkEqual(frame(.restore), nil, "restore isn't a screen position")
+
+        checkEqual(frame(.leftHalf, gap: 10), CGRect(x: 10, y: 35, width: 705, height: 855), "gaps leave space at the edges")
+        let left = frame(.leftHalf, gap: 10)!, right = frame(.rightHalf, gap: 10)!
+        checkEqual(right.minX - left.maxX, 10, "and between neighbouring windows")
+
+        // AppKit counts y from the bottom; the Accessibility API from the top.
+        checkEqual(WindowLayout.flip(CGRect(x: 0, y: 0, width: 1440, height: 875), primaryHeight: 900),
+                   CGRect(x: 0, y: 25, width: 1440, height: 875), "screen coordinates are converted correctly")
+    }
+}
+
+@MainActor
+enum SnapTests {
+    static let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+    static func run() {
+        checkEqual(SnapZone.action(for: CGPoint(x: 0, y: 450), in: screen), .leftHalf, "dragging to the left edge snaps to the left half")
+        checkEqual(SnapZone.action(for: CGPoint(x: 1439, y: 450), in: screen), .rightHalf, "right edge → right half")
+        checkEqual(SnapZone.action(for: CGPoint(x: 700, y: 0), in: screen), .maximize, "top edge → fill the screen")
+        checkEqual(SnapZone.action(for: CGPoint(x: 0, y: 5), in: screen), .topLeft, "top left corner → quarter")
+        checkEqual(SnapZone.action(for: CGPoint(x: 1439, y: 899), in: screen), .bottomRight, "bottom right corner → quarter")
+        checkEqual(SnapZone.action(for: CGPoint(x: 700, y: 450), in: screen), nil, "the middle of the screen doesn't snap")
+        checkEqual(SnapZone.action(for: CGPoint(x: 700, y: 899), in: screen), nil, "the bottom edge (Dock) doesn't snap")
+
+        // Two screens side by side: a 1440 × 900 laptop and a 2560 × 1440 monitor to its right.
+        let laptop = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        let monitor = CGRect(x: 1440, y: 25, width: 2560, height: 1415)
+        let moved = WindowLayout.move(CGRect(x: 720, y: 25, width: 720, height: 875), from: laptop, to: monitor)
+        check(monitor.contains(moved), "moving to the next display lands on that display", "\(moved)")
+        checkEqual(moved.size, CGSize(width: 720, height: 875), "a window that fits keeps its size")
+        let back = WindowLayout.move(CGRect(x: 1440, y: 25, width: 2560, height: 1415), from: monitor, to: laptop)
+        checkEqual(back, laptop, "a window too big for the smaller display is shrunk to fit")
+
+        check(ShortcutAction.allCases.count == Set(ShortcutAction.allCases.map(\.rawValue)).count, "every shortcut has its own saved name")
+        let defaults = ShortcutAction.allCases.compactMap(\.defaultShortcut)
+        checkEqual(defaults.count, Set(defaults).count, "no two default shortcuts clash")
+        checkEqual(ShortcutAction.window(.leftHalf).defaultShortcut?.display, "⌃⌥←", "left half is ⌃⌥←")
+        checkEqual(ShortcutAction.window(.maximize).defaultShortcut?.display, "⌃⌥↩", "maximise is ⌃⌥↩")
+
+        let provider = WindowsLauncherProvider(manager: WindowManager())
+        checkEqual(provider.results(for: "left half").first?.title, "Left Half", "the launcher finds window moves")
+    }
+}
+
+/// Moves a real Finder window, if this Mac lets the tests use Accessibility.
+@MainActor
+enum RealWindowTests {
+    static func run() {
+        guard AXIsProcessTrusted() else {
+            print("  – skipped: this Mac hasn't given the test program the Accessibility permission")
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()))
+        spin(2.5)
+        guard let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first,
+              let window = AXWindow.focused(in: finder.processIdentifier),
+              let before = window.frame else {
+            check(false, "a Finder window opens to test with")
+            return
+        }
+        check(true, "a Finder window opens to test with")
+        let manager = WindowManager()
+        check(manager.perform(.leftHalf, on: window), "left half runs")
+        spin(0.5)
+        let area = Screens.all[Screens.index(containing: before)].area
+        let expected = WindowLayout.frame(for: .leftHalf, in: area, current: before, gap: CGFloat(Prefs.windowGap))!
+        let after = window.frame ?? .zero
+        check(abs(after.minX - expected.minX) < 2 && abs(after.minY - expected.minY) < 2, "the window moved to the left edge", "now \(after), expected \(expected)")
+        check(abs(after.width - expected.width) < 2, "and is half the screen wide", "width \(after.width)")
+
+        manager.perform(.restore, on: window)
+        spin(0.5)
+        let restored = window.frame ?? .zero
+        check(abs(restored.minX - before.minX) < 2 && abs(restored.width - before.width) < 2, "restore puts it back", "now \(restored), was \(before)")
     }
 }
