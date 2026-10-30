@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 struct ClipboardSettingsTab: View {
     @ObservedObject var shortcuts: ShortcutCenter
+    @ObservedObject var pinboards: PinboardStore
+    @ObservedObject var named: NamedClipboardStore
     var onClear: () -> Void
 
     @ObservedObject private var settings = SettingsStore.shared
@@ -25,6 +27,17 @@ struct ClipboardSettingsTab: View {
                     Text("5,000 items").tag(5000)
                     Text("Unlimited").tag(0)
                 }
+                Picker("Delete items older than", selection: settings.binding("clipboard.autoDeleteDays", default: 0)) {
+                    ForEach(ClipboardAge.choices, id: \.days) { choice in
+                        Text(choice.title).tag(choice.days)
+                    }
+                }
+                Picker("Panel layout", selection: settings.binding("clipboard.layout", default: ClipboardLayout.list.rawValue)) {
+                    ForEach(ClipboardLayout.allCases) { layout in
+                        Text(layout.title).tag(layout.rawValue)
+                    }
+                }
+                Toggle("Find images by the text in them", isOn: settings.binding("clipboard.readImageText", default: true))
                 LabeledContent("Open history") {
                     Text(shortcuts.shortcut(for: .clipboardHistory)?.display ?? "No shortcut")
                         .font(.system(.body, design: .rounded))
@@ -72,6 +85,51 @@ struct ClipboardSettingsTab: View {
             }
 
             Section {
+                if pinboards.pinboards.isEmpty {
+                    Text("Right-click an item in the clipboard panel and choose Pinboards › New Pinboard…")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach($pinboards.pinboards) { $board in
+                    HStack {
+                        TextField("Name", text: $board.name).labelsHidden()
+                        Text("\(board.itemIDs.count) items").foregroundStyle(.secondary).font(.caption)
+                        Button { pinboards.pinboards.removeAll { $0.id == board.id } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                    }
+                }
+            } header: {
+                Text("Pinboards")
+            } footer: {
+                Text("Named collections, like “Email replies”. Items on a pinboard are never deleted automatically. They appear as filters at the top of the panel.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                if named.clips.isEmpty {
+                    Text("Right-click an item in the clipboard panel and choose Save as Named Clipboard…")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(named.clips) { clip in
+                    HStack {
+                        Text(clip.name)
+                        Text(clip.item.title).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer()
+                        Button { named.remove(named: clip.name) } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                    }
+                }
+            } header: {
+                Text("Named clipboards")
+            } footer: {
+                Text("Fixed slots you paste by name: type the name in the launcher (⌥Space) and press Return.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent("Paste stack") {
+                    Text("⌘K adds items in the panel, ⌘↩ starts, \(shortcuts.shortcut(for: .pasteNextFromStack)?.display ?? "the shortcut") pastes the next one")
+                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                }
                 Button("Clear History…", role: .destructive) { onClear() }
             }
         }

@@ -72,18 +72,20 @@ struct Shortcut: Hashable {
 /// Every global shortcut in Toolbelt. Each module adds its own here.
 enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     case clipboardHistory
+    case pasteNextFromStack
     case openLauncher
     case window(WindowAction)
     case newShelf
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .openLauncher] + WindowAction.allCases.map { .window($0) } + [.newShelf]
+        [.clipboardHistory, .pasteNextFromStack, .openLauncher] + WindowAction.allCases.map { .window($0) } + [.newShelf]
     }
 
     /// Stable name used to save the shortcut.
     var rawValue: String {
         switch self {
         case .clipboardHistory: return "clipboardHistory"
+        case .pasteNextFromStack: return "pasteNextFromStack"
         case .openLauncher: return "openLauncher"
         case .window(let action): return "window.\(action.rawValue)"
         case .newShelf: return "newShelf"
@@ -95,6 +97,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .clipboardHistory: return "Open clipboard history"
+        case .pasteNextFromStack: return "Paste next from paste stack"
         case .openLauncher: return "Open launcher"
         case .window(let action): return action.title
         case .newShelf: return "New shelf"
@@ -103,7 +106,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
 
     var module: ModuleID {
         switch self {
-        case .clipboardHistory: return .clipboard
+        case .clipboardHistory, .pasteNextFromStack: return .clipboard
         case .openLauncher: return .launcher
         case .window: return .windows
         case .newShelf: return .shelf
@@ -114,6 +117,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         let ctrlOpt = controlKey | optionKey
         switch self {
         case .clipboardHistory: return Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey)
+        case .pasteNextFromStack: return Shortcut(keyCode: kVK_ANSI_V, modifiers: ctrlOpt)
         case .openLauncher: return Shortcut(keyCode: kVK_Space, modifiers: optionKey)
         case .newShelf: return Shortcut(keyCode: kVK_ANSI_S, modifiers: ctrlOpt)
         case .window(let action):

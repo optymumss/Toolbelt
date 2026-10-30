@@ -12,6 +12,10 @@ final class ClipboardStore: ObservableObject {
     private let historyFile: URL
     private var saveTask: Task<Void, Never>?
     private let imageCache = NSCache<NSString, NSImage>()
+    /// Items that must be kept like pinned ones (for example, those on a pinboard).
+    var isProtected: (UUID) -> Bool = { _ in false }
+    /// Called with each new image, so its text can be read for searching.
+    var onNewImage: ((ClipItem) -> Void)?
 
     init() {
         folder = SettingsStore.folder
@@ -44,7 +48,31 @@ final class ClipboardStore: ObservableObject {
             }
             items.insert(item, at: 0)
             trimToLimit()
+            if item.kind == .image { onNewImage?(item) }
         }
+        scheduleSave()
+    }
+
+    /// Changes one item in place (for example after editing its text or reading text in an image).
+    func update(_ id: UUID, _ change: (inout ClipItem) -> Void) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        change(&items[index])
+        scheduleSave()
+    }
+
+    private func keeps(_ item: ClipItem) -> Bool {
+        item.pinned || isProtected(item.id)
+    }
+
+    /// Deletes items not used for `days` days, except pinned ones and pinboard items.
+    func deleteOlder(thanDays days: Int, now: Date = Date()) {
+        guard days > 0 else { return }
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        let old = items.filter { !keeps($0) && $0.lastUsed < cutoff }
+        guard !old.isEmpty else { return }
+        for item in old { removeImageFile(for: item) }
+        let oldIDs = Set(old.map(\.id))
+        items.removeAll { oldIDs.contains($0.id) }
         scheduleSave()
     }
 
@@ -71,8 +99,8 @@ final class ClipboardStore: ObservableObject {
     }
 
     func clearUnpinned() {
-        for item in items where !item.pinned { removeImageFile(for: item) }
-        items.removeAll { !$0.pinned }
+        for item in items where !keeps(item) { removeImageFile(for: item) }
+        items.removeAll { !keeps($0) }
         scheduleSave()
     }
 
@@ -82,7 +110,7 @@ final class ClipboardStore: ObservableObject {
         var unpinnedSeen = 0
         var keep: [ClipItem] = []
         for item in items {
-            if item.pinned {
+            if keeps(item) {
                 keep.append(item)
             } else if unpinnedSeen < limit {
                 unpinnedSeen += 1

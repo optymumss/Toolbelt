@@ -44,6 +44,7 @@ xcrun swiftc \
     -framework ServiceManagement \
     -framework IOKit \
     -framework Quartz \
+    -framework Vision \
     "${SOURCES[@]}" \
     -o "$APP/Contents/MacOS/$APP_NAME"
 

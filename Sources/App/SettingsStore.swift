@@ -211,6 +211,22 @@ enum Prefs {
 
     // Clipboard
 
+    static var clipboardLayout: ClipboardLayout {
+        get { ClipboardLayout(rawValue: store.value("clipboard.layout", default: "")) ?? .list }
+        set { store.set(newValue.rawValue, for: "clipboard.layout") }
+    }
+
+    /// Delete unpinned items not used for this many days (0 = never).
+    static var clipboardAutoDeleteDays: Int {
+        get { store.value("clipboard.autoDeleteDays", default: 0) }
+        set { store.set(newValue, for: "clipboard.autoDeleteDays") }
+    }
+
+    static var clipboardReadImageText: Bool {
+        get { store.value("clipboard.readImageText", default: true) }
+        set { store.set(newValue, for: "clipboard.readImageText") }
+    }
+
     static var clipboardPaused: Bool {
         get { store.value("paused", default: false) }
         set { store.set(newValue, for: "paused") }

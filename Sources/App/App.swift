@@ -69,6 +69,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "settings-clipboard": settings.show(tab: .module(.clipboard))
             case "clipboard": modules.module(.clipboard)?.open()
             case "clipboard-preview": (modules.module(.clipboard) as? ClipboardModule)?.openWithPreview()
+            case "clipboard-grid", "clipboard-strip":
+                Prefs.clipboardLayout = target == "clipboard-grid" ? .grid : .strip
+                modules.module(.clipboard)?.open()
+                Prefs.clipboardLayout = .list
+            case "clipboard-extras":
+                // A pinboard, two items in the paste stack, then the edit-before-pasting box.
+                guard let clipboard = modules.module(.clipboard) as? ClipboardModule else { break }
+                let items = clipboard.store.items
+                let board = clipboard.pinboards.create("Addresses")
+                for item in items.prefix(2) { clipboard.pinboards.toggle(item.id, on: board.id) }
+                clipboard.open()
+                for item in items.prefix(2) { clipboard.panel.model.toggleStack(item) }
+                if let first = items.first(where: { $0.kind == .text }) { clipboard.panel.model.beginEditing(first) }
             case "menu": statusMenu.open()
             case "energy-settings":
                 // Open every Settings tab, then close the window, as a person might.

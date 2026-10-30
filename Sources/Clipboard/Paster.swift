@@ -13,7 +13,13 @@ final class Paster {
         self.monitor = monitor
     }
 
-    func paste(_ item: ClipItem, plainText: Bool) {
+    func paste(_ item: ClipItem, plainText: Bool, transform: TextTransform? = nil) {
+        var item = item
+        var plainText = plainText
+        if let transform, let text = item.text, item.kind == .text || item.kind == .link {
+            item.text = transform.apply(text)
+            plainText = true // a changed text can't keep its old formatting
+        }
         write(item, plainText: plainText)
         store.touch(item.id)
 
