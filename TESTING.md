@@ -73,3 +73,9 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Snippets | Folders | Tests |
 | Windows | Saved layouts | Tests "saved layouts and snap areas" (save, move, apply, reopen app); end-to-end ⌃⌥⌘1 |
 | Windows | Custom snap areas (draw, review, edit) | Tests (hit-testing, saving); screenshot `snap-areas-editor`; **Manual** for drawing and ⌥-dragging |
+| Shelf | Drag to the notch or an edge | Tests (edge zones); **Manual** for a real drag |
+| Shelf | New screenshots on a shelf | Tests (names, folder watching); end-to-end real screenshot |
+| Shelf | Watch a folder | Tests "edges, watched folders, actions and drop targets" |
+| Shelf | Zip, resize, convert, rename, copy paths | Tests (real files, sips, ditto, unzip) |
+| Shelf | Drop-target grid: folders, apps, websites, actions | Tests (copy, move, paths, shelf); end-to-end ⌃⌥⌘G; screenshot `drop-grid`; **Manual** for drag-and-drop |
+| Shelf | Shortcut per target (Finder selection) | **Manual** (needs Finder's permission) |

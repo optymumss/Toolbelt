@@ -96,6 +96,7 @@ SCREENS=(
     "snippet-form=snippet-form"
     "settings-shelf=settings-shelf"
     "shelf-demo=shelf-demo"
+    "drop-grid=drop-grid"
     "settings-downloads=settings-downloads"
     "downloads=downloads"
     "launcher-download=launcher:https://example.com/files/big-file.zip"

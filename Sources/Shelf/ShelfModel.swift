@@ -169,7 +169,7 @@ final class ShelfStore: ObservableObject {
     }
 
     /// "Report.pdf", then "Report 2.pdf", "Report 3.pdf"… so copies never overwrite each other.
-    static func unusedURL(for name: String, in folder: URL) -> URL {
+    nonisolated static func unusedURL(for name: String, in folder: URL) -> URL {
         let base = (name as NSString).deletingPathExtension
         let ext = (name as NSString).pathExtension
         var candidate = folder.appendingPathComponent(name)

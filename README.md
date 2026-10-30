@@ -1,9 +1,16 @@
-# Toolbelt — v0.13
+# Toolbelt — v0.14
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.14: more shelf
+
+- **Drag to the notch:** while dragging something, push the pointer to the top centre of the screen (the notch) and a shelf opens there. You can choose the left or right edge instead, or turn it off, in Settings → Shelf.
+- **Screenshots go onto a shelf automatically**, ready to drag into an email or chat. Add your own **watched folders** in Settings → Shelf: new files in them land on a shelf too.
+- **Actions** menu on every shelf: Zip, Resize Images (half size or 1024 pixels), Convert Images (JPEG, PNG, HEIC), Rename in Bulk, Copy File Paths.
+- **Drop targets** (⌃⌥⌘G, or **Drop Targets…** in the menu bar): a grid of tiles. Drop files on a folder tile to copy or move them there, on an app to open them with it, or on an action (Zip, Copy Paths, Shelf). Click an app or website tile to open it. Give a tile a shortcut in Settings → Shortcuts ("Drop target 1–9") to use it on the files selected in Finder. Finder asks once whether Toolbelt may read its selection.
 
 ## What's new in 0.13: more window management
 

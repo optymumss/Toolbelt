@@ -12,7 +12,7 @@ final class ShelfWindowController: NSObject, NSWindowDelegate {
 
     static let size = NSSize(width: 260, height: 330)
 
-    init(shelfID: UUID, store: ShelfStore, onClose: @escaping (UUID) -> Void) {
+    init(shelfID: UUID, store: ShelfStore, onAction: @escaping (ShelfAction, UUID) -> Void = { _, _ in }, onClose: @escaping (UUID) -> Void) {
         self.shelfID = shelfID
         self.store = store
         panel = KeyPanel(
@@ -35,6 +35,7 @@ final class ShelfWindowController: NSObject, NSWindowDelegate {
 
         let view = ShelfView(store: store, shelfID: shelfID,
                              onPreview: { [weak self] item in self?.preview.toggle(item, near: self?.panel) },
+                             onAction: { action in onAction(action, shelfID) },
                              onClose: { onClose(shelfID) })
         let drop = ShelfDropView(store: store, shelfID: shelfID)
         let hosting = NSHostingView(rootView: view)
@@ -180,6 +181,7 @@ struct ShelfView: View {
     @ObservedObject var store: ShelfStore
     let shelfID: UUID
     var onPreview: (ShelfItem) -> Void
+    var onAction: (ShelfAction) -> Void = { _ in }
     var onClose: () -> Void
 
     private var shelf: Shelf? { store.shelf(shelfID) }
@@ -208,6 +210,18 @@ struct ShelfView: View {
                     }
                     .padding(6)
                 }
+                Divider()
+                Menu {
+                    ForEach(ShelfAction.allCases) { action in
+                        Button(action.title) { onAction(action) }
+                    }
+                } label: {
+                    Label("Actions", systemImage: "wand.and.stars")
+                }
+                .menuStyle(.borderlessButton)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .help("Zip, resize, convert, rename or copy the paths of the files on this shelf")
                 Divider()
                 DragOut(items: { store.shelf(shelfID)?.items ?? [] }) {
                     HStack(spacing: 6) {
