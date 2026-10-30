@@ -110,6 +110,9 @@ SCREENS=(
     "settings-downloads=settings-downloads"
     "downloads=downloads"
     "launcher-download=launcher:https://example.com/files/big-file.zip"
+    "settings-screenshots=settings-screenshots"
+    "screenshot-editor=screenshot-editor"
+    "launcher-screenshot=launcher:screenshot"
     "launcher-switcher=launcher-switcher"
     "notes-demo=notes-demo"
 )

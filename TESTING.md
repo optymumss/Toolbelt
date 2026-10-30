@@ -90,3 +90,9 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Downloads | Right-click "Download with Toolbelt" | **Manual** (Chrome's own menu can't be clicked by the test) |
 | Downloads | Download button on web videos | CI step "Test the Chrome extension in Chrome": the button appears, downloads the video, and isn't shown on streamed (blob:) videos |
 | Downloads | Other browsers (Safari, Firefox, Edge) | Not built (owner asked for Chrome only) |
+| Screenshots | Capture the whole screen, an area | Tests (real captures with macOS's screencapture: whole screen, a given area) |
+| Screenshots | Drag out an area / click a window | **Manual** (needs a person to drag or click; uses macOS's own crosshair) |
+| Screenshots | Editor: arrows, boxes, text, highlight, blur, crop, undo/redo | Tests "Screenshots: capture, mark up and read text" (checks the actual pixels); screenshot `screenshot-editor` |
+| Screenshots | Copy and save the marked-up picture | Tests (clipboard picture size, PNG file, never overwrites) |
+| Screenshots | Copy text from a screenshot / from the screen (OCR) | Tests (reads "Invoice 42" back from a marked-up picture); **Manual** for ⌥⇧⌘2 |
+| Screenshots | Shortcuts and launcher commands | Tests; screenshot `launcher-screenshot` |

@@ -43,7 +43,7 @@ enum Permission: String, CaseIterable, Identifiable {
         switch self {
         case .accessibility: return "Clipboard auto-paste · later: window management, snippets, macros"
         case .inputMonitoring: return "Later: snippets, gestures, macros"
-        case .screenRecording: return "Later: screenshots"
+        case .screenRecording: return "Screenshots and copying text from the screen"
         }
     }
 

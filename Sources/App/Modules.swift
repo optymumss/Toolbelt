@@ -9,6 +9,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
     case snippets
     case shelf
     case downloads
+    case screenshots
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .snippets: return "Snippets"
         case .shelf: return "Shelf"
         case .downloads: return "Downloads"
+        case .screenshots: return "Screenshots"
         }
     }
 
@@ -31,6 +33,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .snippets: return "text.badge.plus"
         case .shelf: return "tray.and.arrow.down"
         case .downloads: return "arrow.down.circle"
+        case .screenshots: return "camera.viewfinder"
         }
     }
 
@@ -42,6 +45,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .snippets: return "Type a short keyword like ;addr anywhere and it turns into the full text."
         case .shelf: return "Floating shelves to park files, images, text and links on, then drag them all out later."
         case .downloads: return "Fast downloads in several parts at once, which pause, resume and survive restarts."
+        case .screenshots: return "Screenshots of an area, a window or the screen, marked up with arrows, boxes, text and blur, or read as text."
         }
     }
 }

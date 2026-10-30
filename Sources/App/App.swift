@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
         modules.register(ShelfModule(shortcuts: shortcuts))
         modules.register(DownloadsModule())
+        modules.register(ScreenshotsModule(shortcuts: shortcuts))
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -114,6 +115,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     fields: [("Name", "Sam"), ("Date", "Thursday")]) { _ in }
             case "settings-shelf": settings.show(tab: .module(.shelf))
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
+            case "settings-screenshots": settings.show(tab: .module(.screenshots))
+            case "screenshot-editor":
+                // The screenshot the screenshot check took, marked up as a person might.
+                let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/Screenshot.png")
+                guard let screenshots = modules.module(.screenshots) as? ScreenshotsModule,
+                      let image = NSImage(contentsOf: file)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { break }
+                let editor = screenshots.edit(image)
+                let w = CGFloat(image.width), h = CGFloat(image.height)
+                editor.model.annotations = [
+                    Annotation(tool: .highlight, start: CGPoint(x: w * 0.05, y: h * 0.02), end: CGPoint(x: w * 0.45, y: h * 0.08), color: .yellow),
+                    Annotation(tool: .box, start: CGPoint(x: w * 0.55, y: h * 0.25), end: CGPoint(x: w * 0.9, y: h * 0.6)),
+                    Annotation(tool: .arrow, start: CGPoint(x: w * 0.3, y: h * 0.75), end: CGPoint(x: w * 0.53, y: h * 0.45)),
+                    Annotation(tool: .blur, start: CGPoint(x: w * 0.1, y: h * 0.3), end: CGPoint(x: w * 0.4, y: h * 0.5)),
+                    Annotation(tool: .text, start: CGPoint(x: w * 0.12, y: h * 0.8), end: .zero, color: .red, text: "Look here"),
+                ]
+                editor.model.crop = CGRect(x: w * 0.02, y: h * 0.01, width: w * 0.96, height: h * 0.95)
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()
             case "shelf-demo":
