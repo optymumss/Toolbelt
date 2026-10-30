@@ -172,7 +172,8 @@ final class LauncherPanelController: NSObject, NSWindowDelegate {
         case 126: // up
             model.move(-1)
             return true
-        case 12, 4, 13 where flags.contains(.command): // ⌘Q quit, ⌘H hide, ⌘W close window
+        case 12 where flags.contains(.command), 4 where flags.contains(.command), 13 where flags.contains(.command):
+            // ⌘Q quit, ⌘H hide, ⌘W close window (plain Q, H and W are typed into the search)
             let key: Character = event.keyCode == 12 ? "q" : event.keyCode == 4 ? "h" : "w"
             guard let action = model.selected?.extraActions[key] else { return true }
             action()
