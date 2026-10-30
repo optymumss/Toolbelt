@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 enum Backup {
     /// The files in the data folder that hold settings (not history or downloaded data).
     static let files = ["settings.plist", "snippets.json", "shelves.json", "macros.json", "notes.json",
-                        "pinboards.json", "namedclipboards.json", "launcher-usage.json", "layouts.json", "gestures.json", "droptargets.json"]
+                        "pinboards.json", "namedclipboards.json", "launcher-usage.json", "layouts.json", "snapareas.json", "gestures.json", "droptargets.json"]
     static let fileExtension = "toolbelt"
 
     /// Everything in one property list: the format version and each file's contents.

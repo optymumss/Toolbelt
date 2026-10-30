@@ -98,6 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let second = launcher.notes.newNote(text: "Ideas for the weekend\n• Kew Gardens\n• Borough Market")
                 launcher.notes.store.update(second) { $0.x = 700; $0.y = 300 }
             case "settings-windows": settings.show(tab: .module(.windows))
+            case "snap-areas-editor":
+                guard let windows = modules.module(.windows) as? WindowsModule, let screen = NSScreen.screens.first else { break }
+                let display = DisplayID.name(of: screen)
+                windows.areas.areas = [
+                    SnapArea(display: display, place: RelativeRect(x: 0, y: 0, width: 0.6, height: 1)),
+                    SnapArea(display: display, place: RelativeRect(x: 0.6, y: 0, width: 0.4, height: 0.5)),
+                ]
+                windows.editor.open()
             case "settings-snippets": settings.show(tab: .module(.snippets))
             case "snippet-picker": (modules.module(.snippets) as? SnippetsModule)?.openPicker()
             case "snippet-form":
