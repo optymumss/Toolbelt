@@ -86,6 +86,7 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Downloads | Hourly data cap | Tests (fake clock: stops at the cap, carries on in the next hour, file correct) |
 | Downloads | Notification when finished | Tests (the finish is announced); **Manual** for the banner itself (needs the installed app) |
 | Downloads | Choose columns and buttons | Tests (list text per column, saved choices); screenshot `downloads` |
-| Downloads | Chrome extension: hands downloads over, right-click item | Tests "the Chrome extension and its bridge" (real bridge program, Chrome's message format, cookies, inbox → download list); CI checks the scripts; **Manual** in Chrome itself |
-| Downloads | Download button on web videos | CI checks the script; **Manual** on a page with a plain video file |
+| Downloads | Chrome extension: hands downloads over | Tests "the Chrome extension and its bridge" (real bridge program, Chrome's message format, cookies, inbox → download list); CI step "Test the Chrome extension in Chrome": a download clicked in real Chrome finishes in Toolbelt, the popup says Connected |
+| Downloads | Right-click "Download with Toolbelt" | **Manual** (Chrome's own menu can't be clicked by the test) |
+| Downloads | Download button on web videos | CI step "Test the Chrome extension in Chrome": the button appears, downloads the video, and isn't shown on streamed (blob:) videos |
 | Downloads | Other browsers (Safari, Firefox, Edge) | Not built (owner asked for Chrome only) |
