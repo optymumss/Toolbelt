@@ -1,9 +1,23 @@
-# Toolbelt — v0.5
+# Toolbelt — v0.6
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
-**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher and window management.
+**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management and snippets.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.6: snippets
+
+Save text you type often and give it a short keyword. Type the keyword anywhere and it turns into the full text.
+
+1. Open **Settings → Snippets** (or choose **Snippets…** from the menu bar icon).
+2. Click **Add Snippet**, type a keyword such as `;addr`, a name, and the text.
+3. In any app, type `;addr`. It's replaced with your address.
+
+Snippets can include placeholders: `{date}`, `{time}`, `{datetime}`, `{date:dd/MM/yyyy}`, `{clipboard}` (what you last copied) and `{cursor}` (where the cursor lands afterwards).
+
+Snippets also show up in the launcher (⌥Space): search by name and press Return to type it in.
+
+**Permissions:** the first time you add a snippet, Toolbelt asks for **Input Monitoring** (to notice the keyword as you type) and needs **Accessibility** (to type the text for you). Snippets never expand in password fields.
 
 ## What's new in 0.5: window management
 

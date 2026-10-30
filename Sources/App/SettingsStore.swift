@@ -151,6 +151,13 @@ enum Prefs {
         set { store.set(newValue.map(\.plist), for: "launcher.quicklinks") }
     }
 
+    // Snippets
+
+    static var snippetsExpandWhileTyping: Bool {
+        get { store.value("snippets.expand", default: true) }
+        set { store.set(newValue, for: "snippets.expand") }
+    }
+
     // Windows
 
     static var windowSnapping: Bool {
