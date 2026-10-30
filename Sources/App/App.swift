@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settings.show(tab: .module(.snippets))
         })
         modules.register(ShelfModule(shortcuts: shortcuts))
+        modules.register(DownloadsModule())
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -66,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "settings-windows": settings.show(tab: .module(.windows))
             case "settings-snippets": settings.show(tab: .module(.snippets))
             case "settings-shelf": settings.show(tab: .module(.shelf))
+            case "settings-downloads": settings.show(tab: .module(.downloads))
+            case "downloads": modules.module(.downloads)?.open()
             case "shelf-demo":
                 // A shelf holding one of each kind of item, as if they'd been dropped on it.
                 guard let shelfModule = modules.module(.shelf) as? ShelfModule else { break }

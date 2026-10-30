@@ -1,9 +1,20 @@
-# Toolbelt — v0.7
+# Toolbelt — v0.8
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
-**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets and the drop shelf.
+**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.8: the download manager
+
+Open **Downloads…** from the menu bar icon, then paste or drop a link and click **Download**. You can also choose **Download Link from Clipboard** from the menu, or paste a link into the launcher (⌥Space).
+
+- **Faster:** big files download in up to 8 parts at once. When one part finishes, its connection helps with the biggest part that's left.
+- **Pause and resume** any download. Downloads also carry on by themselves after a lost connection, sleep, a restart or a power cut.
+- **Automatic retries** when a connection drops.
+- The list shows **progress, speed, time left and size**. Drag finished files straight out of the list.
+- Finished downloads are **sorted into folders by type** in your Downloads folder: Video, Music, Documents, Programs, Archives, Images, Other. Change the folder, sorting, connections and retries in **Settings → Downloads**.
+- Works with **http, https and FTP** links. FTP uses one connection, through macOS's built-in `curl`, because macOS no longer supports FTP in its own networking.
 
 ## What's new in 0.7: the drop shelf
 

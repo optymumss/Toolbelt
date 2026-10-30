@@ -151,6 +151,31 @@ enum Prefs {
         set { store.set(newValue.map(\.plist), for: "launcher.quicklinks") }
     }
 
+    // Downloads
+
+    static var downloadFolder: URL {
+        get {
+            if let path = store.raw("downloads.folder") as? String { return URL(fileURLWithPath: path, isDirectory: true) }
+            return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        }
+        set { store.set(newValue.path, for: "downloads.folder") }
+    }
+
+    static var downloadSortByType: Bool {
+        get { store.value("downloads.sort", default: true) }
+        set { store.set(newValue, for: "downloads.sort") }
+    }
+
+    static var downloadConnections: Int {
+        get { store.value("downloads.connections", default: 8) }
+        set { store.set(newValue, for: "downloads.connections") }
+    }
+
+    static var downloadRetries: Int {
+        get { store.value("downloads.retries", default: 5) }
+        set { store.set(newValue, for: "downloads.retries") }
+    }
+
     // Shelf
 
     static var shelfShakeToOpen: Bool {
