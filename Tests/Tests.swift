@@ -781,6 +781,13 @@ enum RealWindowTests {
         spin(0.5)
         let restored = window.frame ?? .zero
         check(abs(restored.minX - before.minX) < 2 && abs(restored.width - before.width) < 2, "restore puts it back", "now \(restored), was \(before)")
+
+        // Close the test window so it doesn't sit in front of later screenshots.
+        var close: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window.element, kAXCloseButtonAttribute as CFString, &close) == .success,
+           let close, CFGetTypeID(close) == AXUIElementGetTypeID() {
+            AXUIElementPerformAction(close as! AXUIElement, kAXPressAction as CFString)
+        }
     }
 }
 
@@ -847,7 +854,8 @@ enum SnippetStoreTests {
     }
 }
 
-/// Types a keyword into a real text field and checks it expands, if this Mac allows it.
+/// Types a keyword into TextEdit, like a person would, and checks it expands — if this Mac
+/// lets the test program use Input Monitoring and Accessibility.
 @MainActor
 enum SnippetTypingTests {
     static func run() {
@@ -855,24 +863,22 @@ enum SnippetTypingTests {
             print("  – skipped: this Mac hasn't given the test program Input Monitoring and Accessibility")
             return
         }
-        // ⌘V needs an Edit menu to reach the text field.
-        let main = NSMenu()
-        let editItem = NSMenuItem()
-        let edit = NSMenu(title: "Edit")
-        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editItem.submenu = edit
-        main.addItem(NSMenuItem())
-        main.addItem(editItem)
-        NSApp.mainMenu = main
-
-        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 500, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
-        let textView = NSTextView(frame: window.contentView!.bounds)
-        window.contentView?.addSubview(textView)
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(textView)
+        // A real app with an empty document, in front, ready for typing.
+        let document = FileManager.default.temporaryDirectory.appendingPathComponent("snippet-test-\(UUID().uuidString).txt")
+        FileManager.default.createFile(atPath: document.path, contents: Data())
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "TextEdit", document.path]
+        try? open.run()
+        open.waitUntilExit()
+        spin(3)
+        guard let textEdit = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").first else {
+            check(false, "TextEdit opens to type into")
+            return
+        }
+        textEdit.activate()
         spin(1)
+        check(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.TextEdit", "TextEdit is in front, ready for typing")
 
         let store = SnippetStore()
         store.snippets = [Snippet(keyword: ";tb", name: "Toolbelt", text: "Toolbelt says hi")]
@@ -881,13 +887,24 @@ enum SnippetTypingTests {
 
         for key in [kVK_ANSI_Semicolon, kVK_ANSI_T, kVK_ANSI_B] {
             typeKey(CGKeyCode(key))
-            spin(0.1)
+            spin(0.15)
         }
-        spin(1.5)
-        checkEqual(textView.string, "Toolbelt says hi", "typing ;tb in a text field turns into the snippet")
+        spin(2)
+        checkEqual(text(in: textEdit), "Toolbelt says hi", "typing ;tb in TextEdit turns into the snippet")
         expander.stop()
-        window.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
+        textEdit.forceTerminate()
+        try? FileManager.default.removeItem(at: document)
+    }
+
+    /// The text in the app's focused text area, read through Accessibility.
+    static func text(in app: NSRunningApplication) -> String {
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return "(nothing focused)" }
+        var value: CFTypeRef?
+        AXUIElementCopyAttributeValue(focused as! AXUIElement, kAXValueAttribute as CFString, &value)
+        return value as? String ?? "(no text)"
     }
 
     /// A key press as if from the keyboard (not marked as Toolbelt's own).
