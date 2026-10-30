@@ -1761,6 +1761,12 @@ enum EndToEndTests {
         check(windowCount(of: pid) > beforeSwitcher, "⌥⇥ opens the app switcher")
         type("textedit")
         spin(0.6)
+        // Plain h, q and w are just typed into the search; only ⌘H, ⌘Q and ⌘W act on the app.
+        type("h")
+        spin(0.6)
+        check(!textEdit.isHidden && !textEdit.isTerminated, "typing h in the switcher's search doesn't hide anything")
+        press(kVK_Delete)
+        spin(0.4)
         press(kVK_ANSI_H, .maskCommand)
         spin(1)
         check(textEdit.isHidden, "⌘H in the switcher hides the chosen app")
