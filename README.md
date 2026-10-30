@@ -63,6 +63,22 @@ In Settings → Clipboard:
   If they don't show up straight away, log out and back in once, or turn them on in System Settings → Keyboard → Keyboard Shortcuts → Services.
 - **Uses less battery:** no background timers while Settings is closed, fewer wake-ups, and an optimised build for Apple silicon.
 
+## What's new in 0.18: automation (macros)
+
+A new **Automation** module. Open **Macros…** from the menu bar icon (or Settings → Automation).
+
+**A macro starts when…** you press a shortcut, type some text (like `;;sig`), use a gesture, press a key on a second keyboard or macro pad, an app opens, quits or comes to the front, a file is added to a folder, the Wi-Fi network or connection changes, a display is connected or disconnected, you switch Spaces, at a time of day (on chosen weekdays) or every few minutes, or when you pick it from the menu bar, the launcher, or Terminal:
+
+```bash
+/Applications/Toolbelt.app/Contents/MacOS/ToolbeltBridge run "Macro name"
+```
+
+**…and runs its steps:** any Gestures action (open apps, files and websites, type text, press keys, Toolbelt commands, window positions, volume, brightness, media keys), plus choosing a menu item by name (like `File > Export as PDF`), changing the screen resolution, switching the sound output, setting the clipboard or pasting a named clipboard, changing text (find and replace, patterns, case, counting, keeping part of it), running shell scripts, AppleScript or JavaScript and keeping their output, asking you for text or a choice, showing notifications, pausing, and **if / otherwise**, **repeat** and **repeat while** with **variables** (`%Name%`; `%Clipboard%` is the clipboard, `%Trigger%` is what started the macro, such as the new file).
+
+**Groups** switch several macros on or off together, or limit them to certain apps. The Macros window has a **search** box. Apple Shortcuts is on hold, as you asked.
+
+Notes: typed-text and gesture triggers use the Gestures module, so keep it on. A Wi-Fi *name* trigger needs Location Services (macOS only tells apps the network's name with that); “any Wi-Fi change” works without it. A key on a second keyboard still types as well, unless macOS lets Toolbelt take that keyboard over (it allows that for some devices only).
+
 ## What's new in 0.17: gestures
 
 A new **Gestures** module (Settings → Gestures → *Add Gesture*). Each gesture does one thing you choose: a Toolbelt command (open the launcher, the clipboard, a window position…), open an app, file or website, press keys, type text, a Mac control (Mission Control, show desktop, volume, play/pause, brightness, lock screen…), or run a shell script or AppleScript.

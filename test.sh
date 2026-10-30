@@ -34,6 +34,10 @@ xcrun swiftc \
     -framework IOKit \
     -framework Quartz \
     -framework Vision \
+    -framework CoreWLAN \
+    -framework CoreLocation \
+    -framework CoreAudio \
+    -framework Network \
     "${SOURCES[@]}" \
     -o build/ToolbeltTests
 

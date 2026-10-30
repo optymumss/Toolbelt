@@ -1,0 +1,181 @@
+import AppKit
+
+/// Runs a macro's steps one after another. Variables are written %Name% in any text; a few are
+/// built in: %Clipboard% (reading and setting it uses the real clipboard), %FrontApp%, %Date%,
+/// %Time% and %Trigger% (what started the macro, such as the file that was added).
+@MainActor
+final class MacroRun {
+    private(set) var variables: [String: String] = [:]
+    let runner: ActionRunner
+    /// Asks for text or a choice; the tests answer instead of a person.
+    var ask: (_ prompt: String, _ options: [String]?) -> String? = MacroRun.askPerson
+    var notify: (_ title: String, _ message: String) -> Void = MacroRun.postNotification
+    private var stopped = false
+    /// Loops can't run forever by mistake.
+    static let loopLimit = 1000
+
+    init(runner: ActionRunner, trigger: String = "") {
+        self.runner = runner
+        variables["Trigger"] = trigger
+    }
+
+    // MARK: Variables
+
+    func value(of name: String) -> String {
+        switch name.lowercased() {
+        case "clipboard": return NSPasteboard.general.string(forType: .string) ?? ""
+        case "frontapp": return NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+        case "date": return Date().formatted(date: .abbreviated, time: .omitted)
+        case "time": return Date().formatted(date: .omitted, time: .shortened)
+        default: return variables[name] ?? ""
+        }
+    }
+
+    func set(_ name: String, _ value: String) {
+        if name.lowercased() == "clipboard" {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+        } else {
+            variables[name] = value
+        }
+    }
+
+    /// Fills in %Name% with the variable's value. %% is a plain percent sign.
+    func expand(_ text: String) -> String {
+        guard text.contains("%") else { return text }
+        var result = ""
+        var rest = Substring(text)
+        while let start = rest.firstIndex(of: "%") {
+            result += rest[..<start]
+            let after = rest.index(after: start)
+            guard let end = rest[after...].firstIndex(of: "%") else {
+                result += rest[start...]
+                return result
+            }
+            let name = String(rest[after..<end])
+            if name.isEmpty {
+                result += "%"
+            } else if name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
+                result += value(of: name)
+            } else {
+                // Not a variable (for example "50% off, 20% more"): keep the text as it is.
+                result += rest[start..<end]
+                rest = rest[end...]
+                continue
+            }
+            rest = rest[rest.index(after: end)...]
+        }
+        return result + rest
+    }
+
+    // MARK: Running
+
+    func run(_ steps: [MacroStep]) async {
+        for step in steps {
+            if stopped { return }
+            await run(step)
+        }
+    }
+
+    private func run(_ step: MacroStep) async {
+        switch step.kind {
+        case .action:
+            var action = step.action
+            action.value = expand(action.value)
+            runner.run(action)
+        case .script:
+            let tool: String
+            let arguments: [String]
+            switch step.action.kind {
+            case .appleScript: (tool, arguments) = ("/usr/bin/osascript", ["-e", step.action.value])
+            case .javaScript: (tool, arguments) = ("/usr/bin/osascript", ["-l", "JavaScript", "-e", step.action.value])
+            default: (tool, arguments) = ("/bin/zsh", ["-c", step.action.value])
+            }
+            // Variables are passed to scripts as TB_Name environment variables.
+            var environment: [String: String] = [:]
+            for (name, value) in variables { environment["TB_" + name] = value }
+            environment["TB_Clipboard"] = value(of: "Clipboard")
+            let output: String = await withCheckedContinuation { continuation in
+                ActionRunner.runScript(tool, arguments, environment: environment) { continuation.resume(returning: $0) }
+            }
+            if !step.name.isEmpty { set(step.name, output) }
+        case .pause:
+            try? await Task.sleep(nanoseconds: UInt64(max(0, min(step.number, 3600)) * 1_000_000_000))
+        case .setVariable:
+            set(step.name, expand(step.text))
+        case .setClipboard:
+            set("Clipboard", expand(step.text))
+        case .textFilter:
+            let name = step.name.isEmpty ? "Clipboard" : step.name
+            let result = step.filter.apply(value(of: name), find: expand(step.text), replace: expand(step.text2))
+            if step.filter.rawValue.hasPrefix("count"), !step.text2.isEmpty {
+                set(step.text2, result) // counts can go into another variable
+            } else if step.filter == .removeFormatting, name.lowercased() == "clipboard" {
+                set(name, value(of: name)) // writing it back as plain text drops the formatting
+            } else {
+                set(name, result)
+            }
+        case .askInput:
+            guard let answer = ask(expand(step.text), nil) else { stopped = true; return }
+            set(step.name, answer)
+        case .pickFromList:
+            let options = expand(step.text2).components(separatedBy: .newlines).filter { !$0.isEmpty }
+            guard let choice = ask(expand(step.text), options) else { stopped = true; return }
+            set(step.name, choice)
+        case .notify:
+            notify(expand(step.text2.isEmpty ? "Toolbelt" : step.text2), expand(step.text))
+        case .ifThen:
+            await run(isTrue(step.condition) ? step.steps : step.elseSteps)
+        case .repeatTimes:
+            for index in 0..<min(Int(step.number), Self.loopLimit) {
+                if stopped { return }
+                variables["Index"] = String(index + 1)
+                await run(step.steps)
+            }
+        case .repeatWhile:
+            var count = 0
+            while isTrue(step.condition), count < Self.loopLimit, !stopped {
+                count += 1
+                variables["Index"] = String(count)
+                await run(step.steps)
+            }
+        case .stop:
+            stopped = true
+        }
+    }
+
+    func isTrue(_ condition: MacroCondition) -> Bool {
+        condition.isTrue(left: expand(condition.left), right: expand(condition.right),
+                         frontApp: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    }
+
+    // MARK: Asking and telling
+
+    /// A small window asking for text, or offering a list to pick from. nil if cancelled (which stops the macro).
+    static func askPerson(_ prompt: String, _ options: [String]?) -> String? {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = prompt.isEmpty ? "Toolbelt" : prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        if let options {
+            let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26))
+            popup.addItems(withTitles: options)
+            alert.accessoryView = popup
+            return alert.runModal() == .alertFirstButtonReturn ? popup.titleOfSelectedItem : nil
+        }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    static func postNotification(_ title: String, _ message: String) {
+        // Notifications need the installed app; elsewhere (tests) they're written to the log.
+        guard Bundle.main.bundleURL.pathExtension == "app" else {
+            NSLog("Toolbelt notification: \(title): \(message)")
+            return
+        }
+        DownloadNotifier.post(id: UUID().uuidString, title: title, body: message, path: nil)
+    }
+}

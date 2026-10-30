@@ -47,6 +47,7 @@ enum ToolbeltTests {
         t.group("Downloads: the Chrome extension and its bridge", ChromeBridgeTests.run)
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
+        t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
@@ -1835,6 +1836,187 @@ enum GestureTests {
     }
 }
 
+// MARK: - Automation
+
+/// The same file layout as MacroStore's macros.json, for writing test macros.
+struct SavedMacros: Codable {
+    var macros: [Macro]
+    var groups: [MacroGroup]
+}
+
+@MainActor
+enum AutomationTests {
+    static func step(_ kind: MacroStep.Kind, name: String = "", text: String = "", text2: String = "", number: Double = 1,
+                     filter: TextFilter = .uppercase, condition: MacroCondition = MacroCondition(),
+                     steps: [MacroStep] = [], elseSteps: [MacroStep] = [], action: MacroAction = .toolbelt(.openLauncher)) -> MacroStep {
+        MacroStep(kind: kind, action: action, name: name, text: text, text2: text2, number: number, filter: filter,
+                  condition: condition, steps: steps, elseSteps: elseSteps)
+    }
+
+    static func runSteps(_ run: MacroRun, _ steps: [MacroStep], timeout: TimeInterval = 20) {
+        let done = Box(false)
+        Task { @MainActor in await run.run(steps); done.value = true }
+        _ = DownloadTests.waitFor(timeout) { done.value }
+    }
+
+    static func run() {
+        let shortcuts = ShortcutCenter()
+        let runner = ActionRunner(shortcuts: shortcuts)
+
+        // Variables
+        let vars = MacroRun(runner: runner, trigger: "/tmp/new file.pdf")
+        vars.set("Name", "Sam")
+        checkEqual(vars.expand("Hi %Name%, 50% off %%"), "Hi Sam, 50% off %", "%Name% is filled in; other percent signs stay")
+        checkEqual(vars.expand("%Trigger%"), "/tmp/new file.pdf", "%Trigger% is what started the macro")
+        vars.set("Clipboard", "from a macro")
+        checkEqual(NSPasteboard.general.string(forType: .string), "from a macro", "setting %Clipboard% sets the real clipboard")
+        checkEqual(vars.expand("[%Clipboard%]"), "[from a macro]", "and reading it reads the clipboard")
+
+        // Text filters
+        checkEqual(TextFilter.findReplace.apply("a-b-c", find: "-", replace: "+"), "a+b+c", "find and replace")
+        checkEqual(TextFilter.regexReplace.apply("Order 123 and 456", find: "[0-9]+", replace: "#"), "Order # and #", "find and replace with a pattern")
+        checkEqual(TextFilter.extractMatch.apply("Invoice INV-2041 due", find: "INV-([0-9]+)"), "2041", "keep only the part that matches")
+        checkEqual(TextFilter.countWords.apply("one two  three\nfour"), "4", "count words")
+        checkEqual(TextFilter.countLines.apply("a\nb\nc"), "3", "count lines")
+        checkEqual(TextFilter.titleCase.apply("hello there"), "Hello There", "change case")
+        checkEqual(TextFilter.firstLine.apply("first\nsecond"), "first", "keep the first line")
+
+        // Conditions
+        let contains = MacroCondition(left: "%Name%", test: .contains, right: "sa")
+        check(vars.isTrue(contains), "conditions: contains (ignoring case)")
+        check(!vars.isTrue(MacroCondition(left: "%Name%", test: .equals, right: "Alex")), "is")
+        check(vars.isTrue(MacroCondition(left: "%Missing%", test: .isEmpty)), "is empty")
+        check(vars.isTrue(MacroCondition(left: "12", test: .greaterThan, right: "9")), "numbers compare as numbers (12 > 9)")
+        check(vars.isTrue(MacroCondition(left: "ABC-123", test: .matches, right: "^[A-Z]+-[0-9]+$")), "matches a pattern")
+
+        // A whole macro: variables, loops, if/otherwise, scripts, questions, notifications, pause and stop
+        let engine = MacroRun(runner: runner)
+        var asked: [String] = []
+        engine.ask = { prompt, options in asked.append(prompt); return options?.last ?? "Robin" }
+        var notes: [String] = []
+        engine.notify = { title, message in notes.append("\(title): \(message)") }
+        let started = Date()
+        runSteps(engine, [
+            step(.setVariable, name: "Total", text: "0"),
+            step(.repeatTimes, number: 4, steps: [step(.setVariable, name: "Total", text: "%Index%")]),
+            step(.askInput, name: "Who", text: "Who?"),
+            step(.pickFromList, name: "Colour", text: "Colour?", text2: "Red\nBlue"),
+            step(.setVariable, name: "Greeting", text: "hello %Who%"),
+            step(.textFilter, name: "Greeting", filter: .uppercase),
+            step(.ifThen, condition: MacroCondition(left: "%Greeting%", test: .contains, right: "ROBIN"),
+                 steps: [step(.setVariable, name: "Branch", text: "then")], elseSteps: [step(.setVariable, name: "Branch", text: "otherwise")]),
+            step(.script, name: "Shell", action: MacroAction(kind: .shell, value: "echo \"script saw $TB_Who\"")),
+            step(.script, name: "Apple", action: MacroAction(kind: .appleScript, value: "return 2 + 3")),
+            step(.textFilter, name: "Greeting", text2: "Words", filter: .countWords),
+            step(.repeatWhile, condition: MacroCondition(left: "%Index%", test: .lessThan, right: "3"),
+                 steps: [step(.setVariable, name: "Loops", text: "%Index%")]),
+            step(.pause, number: 0.5),
+            step(.notify, text: "%Who% chose %Colour%", text2: "Done"),
+            step(.stop),
+            step(.setVariable, name: "AfterStop", text: "ran"),
+        ])
+        checkEqual(engine.value(of: "Total"), "4", "Repeat runs its steps the number of times (%Index% counts)")
+        checkEqual(asked, ["Who?", "Colour?"], "macros can ask for text and for a choice from a list")
+        checkEqual(engine.value(of: "Colour"), "Blue", "and keep the answer")
+        checkEqual(engine.value(of: "Greeting"), "HELLO ROBIN", "text can be changed (here to UPPERCASE)")
+        checkEqual(engine.value(of: "Branch"), "then", "If… then… runs the right branch")
+        checkEqual(engine.value(of: "Shell"), "script saw Robin", "shell scripts see the variables and give back their output")
+        checkEqual(engine.value(of: "Apple"), "5", "so do AppleScripts")
+        checkEqual(engine.value(of: "Words"), "2", "counts can go into another variable")
+        checkEqual(engine.value(of: "Loops"), "3", "Repeat while stops when its condition is no longer true")
+        check(Date().timeIntervalSince(started) >= 0.5, "Pause waits")
+        checkEqual(notes, ["Done: Robin chose Blue"], "notifications are shown with the variables filled in")
+        checkEqual(engine.value(of: "AfterStop"), "", "Stop ends the macro")
+
+        let endless = MacroRun(runner: runner)
+        runSteps(endless, [step(.repeatWhile, condition: MacroCondition(left: "x", test: .equals, right: "x"),
+                                steps: [step(.setVariable, name: "N", text: "%Index%")])])
+        checkEqual(endless.value(of: "N"), String(MacroRun.loopLimit), "a loop that would never end stops after \(MacroRun.loopLimit) rounds")
+        let cancelled = MacroRun(runner: runner)
+        cancelled.ask = { _, _ in nil }
+        runSteps(cancelled, [step(.askInput, name: "A", text: "?"), step(.setVariable, name: "B", text: "after")])
+        checkEqual(cancelled.value(of: "B"), "", "cancelling a question stops the macro")
+
+        // Times
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let friday = calendar.date(from: DateComponents(year: 2026, month: 10, day: 30, hour: 18))! // a Friday
+        var weekdays = MacroTrigger(kind: .timeOfDay)
+        weekdays.number = 9 * 60
+        weekdays.weekdays = [2, 3, 4, 5, 6]
+        checkEqual(MacroSchedule.next(weekdays, after: friday, calendar: calendar), calendar.date(from: DateComponents(year: 2026, month: 11, day: 2, hour: 9)),
+                   "a weekday 09:00 macro next runs on Monday at 09:00")
+        var daily = weekdays
+        daily.weekdays = []
+        checkEqual(MacroSchedule.next(daily, after: friday, calendar: calendar), calendar.date(from: DateComponents(year: 2026, month: 10, day: 31, hour: 9)),
+                   "an every-day one tomorrow")
+        var every = MacroTrigger(kind: .every)
+        every.number = 15
+        checkEqual(MacroSchedule.next(every, after: friday, calendar: calendar), friday.addingTimeInterval(900), "and a repeating one 15 minutes later")
+
+        // The store: groups, search, saving
+        let module = AutomationModule(shortcuts: shortcuts)
+        let group = MacroGroup(name: "Writing", scope: .only, apps: ["com.apple.TextEdit"])
+        var appMacro = Macro(name: "When TextEdit is in front", groupID: group.id)
+        appMacro.triggers = [MacroTrigger(kind: .appActivated, text: "com.apple.TextEdit"), MacroTrigger(kind: .launcher), MacroTrigger(kind: .menuBar)]
+        appMacro.steps = [step(.setVariable, name: "Seen", text: "yes")]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-macro-folder-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var fileMacro = Macro(name: "New invoice")
+        fileMacro.triggers = [MacroTrigger(kind: .fileAdded, text: folder.path), MacroTrigger(kind: .terminal), MacroTrigger(kind: .typedText, text: ";;inv")]
+        fileMacro.steps = [step(.setVariable, name: "File", text: "%Trigger%")]
+        module.store.groups = [group]
+        module.store.macros = [appMacro, fileMacro]
+        checkEqual(MacroStore().macros.map(\.name), ["When TextEdit is in front", "New invoice"], "macros are saved")
+        checkEqual(module.store.search("invoice").map(\.name), ["New invoice"], "macros can be searched by name")
+        checkEqual(module.store.search("textedit").map(\.name), ["When TextEdit is in front"], "or by what starts them")
+        checkEqual(module.store.search("trigger").map(\.name), ["New invoice"], "or by their steps")
+        check(module.store.isActive(appMacro, in: "com.apple.TextEdit") && !module.store.isActive(appMacro, in: "com.apple.Safari"),
+              "a group can limit its macros to certain apps")
+
+        module.start()
+        module.appEvent(.appActivated, bundleID: "com.apple.TextEdit", name: "TextEdit")
+        spin(0.3)
+        checkEqual(module.history.last, "When TextEdit is in front", "switching to an app runs its macro")
+        let ranBefore = module.history.filter { $0 == "When TextEdit is in front" }.count
+        module.appEvent(.appActivated, bundleID: "com.apple.Safari", name: "Safari")
+        spin(0.3)
+        checkEqual(module.history.filter { $0 == "When TextEdit is in front" }.count, ranBefore, "switching to another app doesn't")
+        FileManager.default.createFile(atPath: folder.appendingPathComponent("INV-7.pdf").path, contents: Data("pdf".utf8))
+        _ = DownloadTests.waitFor(5) { module.history.last == "New invoice" }
+        checkEqual(module.history.last, "New invoice", "adding a file to a watched folder runs its macro")
+        check(module.lastRun?.value(of: "File").hasSuffix("INV-7.pdf") == true, "with the file in %Trigger%")
+        check(module.gestureRules().contains { $0.gesture == .keySequence(";;inv") && $0.action == MacroAction(kind: .macro, value: "New invoice") },
+              "typed-text triggers are handed to the Gestures module")
+        check(module.menuItems().contains { $0.title.contains("When TextEdit is in front") }, "menu-bar macros are in the menu")
+        check(MacrosLauncherProvider(module: module).results(for: "textedit").contains { $0.title == "When TextEdit is in front" }, "launcher macros are in the launcher")
+        let bridge = "build/Toolbelt.app/Contents/MacOS/ToolbeltBridge"
+        if FileManager.default.fileExists(atPath: bridge) {
+            let terminal = Process()
+            terminal.executableURL = URL(fileURLWithPath: bridge)
+            terminal.arguments = ["run", "new invoice", "from", "Terminal"]
+            var environment = ProcessInfo.processInfo.environment
+            environment["TOOLBELT_DATA_DIR"] = SettingsStore.folder.path
+            environment["TOOLBELT_BRIDGE_NO_LAUNCH"] = "1"
+            terminal.environment = environment
+            try? terminal.run()
+            terminal.waitUntilExit()
+            _ = DownloadTests.waitFor(5) { module.lastRun?.value(of: "File") == "from Terminal" }
+            checkEqual(module.lastRun?.value(of: "File"), "from Terminal", "a command in Terminal runs a macro by name")
+        }
+        module.stop()
+        try? FileManager.default.removeItem(at: folder)
+
+        // Actions added for macros
+        runner.run(MacroAction(kind: .setClipboard, value: "set by an action"))
+        checkEqual(NSPasteboard.general.string(forType: .string), "set by an action", "an action can set the clipboard")
+        check(DisplayModes.size(from: "1920 × 1080")! == (1920, 1080), "screen sizes are understood")
+        check(!DisplayModes.available().isEmpty, "the display's sizes can be listed")
+        check(AudioOutputs.all().count >= 0, "sound outputs can be listed")
+        checkEqual(MenuClicker.normalise("Export as PDF…"), "export as pdf", "menu items are found ignoring case and …")
+    }
+}
+
 // MARK: - End to end
 
 /// Starts the real Toolbelt app and uses it with real key presses, checking the results in
@@ -1908,6 +2090,25 @@ enum EndToEndTests {
             GestureRule(gesture: .keySequence(";;z"), action: MacroAction(kind: .typeText, value: "sequence works")),
         ]
         try? JSONEncoder().encode(gestureRules).write(to: data.appendingPathComponent("gestures.json"))
+        // Macros started by a shortcut, typed text, an app opening and Terminal.
+        func touch(_ name: String) -> MacroStep {
+            MacroStep(kind: .script, action: MacroAction(kind: .shell, value: "printf '%s' \"$TB_Trigger\" > \"$TOOLBELT_DATA_DIR/\(name)\""))
+        }
+        var hotKey = MacroTrigger(kind: .hotKey)
+        hotKey.keyCode = kVK_ANSI_M
+        hotKey.modifiers = controlKey | optionKey | cmdKey
+        let macros = SavedMacros(macros: [
+            Macro(name: "Clear the document", triggers: [hotKey], steps: [
+                MacroStep(kind: .action, action: MacroAction(kind: .menuItem, value: "Edit > Select All")),
+                MacroStep(kind: .pause, number: 0.3),
+                MacroStep(kind: .action, action: MacroAction(kind: .pressKeys, keyCode: kVK_Delete)),
+                touch("macro-hotkey"),
+            ]),
+            Macro(name: "Typed", triggers: [MacroTrigger(kind: .typedText, text: ";;m")], steps: [touch("macro-typed")]),
+            Macro(name: "Calculator opened", triggers: [MacroTrigger(kind: .appLaunched, text: "com.apple.calculator")], steps: [touch("macro-app")]),
+            Macro(name: "From Terminal", triggers: [MacroTrigger(kind: .terminal)], steps: [touch("macro-terminal")]),
+        ], groups: [])
+        try? JSONEncoder().encode(macros).write(to: data.appendingPathComponent("macros.json"))
         let app = Process()
         app.executableURL = URL(fileURLWithPath: appPath)
         var environment = ProcessInfo.processInfo.environment
@@ -2168,6 +2369,30 @@ enum EndToEndTests {
         type(";;z")
         spin(2)
         checkEqual(SnippetTypingTests.text(in: textEdit), "sequence works", "typing ;;z runs its gesture (here: typing text in its place)")
+
+        // 8. Macros: a shortcut that chooses a menu item and presses a key, typed text, an app opening, Terminal
+        check(mark("macro-app"), "opening Calculator (earlier) ran the “app opens” macro")
+        clearDocument()
+        type("text to clear")
+        spin(0.5)
+        press(kVK_ANSI_M, [.maskControl, .maskAlternate, .maskCommand])
+        spin(2.5)
+        check(mark("macro-hotkey"), "⌃⌥⌘M runs its macro")
+        checkEqual(SnippetTypingTests.text(in: textEdit), "", "which chose Edit › Select All and pressed ⌫ in TextEdit")
+        type(";;m")
+        spin(2)
+        check(mark("macro-typed"), "typing ;;m runs its macro")
+        let terminal = Process()
+        terminal.executableURL = URL(fileURLWithPath: "build/Toolbelt.app/Contents/MacOS/ToolbeltBridge")
+        terminal.arguments = ["run", "From Terminal", "hello"]
+        var terminalEnvironment = ProcessInfo.processInfo.environment
+        terminalEnvironment["TOOLBELT_DATA_DIR"] = data.path
+        terminalEnvironment["TOOLBELT_BRIDGE_NO_LAUNCH"] = "1"
+        terminal.environment = terminalEnvironment
+        try? terminal.run()
+        terminal.waitUntilExit()
+        spin(2)
+        checkEqual(try? String(contentsOf: data.appendingPathComponent("macro-terminal"), encoding: .utf8), "hello", "`ToolbeltBridge run \"From Terminal\" hello` runs that macro")
 
         check(app.isRunning, "Toolbelt is still running after all that")
         app.terminate()

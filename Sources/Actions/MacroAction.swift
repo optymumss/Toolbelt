@@ -6,7 +6,8 @@ import SwiftUI
 /// Shared by Gestures and Automation, so every trigger can run every action.
 struct MacroAction: Codable, Equatable, Hashable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
-        case toolbelt, openApp, open, pressKeys, typeText, system, shell, appleScript, javaScript
+        case toolbelt, openApp, open, pressKeys, typeText, system, menuItem, resolution, audioOutput
+        case setClipboard, pasteNamed, macro, shell, appleScript, javaScript
 
         var id: String { rawValue }
 
@@ -18,9 +19,15 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .pressKeys: return "Press keys"
             case .typeText: return "Type text"
             case .system: return "Mac control"
+            case .menuItem: return "Choose a menu item"
+            case .resolution: return "Change screen resolution"
+            case .audioOutput: return "Switch sound output"
+            case .setClipboard: return "Set the clipboard"
+            case .pasteNamed: return "Paste a named clipboard"
+            case .macro: return "Run a macro"
             case .shell: return "Run a shell script"
             case .appleScript: return "Run an AppleScript"
-            case .javaScript: return "Run a JavaScript (for Automation)"
+            case .javaScript: return "Run a JavaScript"
             }
         }
     }
@@ -44,6 +51,12 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .pressKeys: return "Press \(Shortcut(keyCode: keyCode, modifiers: modifiers).display)"
         case .typeText: return "Type “\(value.prefix(30))”"
         case .system: return SystemControl(rawValue: value)?.title ?? "Mac control"
+        case .menuItem: return "Choose \(value)"
+        case .resolution: return "Resolution \(value)"
+        case .audioOutput: return "Sound to \(value)"
+        case .setClipboard: return "Clipboard = \(value.prefix(30))"
+        case .pasteNamed: return "Paste named clipboard “\(value)”"
+        case .macro: return "Run macro “\(value)”"
         case .shell: return "Shell: \(value.split(separator: "\n").first ?? "")"
         case .appleScript: return "AppleScript"
         case .javaScript: return "JavaScript"
@@ -103,8 +116,10 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
 /// Runs actions. Every action that touches other apps checks for the permission it needs first.
 @MainActor
 final class ActionRunner {
-    static var shared: ActionRunner?
     let shortcuts: ShortcutCenter
+    /// Set by the modules that own these things.
+    static var pasteNamedClipboard: ((String) -> Void)?
+    static var runMacro: ((String) -> Void)?
 
     init(shortcuts: ShortcutCenter) {
         self.shortcuts = shortcuts
@@ -126,6 +141,19 @@ final class ActionRunner {
             TextInserter.paste(Placeholders.render(action.value))
         case .system:
             if let control = SystemControl(rawValue: action.value) { perform(control) }
+        case .menuItem:
+            MenuClicker.click(action.value)
+        case .resolution:
+            DisplayModes.set(action.value)
+        case .audioOutput:
+            AudioOutputs.setDefault(action.value)
+        case .setClipboard:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(Placeholders.render(action.value).text, forType: .string)
+        case .pasteNamed:
+            Self.pasteNamedClipboard?(action.value)
+        case .macro:
+            Self.runMacro?(action.value)
         case .shell:
             Self.runScript("/bin/zsh", ["-c", action.value])
         case .appleScript:
@@ -271,6 +299,24 @@ struct ActionEditor: View {
                     Text("Choose…").tag("")
                     ForEach(SystemControl.allCases) { Text($0.title).tag($0.rawValue) }
                 }
+            case .menuItem:
+                TextField("Menu path, e.g. File > Export as PDF", text: $action.value)
+            case .resolution:
+                Picker("Size", selection: $action.value) {
+                    Text("Choose…").tag("")
+                    ForEach(Self.resolutions, id: \.self) { Text($0).tag($0) }
+                }
+            case .audioOutput:
+                Picker("Device", selection: $action.value) {
+                    Text("Choose…").tag("")
+                    ForEach(AudioOutputs.all().map(\.name), id: \.self) { Text($0).tag($0) }
+                }
+            case .setClipboard:
+                TextField("Text (placeholders like {date} work)", text: $action.value)
+            case .pasteNamed:
+                TextField("Named clipboard", text: $action.value)
+            case .macro:
+                TextField("Macro name", text: $action.value)
             case .shell, .appleScript, .javaScript:
                 TextEditor(text: $action.value)
                     .font(.system(.caption, design: .monospaced))
@@ -278,6 +324,15 @@ struct ActionEditor: View {
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
             }
         }
+    }
+
+    static var resolutions: [String] {
+        var seen: [String] = []
+        for mode in DisplayModes.available() {
+            let text = "\(mode.width) × \(mode.height)"
+            if !seen.contains(text) { seen.append(text) }
+        }
+        return seen
     }
 
     static func chooseApp() -> URL? {

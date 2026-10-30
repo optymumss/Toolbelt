@@ -104,3 +104,19 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Gestures | Rules for certain apps only / except | Tests (only, except, app rule wins) |
 | Gestures | Actions: Toolbelt commands, shell, AppleScript, open, keys, text, Mac controls | Tests (command, shell, AppleScript, addresses); end-to-end (shell, type text) |
 | Gestures | Listens only while a rule needs it | Tests (tap starts and stops with the rules); battery check |
+| Automation | Trigger: keyboard shortcut | End-to-end: ⌃⌥⌘M runs a macro in the real app |
+| Automation | Trigger: typed text, gesture | End-to-end: typing ;;m runs a macro (through the Gestures module) |
+| Automation | Trigger: key on another keyboard or device | **Manual** (needs a second keyboard; CI Macs have none) |
+| Automation | Trigger: app opened / closed / switched to | End-to-end: opening Calculator runs a macro; tests for switching |
+| Automation | Trigger: file added to a folder | Tests (a real file in a real folder; its path reaches the macro) |
+| Automation | Trigger: Wi-Fi changed, network changed, display connected, Space changed | Tests (logic); **Manual** for real changes (CI Macs have no Wi-Fi or second display) |
+| Automation | Trigger: time of day, repeating | Tests (next run: weekdays, every day, every N minutes) |
+| Automation | Trigger: menu bar, launcher, Terminal | Tests (menu, launcher); end-to-end: `ToolbeltBridge run "Name" hello` |
+| Automation | Trigger: Apple Shortcuts | On hold (owner's decision) |
+| Automation | Actions: open, type, press keys, click menu items by name | End-to-end: Edit › Select All then ⌫ in TextEdit |
+| Automation | Actions: windows, volume, brightness, resolution, sound output | Window and media actions share the tested Toolbelt commands and keys; resolution/sound listing tested; **Manual** for switching |
+| Automation | Clipboard actions, named clipboards, text filters | Tests (set clipboard, find/replace, patterns, case, counts, extract) |
+| Automation | Scripts: shell, AppleScript, JavaScript | Tests (output kept in variables, variables passed in) |
+| Automation | Notifications, ask for text, pick from a list | Tests (answers filled in, cancelling stops the macro) |
+| Automation | If/otherwise, repeat, repeat while, pause, stop, variables | Tests (a whole macro using each; endless loops are stopped) |
+| Automation | Groups only in certain apps; search | Tests |

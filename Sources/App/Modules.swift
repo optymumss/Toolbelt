@@ -11,6 +11,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
     case downloads
     case screenshots
     case gestures
+    case automation
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .downloads: return "Downloads"
         case .screenshots: return "Screenshots"
         case .gestures: return "Gestures"
+        case .automation: return "Automation"
         }
     }
 
@@ -37,6 +39,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .downloads: return "arrow.down.circle"
         case .screenshots: return "camera.viewfinder"
         case .gestures: return "hand.draw"
+        case .automation: return "gearshape.2"
         }
     }
 
@@ -50,6 +53,7 @@ enum ModuleID: String, CaseIterable, Identifiable {
         case .downloads: return "Fast downloads in several parts at once, which pause, resume and survive restarts."
         case .screenshots: return "Screenshots of an area, a window or the screen, marked up with arrows, boxes, text and blur, or read as text."
         case .gestures: return "Trackpad and Magic Mouse gestures, extra mouse buttons, mouse strokes and key taps, each doing whatever you choose."
+        case .automation: return "Macros: when something happens (keys, apps, folders, Wi-Fi, a time…), run a list of steps."
         }
     }
 }

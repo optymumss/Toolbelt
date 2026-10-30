@@ -40,6 +40,9 @@ final class GesturesModule: ToolbeltModule {
     private var pendingSingleTap: DispatchWorkItem?
     /// For tests: what ran, most recent last.
     private(set) var log: [Gesture] = []
+    /// More rules from other modules (macros started by a gesture or typed text).
+    var extraRules: () -> [GestureRule] = { [] }
+    private var allRules: [GestureRule] { store.rules + extraRules() }
 
     init(shortcuts: ShortcutCenter, openSettings: @escaping () -> Void = {}) {
         runner = ActionRunner(shortcuts: shortcuts)
@@ -68,7 +71,7 @@ final class GesturesModule: ToolbeltModule {
 
     /// Listens only to the devices the enabled rules use, and asks for permission only then.
     func updateListening() {
-        let rules = running ? store.rules.filter(\.enabled) : []
+        let rules = running ? allRules.filter(\.enabled) : []
         var needs = GestureEventTap.Needs()
         var touches = false
         for rule in rules {
@@ -103,8 +106,8 @@ final class GesturesModule: ToolbeltModule {
             if taps == 2 {
                 pendingSingleTap?.cancel()
                 pendingSingleTap = nil
-            } else if GestureRule.match(.modifierTap(key, taps: 2), app: app, in: store.rules) != nil {
-                guard let rule = GestureRule.match(gesture, app: app, in: store.rules) else { return false }
+            } else if GestureRule.match(.modifierTap(key, taps: 2), app: app, in: allRules) != nil {
+                guard let rule = GestureRule.match(gesture, app: app, in: allRules) else { return false }
                 let work = DispatchWorkItem { [weak self] in
                     MainActor.assumeIsolated { self?.run(rule, for: gesture) }
                 }
@@ -113,7 +116,7 @@ final class GesturesModule: ToolbeltModule {
                 return true
             }
         }
-        guard let rule = GestureRule.match(gesture, app: app, in: store.rules) else { return false }
+        guard let rule = GestureRule.match(gesture, app: app, in: allRules) else { return false }
         // Run after the event has been dealt with, so the tap is never held up.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.run(rule, for: gesture) }
@@ -130,7 +133,7 @@ final class GesturesModule: ToolbeltModule {
     private func typedText(_ text: String) {
         typed.type(text)
         let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        for rule in store.rules where rule.enabled && rule.applies(in: app) {
+        for rule in allRules where rule.enabled && rule.applies(in: app) {
             guard case .keySequence(let sequence) = rule.gesture, !sequence.isEmpty, typed.text.hasSuffix(sequence) else { continue }
             typed.reset()
             let count = rule.deleteTyped ? sequence.count : 0
@@ -323,6 +326,11 @@ struct AppScopeEditor: View {
         }
     }
 
+    static func name(of bundleID: String) -> String { AppNames.name(of: bundleID) }
+}
+
+enum AppNames {
+    /// "Safari" for com.apple.Safari, or the identifier itself if the app isn't installed.
     static func name(of bundleID: String) -> String {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
         return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
