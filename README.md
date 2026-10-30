@@ -1,9 +1,43 @@
-# Toolbelt — v0.8
+# Toolbelt — v0.10
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.10: more clipboard
+
+In the clipboard panel (⌘⇧V):
+
+| Keys | What it does |
+|---|---|
+| ⌘E | Edit the text before pasting (⌘↩ pastes it, ⌘S saves it, esc cancels) |
+| ⌘K | Add to the **paste stack** (a number shows each item's place) |
+| ⌘↩ | Paste the first item of the stack; then **⌃⌥V** pastes the next one each time |
+| ⌥⌘↩ | Paste the whole stack at once, one item per line |
+
+Right-click any item for more:
+- **Paste as** UPPERCASE, lowercase, Title Case, Trim Spaces, Remove Line Breaks or Remove Formatting.
+- **Pinboards**: named collections such as "Email replies" or "Addresses". They show as filters at the top of the panel, and their items are never deleted automatically.
+- **Save as Named Clipboard…**: a fixed slot you paste by name. Type its name in the launcher (⌥Space) and press Return.
+
+You can also **drag items out** of the panel into other apps. Images are **searchable by the text in them**: copy a screenshot of an invoice and search for its number.
+
+In Settings → Clipboard:
+- **Delete items older than** 1 day to 1 year (pinned and pinboard items stay).
+- **Panel layout**: list with preview, grid, or a strip of large cards along the bottom of the screen.
+
+## What's new in 0.9
+
+- **Back up or move your settings:** Settings → General → **Export Settings…** saves your settings, shortcuts, snippets, quicklinks and shelves in one `.toolbelt` file. **Import…** loads one (on a new Mac, for example) and restarts Toolbelt.
+- **Right-click and Services menu:** select text or files in almost any app (or right-click in Finder → Quick Actions / Services) and choose:
+  - **Add to Toolbelt Shelf**
+  - **Download with Toolbelt** (for a selected link)
+  - **Save as Toolbelt Snippet**
+  - **Pin in Toolbelt Clipboard**
+
+  If they don't show up straight away, log out and back in once, or turn them on in System Settings → Keyboard → Keyboard Shortcuts → Services.
+- **Uses less battery:** no background timers while Settings is closed, fewer wake-ups, and an optimised build for Apple silicon.
 
 ## What's new in 0.8: the download manager
 

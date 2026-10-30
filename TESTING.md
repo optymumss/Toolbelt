@@ -52,3 +52,16 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Downloads | Parts at once, HTTP/HTTPS, pause/resume, restart, retries | Tests "Downloads: real downloads from a test server" |
 | Downloads | FTP | Tests (arguments); **Manual** against a real FTP server |
 | Downloads | List with progress, speed, time left, size; drag out; sorting | Tests; screenshot `downloads` |
+| App | Export and import settings | Tests "Settings backup" |
+| App | Services / right-click menu | Tests "Services menu and right-click"; end-to-end “Add to Toolbelt Shelf” |
+| App | Share menu | Not built: needs an app extension signed with a paid developer account |
+| App | Apple Shortcuts | On hold (owner's decision) |
+| Clipboard | Auto-delete by age | Tests "pinboards, named clipboards and auto-delete" |
+| Clipboard | Layouts: list, grid, strip | Tests (frames); screenshots `clipboard-grid`, `clipboard-strip` |
+| Clipboard | Paste stack | Tests; end-to-end "the paste stack pastes items in the order picked" |
+| Clipboard | Edit before pasting | Tests; screenshot `clipboard-extras` |
+| Clipboard | Drag items out of the panel | **Manual** (real drag-and-drop) |
+| Clipboard | Pinboards | Tests; screenshot `clipboard-extras` |
+| Clipboard | Named clipboards | Tests (incl. launcher) |
+| Clipboard | Search text in images (OCR) | Tests "Clipboard: text in images" |
+| Clipboard | Text transforms | Tests "transforms, editing and the paste stack" |

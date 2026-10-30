@@ -43,6 +43,11 @@ enum ToolbeltTests {
         t.group("Shelf: dropping and dragging out", ShelfStoreTests.run)
         t.group("Downloads: planning parts", DownloadPlanTests.run)
         t.group("Downloads: real downloads from a test server", DownloadTests.run)
+        t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
+        t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
+        t.group("Clipboard: text in images", ImageTextTests.run)
+        t.group("Settings backup", BackupTests.run)
+        t.group("Services menu and right-click", ServicesTests.run)
         t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
@@ -1340,6 +1345,25 @@ enum EndToEndTests {
         spin(1.5)
         checkEqual(SnippetTypingTests.text(in: textEdit), unique, "pressing Return pastes the copied text into TextEdit")
 
+        // 1b. Paste stack: pick two items in order, ⌘↩ pastes the first, ⌃⌥V the next
+        for text in ["Stack one ", "Stack two"] {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            spin(1.2)
+        }
+        clearDocument()
+        press(kVK_ANSI_V, [.maskCommand, .maskShift])
+        spin(1)
+        press(kVK_DownArrow)             // "Stack one" (the older of the two)
+        press(kVK_ANSI_K, .maskCommand)
+        press(kVK_UpArrow)               // "Stack two"
+        press(kVK_ANSI_K, .maskCommand)
+        press(kVK_Return, .maskCommand)
+        spin(1.5)
+        press(kVK_ANSI_V, [.maskControl, .maskAlternate])
+        spin(1.5)
+        checkEqual(SnippetTypingTests.text(in: textEdit), "Stack one Stack two", "the paste stack pastes items in the order picked (⌘K, ⌘↩, ⌃⌥V)")
+
         // 2. Snippets in the real app
         clearDocument()
         type(";ee")
@@ -1395,10 +1419,236 @@ enum EndToEndTests {
         spin(1)
         check(windowCount(of: pid) > windowsBefore, "⌃⌥S opens a new shelf")
 
+        // 6. The Services menu, as used from another app's right-click menu
+        let register = Process()
+        register.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+        register.arguments = ["-f", URL(fileURLWithPath: "build/Toolbelt.app").path]
+        try? register.run()
+        register.waitUntilExit()
+        let refresh = Process()
+        refresh.executableURL = URL(fileURLWithPath: "/System/Library/CoreServices/pbs")
+        refresh.arguments = ["-update"]
+        try? refresh.run()
+        refresh.waitUntilExit()
+        spin(2)
+        let shelvesBefore = windowCount(of: pid)
+        let selection = NSPasteboard(name: NSPasteboard.Name("toolbelt-e2e-service"))
+        selection.clearContents()
+        selection.setString("Sent from the Services menu", forType: .string)
+        check(NSPerformService("Add to Toolbelt Shelf", selection), "“Add to Toolbelt Shelf” is offered in the Services menu")
+        spin(1.5)
+        check(windowCount(of: pid) > shelvesBefore, "and choosing it opens a shelf in Toolbelt")
+
         check(app.isRunning, "Toolbelt is still running after all that")
         app.terminate()
         textEdit.forceTerminate()
         try? FileManager.default.removeItem(at: data)
         try? FileManager.default.removeItem(at: document)
+    }
+}
+
+// MARK: - Backup and Services
+
+@MainActor
+enum BackupTests {
+    static func run() {
+        let from = FileManager.default.temporaryDirectory.appendingPathComponent("backup-from-\(UUID().uuidString)")
+        let to = FileManager.default.temporaryDirectory.appendingPathComponent("backup-to-\(UUID().uuidString)")
+        for folder in [from, to] { try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try? Data("settings".utf8).write(to: from.appendingPathComponent("settings.plist"))
+        try? Data("snippets".utf8).write(to: from.appendingPathComponent("snippets.json"))
+        try? Data("history".utf8).write(to: from.appendingPathComponent("history.json"))
+
+        guard let data = try? Backup.export(from: from) else { check(false, "settings can be exported"); return }
+        check(true, "settings can be exported to one file")
+        let restored = (try? Backup.restore(data, into: to)) ?? []
+        checkEqual(restored, ["settings.plist", "snippets.json"], "importing restores settings and snippets")
+        checkEqual(FileManager.default.contents(atPath: to.appendingPathComponent("snippets.json").path), Data("snippets".utf8), "with the same contents")
+        check(!FileManager.default.fileExists(atPath: to.appendingPathComponent("history.json").path), "clipboard history isn't part of a settings backup")
+        check((try? Backup.restore(Data("not a backup".utf8), into: to)) == nil, "other files are refused")
+    }
+}
+
+@MainActor
+enum ServicesTests {
+    static func run() {
+        let shortcuts = ShortcutCenter()
+        let manager = ModuleManager(shortcuts: shortcuts)
+        let shelf = ShelfModule(shortcuts: shortcuts)
+        let snippets = SnippetsModule {}
+        let clipboard = ClipboardModule(shortcuts: shortcuts)
+        manager.register(shelf)
+        manager.register(snippets)
+        manager.register(clipboard)
+        let provider = ServicesProvider(modules: manager)
+        var error: NSString = ""
+
+        let shelvesBefore = shelf.store.shelves.count
+        provider.addToShelf(ShelfStoreTests.pasteboard(["Text from another app" as NSString]), userData: nil, error: &error)
+        checkEqual(shelf.store.shelves.count, shelvesBefore + 1, "“Add to Toolbelt Shelf” opens a shelf")
+        checkEqual(shelf.store.shelves.last?.items.first?.text, "Text from another app", "holding what was selected")
+        if let id = shelf.store.shelves.last?.id { shelf.close(id) }
+
+        provider.saveSnippet(ShelfStoreTests.pasteboard(["Kind regards,\nAlex" as NSString]), userData: nil, error: &error)
+        checkEqual(snippets.store.snippets.last?.text, "Kind regards,\nAlex", "“Save as Toolbelt Snippet” makes a snippet from the selection")
+        snippets.store.snippets.removeLast()
+
+        provider.pinInClipboard(ShelfStoreTests.pasteboard(["Keep this safe" as NSString]), userData: nil, error: &error)
+        check(clipboard.store.items.first.map { $0.text == "Keep this safe" && $0.pinned } == true, "“Pin in Toolbelt Clipboard” saves and pins it")
+
+        error = ""
+        provider.downloadLink(ShelfStoreTests.pasteboard(["just words" as NSString]), userData: nil, error: &error)
+        check(error.length > 0, "a selection that isn't a link is explained, not downloaded")
+
+        let plist = (try? Data(contentsOf: URL(fileURLWithPath: "Info.plist")))
+            .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
+        let services = (plist?["NSServices"] as? [[String: Any]])?.compactMap { $0["NSMessage"] as? String } ?? []
+        checkEqual(services.sorted(), ["addToShelf", "downloadLink", "pinInClipboard", "saveSnippet"], "every service in Info.plist has a matching method")
+        for message in services {
+            check(provider.responds(to: Selector("\(message):userData:error:")), "Toolbelt answers “\(message)”")
+        }
+    }
+}
+
+// MARK: - Clipboard [Next]
+
+@MainActor
+func freshClipboard() -> ClipboardStore {
+    let store = ClipboardStore()
+    for item in store.items { store.delete(item.id) }
+    return store
+}
+
+@MainActor
+enum ClipboardNextTests {
+    static func run() {
+        checkEqual(TextTransform.uppercase.apply("Hello there"), "HELLO THERE", "UPPERCASE")
+        checkEqual(TextTransform.lowercase.apply("Hello THERE"), "hello there", "lowercase")
+        checkEqual(TextTransform.titleCase.apply("the quick brown fox"), "The Quick Brown Fox", "Title Case")
+        checkEqual(TextTransform.trimSpaces.apply("  too   many  spaces \n  second   line  "), "too many spaces\nsecond line", "trim spaces (keeps line breaks)")
+        checkEqual(TextTransform.removeLineBreaks.apply("line one\nline two\n\nline three"), "line one line two line three", "remove line breaks")
+
+        let store = freshClipboard()
+        let paster = Paster(store: store, monitor: ClipboardMonitor(store: store))
+        let styled = NSAttributedString(string: "Shout this", attributes: [.font: NSFont.boldSystemFont(ofSize: 12)])
+        store.add(ClipItem(kind: .text, text: "Shout this", rtf: styled.rtf(from: NSRange(location: 0, length: styled.length)), hash: "shout"))
+        Prefs.pasteAfterSelect = false // only put it on the clipboard; don't press ⌘V in the test
+        paster.paste(store.items[0], plainText: false, transform: .uppercase)
+        checkEqual(NSPasteboard.general.string(forType: .string), "SHOUT THIS", "pasting with a transform changes the text")
+        check(NSPasteboard.general.data(forType: .rtf) == nil, "and drops the old formatting")
+        checkEqual(store.items.first?.text, "Shout this", "the history item itself is unchanged")
+
+        // Editing before pasting
+        let model = PanelModel(store: store)
+        model.beginEditing(store.items[0])
+        check(model.editingID != nil, "⌘E starts editing a text item")
+        model.draft = "Edited text"
+        let edited = model.saveEditing()
+        checkEqual(edited?.text, "Edited text", "the edited text is saved")
+        checkEqual(store.items.first?.text, "Edited text", "into the history item")
+        check(store.items.first?.rtf == nil, "with its old formatting dropped")
+
+        // Paste stack: chosen order, not history order
+        for word in ["first", "second", "third"] { store.add(ClipboardStoreTests.text(word)) } // newest: third
+        let byText = { (t: String) in store.items.first { $0.text == t }! }
+        model.toggleStack(byText("first"))
+        model.toggleStack(byText("third"))
+        model.toggleStack(byText("second"))
+        checkEqual(model.stackedItems.map { $0.text ?? "" }, ["first", "third", "second"], "⌘K builds a paste stack in the order chosen")
+        checkEqual(model.stackPosition(of: byText("third")), 2, "each item shows its place in the stack")
+        model.toggleStack(byText("third"))
+        checkEqual(model.stackedItems.map { $0.text ?? "" }, ["first", "second"], "⌘K again takes an item out")
+        let stack = PasteStack()
+        stack.load(model.stackedItems)
+        checkEqual(stack.next()?.text, "first", "the stack pastes the first item first")
+        checkEqual(stack.next()?.text, "second", "then the next")
+        check(stack.next() == nil, "and then it's empty")
+        Prefs.pasteAfterSelect = true
+
+        // Layouts
+        let screen = NSRect(x: 0, y: 0, width: 1440, height: 875)
+        let strip = HistoryPanelController.frame(for: .strip, on: screen)
+        check(strip.width > 1300 && strip.minY < 50, "the strip layout runs along the bottom of the screen", "\(strip)")
+        check(HistoryPanelController.frame(for: .grid, on: screen).width > HistoryPanelController.frame(for: .list, on: screen).width, "the grid layout is wider than the list")
+        Prefs.clipboardLayout = .grid
+        checkEqual(Prefs.clipboardLayout, .grid, "the chosen layout is remembered")
+        Prefs.clipboardLayout = .list
+    }
+}
+
+@MainActor
+enum ClipboardCollectionsTests {
+    static func run() {
+        let module = ClipboardModule(shortcuts: ShortcutCenter())
+        let store = module.store
+        for item in store.items { store.delete(item.id) }
+        for board in module.pinboards.pinboards { module.pinboards.pinboards.removeAll { $0.id == board.id } }
+        for word in ["home address", "work address", "random note"] { store.add(ClipboardStoreTests.text(word)) }
+        let home = store.items.first { $0.text == "home address" }!
+        let work = store.items.first { $0.text == "work address" }!
+
+        let board = module.pinboards.create("Addresses")
+        module.pinboards.toggle(home.id, on: board.id)
+        module.pinboards.toggle(work.id, on: board.id)
+        let model = module.panel.model
+        model.pinboardFilter = board.id
+        checkEqual(Set(model.results.map { $0.text ?? "" }), ["home address", "work address"], "a pinboard shows just its items")
+        model.pinboardFilter = nil
+        checkEqual(PinboardStore().pinboards.first?.name, "Addresses", "pinboards are saved")
+
+        store.clearUnpinned()
+        checkEqual(Set(store.items.map { $0.text ?? "" }), ["home address", "work address"], "Clear History keeps pinboard items")
+
+        // Auto-delete
+        store.add(ClipboardStoreTests.text("old note"))
+        store.update(store.items[0].id) { $0.lastUsed = Date().addingTimeInterval(-10 * 86_400) }
+        store.update(home.id) { $0.lastUsed = Date().addingTimeInterval(-10 * 86_400) }
+        store.deleteOlder(thanDays: 7)
+        check(!store.items.contains { $0.text == "old note" }, "items older than the chosen age are deleted")
+        check(store.items.contains { $0.text == "home address" }, "but pinboard items stay")
+        store.deleteOlder(thanDays: 0)
+        checkEqual(store.items.count, 2, "“Never” deletes nothing")
+
+        // Named clipboards
+        module.named.save(home, as: "Home")
+        checkEqual(module.named.clip(named: "home")?.item.text, "home address", "a named clipboard is found by its name")
+        store.delete(home.id)
+        checkEqual(NamedClipboardStore(imagesFolder: store.imagesFolder).clip(named: "Home")?.item.text, "home address", "and keeps its own copy after the history item is deleted")
+        module.named.save(work, as: "Home")
+        checkEqual(module.named.clip(named: "Home")?.item.text, "work address", "saving under the same name replaces it")
+        let provider = ClipboardLauncherProvider(store: store, paster: module.paster, named: module.named)
+        checkEqual(provider.results(for: "home").first?.kind, "Named Clipboard", "the launcher pastes named clipboards by name")
+        module.named.remove(named: "Home")
+        check(module.named.clip(named: "Home") == nil, "named clipboards can be removed")
+    }
+}
+
+@MainActor
+enum ImageTextTests {
+    static func run() {
+        // Draw some words into an image, then read them back.
+        let image = NSImage(size: NSSize(width: 600, height: 120), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            ("Invoice 4471 overdue" as NSString).draw(at: NSPoint(x: 20, y: 40), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 42, weight: .semibold), .foregroundColor: NSColor.black,
+            ])
+            return true
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ocr-\(UUID().uuidString).png")
+        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            check(false, "test image can be made")
+            return
+        }
+        try? png.write(to: url)
+        final class Result: @unchecked Sendable { var text: String? }
+        let result = Result()
+        Task { @MainActor in result.text = await ImageText.recognize(at: url) }
+        _ = DownloadTests.waitFor(20) { result.text != nil }
+        let text = result.text ?? ""
+        check(text.contains("Invoice") && text.contains("4471"), "text in an image is read", "read: \(text)")
+        var item = ClipItem(kind: .image, hash: "ocr")
+        item.ocrText = text
+        check(PanelModel.matches(item, "invoice overdue"), "so the image can be found by searching for its words")
     }
 }

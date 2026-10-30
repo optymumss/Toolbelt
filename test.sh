@@ -33,6 +33,7 @@ xcrun swiftc \
     -framework ServiceManagement \
     -framework IOKit \
     -framework Quartz \
+    -framework Vision \
     "${SOURCES[@]}" \
     -o build/ToolbeltTests
 

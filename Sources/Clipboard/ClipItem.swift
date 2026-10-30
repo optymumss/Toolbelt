@@ -44,6 +44,8 @@ struct ClipItem: Identifiable, Codable, Equatable {
     var fromOtherDevice: Bool? = nil
     /// Page title that browsers put on the clipboard next to a copied link.
     var linkTitle: String? = nil
+    /// Text read from an image, so it can be found by searching ("" once read and none found).
+    var ocrText: String? = nil
 
     /// One-line label shown in the list.
     var title: String {
@@ -70,7 +72,7 @@ struct ClipItem: Identifiable, Codable, Equatable {
         switch kind {
         case .text: return text ?? ""
         case .link: return (text ?? "") + " " + (linkTitle ?? "")
-        case .image: return "image picture screenshot " + (sourceAppName ?? "") + " " + (text ?? "")
+        case .image: return "image picture screenshot " + (sourceAppName ?? "") + " " + (text ?? "") + " " + (ocrText ?? "")
         case .file: return (filePaths ?? []).joined(separator: " ")
         }
     }
