@@ -45,6 +45,7 @@ enum ToolbeltTests {
         t.group("Downloads: real downloads from a test server", DownloadTests.run)
         t.group("Downloads: queues, schedules, limits and the list", DownloadsNextTests.run)
         t.group("Downloads: the Chrome extension and its bridge", ChromeBridgeTests.run)
+        t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
@@ -1538,6 +1539,158 @@ enum ChromeBridgeTests {
             data = data.subdata(in: (4 + length)..<data.count)
         }
         return replies
+    }
+}
+
+// MARK: - Screenshots
+
+/// Lets a background task hand a result back to a test.
+final class Box<Value>: @unchecked Sendable {
+    var value: Value
+    init(_ value: Value) { self.value = value }
+}
+
+@MainActor
+enum ScreenshotTests {
+    /// A plain picture: white on the left half, black on the right.
+    static func testImage(width: Int = 400, height: Int = 300) -> CGImage {
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+        return context.makeImage()!
+    }
+
+    /// The colour of one pixel (x, y from the top left), as 0–255 red, green, blue.
+    static func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (r: Int, g: Int, b: Int) {
+        var data = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+        return (Int(data[0]), Int(data[1]), Int(data[2]))
+    }
+
+    static func isWhite(_ p: (r: Int, g: Int, b: Int)) -> Bool { p.r > 245 && p.g > 245 && p.b > 245 }
+
+    static func run() {
+        let base = testImage()
+        checkEqual(isWhite(pixel(base, 100, 150)), true, "the test picture is white on the left")
+
+        // Boxes
+        let box = ScreenshotRenderer.render(base, annotations: [Annotation(tool: .box, start: CGPoint(x: 50, y: 50), end: CGPoint(x: 150, y: 120), color: .red)])!
+        let edge = pixel(box, 51, 85)
+        check(edge.r > 200 && edge.g < 90 && edge.b < 90, "a box draws a red outline", "\(edge)")
+        check(isWhite(pixel(box, 100, 85)), "and leaves the inside alone")
+
+        // Arrows
+        let arrow = ScreenshotRenderer.render(base, annotations: [Annotation(tool: .arrow, start: CGPoint(x: 20, y: 150), end: CGPoint(x: 180, y: 150), color: .blue)])!
+        let shaft = pixel(arrow, 100, 150)
+        check(shaft.b > 200 && shaft.r < 90, "an arrow draws a line", "\(shaft)")
+        let tip = pixel(arrow, 172, 150)
+        check(tip.b > 200 && tip.r < 90, "with a head at the end", "\(tip)")
+        check(isWhite(pixel(arrow, 100, 120)), "and nothing else")
+
+        // Highlight
+        let highlighted = ScreenshotRenderer.render(base, annotations: [Annotation(tool: .highlight, start: CGPoint(x: 20, y: 20), end: CGPoint(x: 120, y: 60), color: .yellow)])!
+        let marker = pixel(highlighted, 60, 40)
+        check(marker.r > 220 && marker.g > 180 && marker.b < 200, "highlighting tints white yellow, like a highlighter", "\(marker)")
+        let dark = pixel(ScreenshotRenderer.render(base, annotations: [Annotation(tool: .highlight, start: CGPoint(x: 220, y: 20), end: CGPoint(x: 300, y: 60), color: .yellow)])!, 260, 40)
+        check(dark.r < 30 && dark.g < 30, "and leaves black text black, so it stays readable", "\(dark)")
+
+        // Blur (pixelate) across the black/white edge
+        let blurred = ScreenshotRenderer.render(base, annotations: [Annotation(tool: .blur, start: CGPoint(x: 140, y: 100), end: CGPoint(x: 250, y: 200))])!
+        let middle = pixel(blurred, 200, 150)
+        check(middle.r > 30 && middle.r < 225, "blur turns the area into blocks, so the edge goes grey", "\(middle)")
+        checkEqual(pixel(blurred, 141, 101).r, pixel(blurred, 147, 107).r, "pixels in a block are all the same")
+        check(isWhite(pixel(blurred, 100, 150)), "outside the blurred area nothing changes")
+
+        // Text
+        let texted = ScreenshotRenderer.render(base, annotations: [Annotation(tool: .text, start: CGPoint(x: 10, y: 10), end: .zero, color: .red, text: "Hello")])!
+        var redPixels = 0
+        for x in stride(from: 10, to: 120, by: 2) {
+            for y in stride(from: 10, to: 40, by: 2) {
+                let p = pixel(texted, x, y)
+                if p.r > 180 && p.g < 100 { redPixels += 1 }
+            }
+        }
+        check(redPixels > 10, "text is written onto the picture", "\(redPixels) red points")
+
+        // Crop
+        let cropped = ScreenshotRenderer.render(base, annotations: [], crop: CGRect(x: 150, y: 50, width: 100, height: 80))!
+        checkEqual([cropped.width, cropped.height], [100, 80], "cropping keeps just the chosen part")
+        check(isWhite(pixel(cropped, 10, 40)) && pixel(cropped, 90, 40).r < 20, "the right part", "\(pixel(cropped, 10, 40)) \(pixel(cropped, 90, 40))")
+
+        // The editor: drawing with the mouse, undo and redo
+        let model = ScreenshotEditorModel(image: base)
+        model.tool = .box
+        model.dragChanged(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 60, y: 60))
+        check(model.draft != nil && model.annotations.isEmpty, "dragging shows the box before it's added")
+        model.dragEnded(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 60, y: 60))
+        checkEqual(model.annotations.count, 1, "letting go adds it")
+        model.dragEnded(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 11, y: 11))
+        checkEqual(model.annotations.count, 1, "a click without dragging adds nothing")
+        model.tool = .text
+        model.text = "Here"
+        model.dragEnded(from: CGPoint(x: 80, y: 80), to: CGPoint(x: 80, y: 80))
+        checkEqual(model.annotations.last?.text, "Here", "the text tool places text with a click")
+        model.undo()
+        checkEqual(model.annotations.count, 1, "⌘Z undoes")
+        model.redo()
+        checkEqual(model.annotations.count, 2, "⇧⌘Z redoes")
+        model.tool = .crop
+        model.dragEnded(from: CGPoint(x: 0, y: 0), to: CGPoint(x: 200, y: 100))
+        checkEqual([model.finalImage().width, model.finalImage().height], [200, 100], "the crop tool crops the final picture")
+        check(model.preview.width == 400, "while the editor still shows the whole picture")
+
+        model.copyImage()
+        let copied = NSImage(pasteboard: NSPasteboard.general)
+        checkEqual(copied.map { Int($0.representations.first?.pixelsWide ?? 0) }, 200, "Copy puts the finished picture on the clipboard")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-shots-\(UUID().uuidString)")
+        let saved = model.save(to: folder)
+        check(saved.map { FileManager.default.fileExists(atPath: $0.path) } == true, "Save writes a PNG to the screenshots folder")
+        check(saved?.lastPathComponent.hasPrefix("Screenshot ") == true, "named like macOS's own screenshots", saved?.lastPathComponent ?? "")
+        check(model.save(to: folder) != saved, "saving twice never overwrites")
+        try? FileManager.default.removeItem(at: folder)
+
+        // Reading text
+        let words = ScreenshotEditorModel(image: testImage(width: 1200, height: 600))
+        words.add(Annotation(tool: .text, start: CGPoint(x: 30, y: 200), end: .zero, color: .black, text: "Invoice 42"))
+        words.crop = CGRect(x: 0, y: 150, width: 560, height: 160)
+        let finished = Box(false)
+        Task { @MainActor in await words.copyText(); finished.value = true }
+        _ = DownloadTests.waitFor(20) { finished.value }
+        let read = NSPasteboard.general.string(forType: .string) ?? ""
+        check(read.contains("Invoice"), "Copy Text reads the words in the screenshot", read)
+
+        // Capturing the screen for real (macOS's screencapture tool)
+        check(CaptureMode.area.arguments(output: URL(fileURLWithPath: "/tmp/a.png")).contains("-s"), "area capture lets you drag out an area")
+        check(CaptureMode.window.arguments(output: URL(fileURLWithPath: "/tmp/a.png")).contains("-w"), "window capture lets you click a window")
+        let shot = Box<URL?>(nil), shotDone = Box(false)
+        Task { @MainActor in shot.value = await ScreenshotCapture.capture(.screen); shotDone.value = true }
+        _ = DownloadTests.waitFor(20) { shotDone.value }
+        let screen = shot.value.flatMap { NSImage(contentsOf: $0) }
+        check((screen?.representations.first?.pixelsWide ?? 0) >= 800, "a whole-screen screenshot is taken", "\(screen?.size ?? .zero)")
+        let area = Box<URL?>(nil), areaDone = Box(false)
+        Task { @MainActor in area.value = await ScreenshotCapture.capture(rect: CGRect(x: 0, y: 0, width: 300, height: 200)); areaDone.value = true }
+        _ = DownloadTests.waitFor(20) { areaDone.value }
+        let part = area.value.flatMap { NSImage(contentsOf: $0) }
+        checkEqual(part.map { Int($0.size.width) }, 300, "and of just an area")
+        for file in [shot.value, area.value].compactMap({ $0 }) { try? FileManager.default.removeItem(at: file) }
+
+        // The module: shortcuts, editor window and launcher
+        let module = ScreenshotsModule(shortcuts: ShortcutCenter())
+        checkEqual(ShortcutAction.captureArea.defaultShortcut?.display, "⌥⇧⌘4", "⌥⇧⌘4 takes a screenshot of an area")
+        let editor = module.edit(base)
+        check(editor.window.isVisible, "the editor opens in a window")
+        editor.window.close()
+        let provider = ScreenshotsLauncherProvider(module: module)
+        check(provider.results(for: "screenshot").contains { $0.title == "Screenshot of Window" }, "the launcher can take screenshots")
+        check(provider.results(for: "ocr").contains { $0.title == "Copy Text from Screen" }, "and copy text from the screen")
+        Prefs.screenshotAfterCapture = .save
+        checkEqual(Prefs.screenshotAfterCapture, .save, "what happens after a screenshot is saved in Settings")
+        SettingsStore.shared.set(nil, for: "screenshots.after")
     }
 }
 

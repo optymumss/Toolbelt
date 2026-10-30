@@ -89,3 +89,9 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Downloads | Chrome extension: hands downloads over, right-click item | Tests "the Chrome extension and its bridge" (real bridge program, Chrome's message format, cookies, inbox → download list); CI checks the scripts; **Manual** in Chrome itself |
 | Downloads | Download button on web videos | CI checks the script; **Manual** on a page with a plain video file |
 | Downloads | Other browsers (Safari, Firefox, Edge) | Not built (owner asked for Chrome only) |
+| Screenshots | Capture the whole screen, an area | Tests (real captures with macOS's screencapture: whole screen, a given area) |
+| Screenshots | Drag out an area / click a window | **Manual** (needs a person to drag or click; uses macOS's own crosshair) |
+| Screenshots | Editor: arrows, boxes, text, highlight, blur, crop, undo/redo | Tests "Screenshots: capture, mark up and read text" (checks the actual pixels); screenshot `screenshot-editor` |
+| Screenshots | Copy and save the marked-up picture | Tests (clipboard picture size, PNG file, never overwrites) |
+| Screenshots | Copy text from a screenshot / from the screen (OCR) | Tests (reads "Invoice 42" back from a marked-up picture); **Manual** for ⌥⇧⌘2 |
+| Screenshots | Shortcuts and launcher commands | Tests; screenshot `launcher-screenshot` |

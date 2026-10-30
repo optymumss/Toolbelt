@@ -63,6 +63,16 @@ In Settings → Clipboard:
   If they don't show up straight away, log out and back in once, or turn them on in System Settings → Keyboard → Keyboard Shortcuts → Services.
 - **Uses less battery:** no background timers while Settings is closed, fewer wake-ups, and an optimised build for Apple silicon.
 
+## What's new in 0.16: screenshots
+
+A new **Screenshots** module (Settings → Screenshots):
+
+- **⌥⇧⌘4** — drag out an area (press Space to pick a window instead), **⌥⇧⌘5** — click a window, **⌥⇧⌘3** — the whole screen. Also in the menu bar and the launcher (type “screenshot”).
+- The screenshot opens in an **editor**: arrows, boxes, text, highlighter, blur (for hiding passwords or names) and crop, in seven colours, with ⌘Z / ⇧⌘Z. Then **Copy** (⌘C), **Save** (⌘S, to your screenshots folder) or **Copy Text**.
+- **⌥⇧⌘2** — drag out an area and its **text is copied** straight away (for text you can't select, like in pictures or videos).
+- Prefer no editor? Settings → Screenshots → *After taking a screenshot*: copy it or save it straight away.
+- The first time, macOS asks you to allow **Screen Recording** for Toolbelt (System Settings → Privacy & Security → Screen Recording). After each update, macOS may ask again.
+
 ## What's new in 0.15: downloads [Next]
 
 - **Queues.** Settings → Downloads → Queues: make queues (for example “Overnight”), choose how many files each downloads at once, and give it start and stop times. Right-click a download to move it to another queue. The Downloads window has a tab per queue with a Start/Stop button.

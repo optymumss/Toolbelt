@@ -84,9 +84,10 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     /// Runs drop target 1–9 on the files selected in Finder (no default keys).
     case dropTarget(Int)
     case snippetPicker
+    case captureArea, captureWindow, captureScreen, captureText
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + (1...9).map { .layout($0) } + [.newShelf, .dropGrid] + (1...9).map { .dropTarget($0) } + [.snippetPicker]
+        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + (1...9).map { .layout($0) } + [.newShelf, .dropGrid] + (1...9).map { .dropTarget($0) } + [.snippetPicker, .captureArea, .captureWindow, .captureScreen, .captureText]
     }
 
     /// Stable name used to save the shortcut.
@@ -103,6 +104,10 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .dropGrid: return "dropGrid"
         case .dropTarget(let n): return "dropTarget.\(n)"
         case .snippetPicker: return "snippetPicker"
+        case .captureArea: return "captureArea"
+        case .captureWindow: return "captureWindow"
+        case .captureScreen: return "captureScreen"
+        case .captureText: return "captureText"
         }
     }
 
@@ -121,6 +126,10 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .dropGrid: return "Show drop targets"
         case .dropTarget(let n): return "Drop target \(n) (on Finder's selection)"
         case .snippetPicker: return "Find and insert a snippet"
+        case .captureArea: return "Screenshot of an area"
+        case .captureWindow: return "Screenshot of a window"
+        case .captureScreen: return "Screenshot of the whole screen"
+        case .captureText: return "Copy text from an area of the screen"
         }
     }
 
@@ -131,6 +140,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .window, .layout: return .windows
         case .newShelf, .dropGrid, .dropTarget: return .shelf
         case .snippetPicker: return .snippets
+        case .captureArea, .captureWindow, .captureScreen, .captureText: return .screenshots
         }
     }
 
@@ -146,6 +156,11 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .dropGrid: return Shortcut(keyCode: kVK_ANSI_G, modifiers: ctrlOpt | cmdKey)
         case .dropTarget: return nil
         case .snippetPicker: return Shortcut(keyCode: kVK_ANSI_Semicolon, modifiers: ctrlOpt)
+        // ⌥⇧⌘ plus the number macOS uses with ⇧⌘ (3 screen, 4 area, 5 window); 2 for text.
+        case .captureScreen: return Shortcut(keyCode: kVK_ANSI_3, modifiers: optionKey | shiftKey | cmdKey)
+        case .captureArea: return Shortcut(keyCode: kVK_ANSI_4, modifiers: optionKey | shiftKey | cmdKey)
+        case .captureWindow: return Shortcut(keyCode: kVK_ANSI_5, modifiers: optionKey | shiftKey | cmdKey)
+        case .captureText: return Shortcut(keyCode: kVK_ANSI_2, modifiers: optionKey | shiftKey | cmdKey)
         case .layout(let n):
             return Shortcut(keyCode: [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
                                       kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9][n - 1], modifiers: ctrlOpt | cmdKey)

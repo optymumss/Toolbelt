@@ -215,6 +215,21 @@ enum Prefs {
         set { store.set(newValue.map(\.rawValue), for: "downloads.buttons") }
     }
 
+    // Screenshots
+
+    static var screenshotFolder: URL {
+        get {
+            if let path = store.raw("screenshots.folder") as? String { return URL(fileURLWithPath: path, isDirectory: true) }
+            return ScreenshotFolder.url
+        }
+        set { store.set(newValue.path, for: "screenshots.folder") }
+    }
+
+    static var screenshotAfterCapture: AfterCapture {
+        get { AfterCapture(rawValue: store.value("screenshots.after", default: "")) ?? .edit }
+        set { store.set(newValue.rawValue, for: "screenshots.after") }
+    }
+
     // Shelf
 
     static var shelfShakeToOpen: Bool {
