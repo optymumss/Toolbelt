@@ -1,10 +1,28 @@
 name: Build
 
+# macOS minutes count ten times against the account's GitHub Actions allowance, so each run does
+# only what it needs to:
+# - pull requests: build and run every test (about 5 minutes);
+# - main, after a merge, and "Run workflow" by hand: also the battery check and screenshots
+#   (and the Chrome test, where present);
+# - changes to documentation only don't start a run, and a newer push to the same branch
+#   stops the older run.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   workflow_dispatch:
+    inputs:
+      full:
+        description: Also run the battery check and take screenshots
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -13,6 +31,9 @@ jobs:
   build:
     name: Build on macOS
     runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      FULL: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
     steps:
       - uses: actions/checkout@v4
       - name: Show macOS and compiler versions
@@ -26,18 +47,20 @@ jobs:
       - name: Test the Chrome extension in Chrome
         run: bash .github/scripts/chrome.sh
       - name: Check battery use while idle
+        if: env.FULL == 'true'
         run: bash .github/scripts/energy.sh
       - name: Launch the app and take screenshots
+        if: env.FULL == 'true'
         run: bash .github/scripts/screenshots.sh
       - name: Keep screenshots
-        if: always()
+        if: always() && env.FULL == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
           path: screenshots/
           if-no-files-found: ignore
       - name: Publish screenshots to the ci-screenshots branch
-        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && env.FULL == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: |
           [ -d screenshots ] && [ -n "$(ls screenshots)" ] || exit 0
           SRC="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
