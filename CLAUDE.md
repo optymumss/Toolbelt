@@ -44,7 +44,11 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 - No Xcode project: `build.sh` compiles every file under `Sources/` with `swiftc`; `install.sh` builds,
   copies to /Applications and launches. Keep `install.sh` a single command.
 - Development happens on Linux without a Swift/macOS SDK, so the GitHub Actions workflow
-  (`.github/workflows/build.yml`, macOS runner) is the test environment. Keep it green. It:
+  (`.github/workflows/build.yml`, macOS runner) is the test environment. Keep it green.
+  macOS minutes count 10× against the account's allowance, so: pull requests only build and test;
+  the battery check, Chrome test and screenshots run on main and when started by hand
+  (Actions → Build → Run workflow). Docs-only changes don't run; a newer push cancels the older run.
+  Don't start extra runs on branches that aren't PRs. The steps are:
   1. builds the app (`build.sh`);
   2. runs `test.sh` — `Tests/Tests.swift` compiled with every source except `Sources/App/App.swift`,
      using a scratch data folder (`TOOLBELT_DATA_DIR`). Add checks there for each new feature;
