@@ -85,7 +85,8 @@ final class ScreenshotEditorModel: ObservableObject {
     }
 
     @discardableResult
-    func save(to folder: URL = Prefs.screenshotFolder) -> URL? {
+    func save(to chosenFolder: URL? = nil) -> URL? {
+        let folder = chosenFolder ?? Prefs.screenshotFolder
         guard let data = ScreenshotRenderer.pngData(finalImage()) else { return nil }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = ShelfStore.unusedURL(for: ScreenshotRenderer.fileName(), in: folder)

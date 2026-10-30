@@ -112,6 +112,7 @@ final class DownloadManager: ObservableObject {
         var item = DownloadItem(url: url, name: chosen ?? fromURL.removingPercentEncoding ?? fromURL, state: .queued)
         item.queueID = queue
         item.headers = headers.isEmpty ? nil : headers
+        if chosen != nil { item.nameIsFixed = true }
         items.insert(item, at: 0)
         started = true
         schedule()
@@ -336,7 +337,7 @@ final class DownloadManager: ObservableObject {
     private func handle(_ event: DownloadEvent, for id: UUID) {
         switch event {
         case .named(let name):
-            update(id) { $0.name = name }
+            update(id) { if $0.nameIsFixed != true { $0.name = name } }
         case .finished:
             guard workers[id] != nil else { return }
             refresh(id)

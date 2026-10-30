@@ -35,13 +35,15 @@ struct DownloadItem: Identifiable, Codable, Equatable {
     var queueID: UUID? = nil
     /// Sent with every request, for links handed over by the browser: Cookie, Referer, User-Agent.
     var headers: [String: String]? = nil
+    /// The name was chosen (by the browser), so the server's name doesn't replace it.
+    var nameIsFixed: Bool? = nil
 
     // Shown while downloading; not saved.
     var speed: Double = 0
     var connections = 0
 
     enum CodingKeys: String, CodingKey {
-        case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers
+        case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers, nameIsFixed
     }
 
     var progress: Double? {
