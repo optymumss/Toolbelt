@@ -52,32 +52,46 @@ struct SettingsRootView: View {
     let modules: ModuleManager
     let shortcuts: ShortcutCenter
 
+    /// A sidebar like System Settings: room for every module's page, however many there are.
     var body: some View {
-        TabView(selection: $model.tab) {
-            GeneralTab(modules: modules)
-                .tabItem { Label("General", systemImage: "gearshape") }
-                .tag(SettingsTab.general)
-
-            ShortcutsTab(modules: modules, shortcuts: shortcuts)
-                .tabItem { Label("Shortcuts", systemImage: "command") }
-                .tag(SettingsTab.shortcuts)
-
-            PermissionsTab()
-                .tabItem { Label("Permissions", systemImage: "lock.shield") }
-                .tag(SettingsTab.permissions)
-
-            ForEach(ModuleID.allCases) { id in
-                if let module = modules.module(id) {
-                    ModuleTab(module: module, modules: modules)
-                        .tabItem { Label(id.title, systemImage: id.symbol) }
-                        .tag(SettingsTab.module(id))
+        HStack(spacing: 0) {
+            List(selection: Binding(get: { Optional(model.tab) }, set: { if let tab = $0 { model.tab = tab } })) {
+                Section {
+                    Label("General", systemImage: "gearshape").tag(SettingsTab.general)
+                    Label("Shortcuts", systemImage: "command").tag(SettingsTab.shortcuts)
+                    Label("Permissions", systemImage: "lock.shield").tag(SettingsTab.permissions)
+                }
+                Section("Modules") {
+                    ForEach(ModuleID.allCases) { id in
+                        if modules.module(id) != nil {
+                            Label(id.title, systemImage: id.symbol).tag(SettingsTab.module(id))
+                        }
+                    }
                 }
             }
+            .listStyle(.sidebar)
+            .frame(width: 190)
+            Divider()
+            page
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: Self.size.width, height: Self.size.height)
     }
 
-    static let size = NSSize(width: 600, height: 620)
+    @ViewBuilder
+    private var page: some View {
+        switch model.tab {
+        case .general: GeneralTab(modules: modules)
+        case .shortcuts: ShortcutsTab(modules: modules, shortcuts: shortcuts)
+        case .permissions: PermissionsTab()
+        case .module(let id):
+            if let module = modules.module(id) {
+                ModuleTab(module: module, modules: modules).id(id)
+            }
+        }
+    }
+
+    static let size = NSSize(width: 800, height: 640)
 }
 
 /// A module's settings tab: its on/off switch, then the module's own settings.
