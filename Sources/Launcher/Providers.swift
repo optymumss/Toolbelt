@@ -44,8 +44,15 @@ final class AppsProvider: LauncherProvider {
         "/Applications", "/Applications/Utilities",
         "/System/Applications", "/System/Applications/Utilities",
         "/System/Library/CoreServices/Applications",
+        // Since macOS 13, Safari and a few other Apple apps live in a protected "cryptex"
+        // instead of /Applications.
+        "/System/Cryptexes/App/System/Applications",
+        "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
         NSHomeDirectory() + "/Applications",
     ]
+
+    /// Apps found by asking macOS where they are, wherever they're stored.
+    static let wellKnown = ["com.apple.Safari", "com.apple.finder", "com.apple.systempreferences"]
 
     func results(for query: String) -> [LauncherResult] {
         refreshIfNeeded()
@@ -71,8 +78,8 @@ final class AppsProvider: LauncherProvider {
         var found: [String: App] = [:]
         let fm = FileManager.default
         func scan(_ folder: URL, depth: Int) {
-            guard let items = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return }
-            for item in items {
+            guard let items = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: []) else { return }
+            for item in items where !item.lastPathComponent.hasPrefix(".") {
                 if item.pathExtension == "app" {
                     let name = item.deletingPathExtension().lastPathComponent
                     if found[name] == nil { found[name] = App(name: name, url: item) }
@@ -83,6 +90,12 @@ final class AppsProvider: LauncherProvider {
         }
         for folder in Self.folders {
             scan(URL(fileURLWithPath: folder), depth: 1)
+        }
+        for bundleID in Self.wellKnown {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                let name = url.deletingPathExtension().lastPathComponent
+                if found[name] == nil { found[name] = App(name: name, url: url) }
+            }
         }
         let finder = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
         found["Finder"] = App(name: "Finder", url: finder)
