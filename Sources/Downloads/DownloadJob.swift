@@ -204,16 +204,30 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let wait = store(data, from: dataTask)
+        // Over the speed limit: this job's callbacks wait for a moment, so its connections stop
+        // reading and the server slows down. (Suspending the task isn't enough: data it has
+        // already received keeps arriving.) Longer waits, for the hourly cap, are handled by
+        // DownloadManager, which stops the download until the next hour.
+        if wait > 2 {
+            dataTask.suspend() // the hourly cap: hold this connection until the manager stops the download
+        } else if wait > 0 {
+            Thread.sleep(forTimeInterval: wait)
+        }
+    }
+
+    /// Writes a piece into place. Returns how long to wait before reading more (speed limit).
+    private func store(_ data: Data, from dataTask: URLSessionDataTask) -> TimeInterval {
         lock.lock()
         defer { lock.unlock() }
-        guard !stopped, let index = running[dataTask.taskIdentifier] else { return }
+        guard !stopped, let index = running[dataTask.taskIdentifier] else { return 0 }
         var chunk = data
         let segment = segments[index]
         if segment.end >= 0 {
             let room = segment.end - segment.next + 1
             if room <= 0 {
                 dataTask.cancel()
-                return
+                return 0
             }
             if Int64(chunk.count) > room { chunk = chunk.prefix(Int(room)) }
         }
@@ -222,27 +236,15 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
             try handle?.write(contentsOf: chunk)
         } catch {
             failLocked("Couldn't write the file: \(error.localizedDescription)")
-            return
+            return 0
         }
         segments[index].received += Int64(chunk.count)
         attempts[index] = 0
         if segments[index].isComplete {
             // This part is done (perhaps because another connection took its second half).
             dataTask.cancel()
-            return
         }
-        // Over the speed limit or the hourly cap: stop reading for a moment.
-        let wait = throttle.take(Int64(chunk.count))
-        if wait > 0 {
-            dataTask.suspend()
-            let id = dataTask.taskIdentifier
-            DispatchQueue.global().asyncAfter(deadline: .now() + wait) { [weak self] in
-                guard let self else { return }
-                self.lock.lock()
-                defer { self.lock.unlock() }
-                if !self.stopped, let task = self.tasks[id] { task.resume() }
-            }
-        }
+        return throttle.take(Int64(chunk.count))
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
