@@ -255,7 +255,7 @@ final class NetworkWatcher: NSObject, CWEventDelegate, CLLocationManagerDelegate
         }
     }
 
-    static var currentWiFi: String? { CWWiFiClient.shared().interface()?.ssid() }
+    nonisolated static var currentWiFi: String? { CWWiFiClient.shared().interface()?.ssid() }
 
     nonisolated func ssidDidChangeForWiFiInterface(withName interfaceName: String) {
         let name = Self.currentWiFi
