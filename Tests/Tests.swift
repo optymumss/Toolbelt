@@ -776,6 +776,13 @@ enum RealWindowTests {
         spin(0.5)
         let restored = window.frame ?? .zero
         check(abs(restored.minX - before.minX) < 2 && abs(restored.width - before.width) < 2, "restore puts it back", "now \(restored), was \(before)")
+
+        // Close the test window so it doesn't sit in front of later screenshots.
+        var close: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window.element, kAXCloseButtonAttribute as CFString, &close) == .success,
+           let close, CFGetTypeID(close) == AXUIElementGetTypeID() {
+            AXUIElementPerformAction(close as! AXUIElement, kAXPressAction as CFString)
+        }
     }
 }
 
