@@ -38,6 +38,8 @@ enum ToolbeltTests {
         t.group("Snippets: spotting keywords", TypingBufferTests.run)
         t.group("Snippets: saving and searching", SnippetStoreTests.run)
         t.group("Snippets: expanding in a real text field", SnippetTypingTests.run)
+        t.group("Shelf: shaking to open", ShakeTests.run)
+        t.group("Shelf: dropping and dragging out", ShelfStoreTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -907,5 +909,103 @@ enum SnippetTypingTests {
         let source = CGEventSource(stateID: .hidSystemState)
         CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)?.post(tap: .cghidEventTap)
         CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)?.post(tap: .cghidEventTap)
+    }
+}
+
+// MARK: - Shelf
+
+@MainActor
+enum ShakeTests {
+    static func feed(_ xs: [CGFloat], every step: TimeInterval) -> Bool {
+        var detector = ShakeDetector()
+        var shook = false
+        for (i, x) in xs.enumerated() where detector.add(x: x, time: Double(i) * step) {
+            shook = true
+        }
+        return shook
+    }
+
+    static func run() {
+        // Left-right-left-right… 60 points each way, a few times a second.
+        var zigzag: [CGFloat] = []
+        for swing in 0..<6 {
+            let from: CGFloat = swing % 2 == 0 ? 400 : 460
+            let to: CGFloat = swing % 2 == 0 ? 460 : 400
+            for step in 0...5 { zigzag.append(from + (to - from) * CGFloat(step) / 5) }
+        }
+        check(feed(zigzag, every: 0.016), "a quick shake while dragging opens a shelf")
+        check(!feed(zigzag, every: 0.2), "a slow back-and-forth doesn't")
+        check(!feed(Array(stride(from: 0, to: 600, by: 10)), every: 0.016), "a straight drag doesn't")
+        let tiny = zigzag.map { 400 + ($0 - 400) / 10 }
+        check(!feed(tiny, every: 0.016), "a tiny wobble doesn't")
+    }
+}
+
+@MainActor
+enum ShelfStoreTests {
+    static func pasteboard(_ objects: [NSPasteboardWriting]) -> NSPasteboard {
+        let pb = NSPasteboard(name: NSPasteboard.Name("toolbelt-test-\(UUID().uuidString)"))
+        pb.clearContents()
+        pb.writeObjects(objects)
+        return pb
+    }
+
+    static func run() {
+        let store = ShelfStore()
+        for shelf in store.shelves { store.remove(shelf.id) }
+        let first = store.newShelf()
+        let second = store.newShelf()
+        check(first.color != second.color, "each new shelf gets its own colour")
+        checkEqual(second.name, "Shelf 2", "new shelves are numbered")
+
+        let original = FileManager.default.temporaryDirectory.appendingPathComponent("Shelf test.txt")
+        try? "hello".write(to: original, atomically: true, encoding: .utf8)
+
+        store.add(from: pasteboard([original as NSURL]), to: first.id, copyFiles: false)
+        checkEqual(store.shelf(first.id)?.items.last?.path, original.path, "dropped files are linked to where they are")
+        store.add(from: pasteboard([original as NSURL]), to: first.id, copyFiles: true)
+        let copy = store.shelf(first.id)?.items.last
+        check(copy?.isCopy == true && copy?.path != original.path, "or copied onto the shelf, if you choose")
+        check(copy?.path.map { FileManager.default.fileExists(atPath: $0) } == true, "the copy exists")
+
+        store.add(from: pasteboard(["Remember the invoice" as NSString]), to: first.id)
+        checkEqual(store.shelf(first.id)?.items.last?.kind, .text, "dropped text is kept as text")
+        store.add(from: pasteboard([URL(string: "https://www.apple.com")! as NSURL]), to: first.id)
+        checkEqual(store.shelf(first.id)?.items.last?.kind, .link, "dropped links are kept as links")
+        let image = NSImage(size: NSSize(width: 40, height: 30), flipped: false) { rect in
+            NSColor.systemGreen.setFill(); rect.fill(); return true
+        }
+        store.add(from: pasteboard([image]), to: first.id)
+        let imageItem = store.shelf(first.id)?.items.last
+        checkEqual(imageItem?.kind, .image, "dropped images are kept as images")
+        check(imageItem?.path?.hasSuffix(".png") == true, "and saved as PNG files")
+        checkEqual(store.shelf(first.id)?.items.count, 5, "one shelf holds everything dropped on it")
+
+        checkEqual((store.shelf(first.id)?.items.first?.dragWriter as? URL)?.path, original.path, "files drag out as the file itself")
+        checkEqual(store.shelf(first.id)?.items[2].dragWriter as? String, "Remember the invoice", "text drags out as text")
+
+        let reloaded = ShelfStore()
+        checkEqual(reloaded.shelf(first.id)?.items.count, 5, "shelves are still there after a restart")
+
+        store.update(first.id) { $0.name = "Taxes"; $0.color = .red }
+        checkEqual(ShelfStore().shelf(first.id)?.name, "Taxes", "shelves can be renamed")
+        checkEqual(ShelfStore().shelf(first.id)?.color, .red, "and colour-tagged")
+
+        let copiedPath = copy?.path ?? ""
+        store.remove(first.id)
+        check(!FileManager.default.fileExists(atPath: copiedPath), "closing a shelf deletes its own copies")
+        check(FileManager.default.fileExists(atPath: original.path), "but never your original files")
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-names-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: folder.appendingPathComponent("Report.pdf").path, contents: Data())
+        checkEqual(ShelfStore.unusedURL(for: "Report.pdf", in: folder).lastPathComponent, "Report 2.pdf", "copies with the same name don't overwrite each other")
+
+        let module = ShelfModule(shortcuts: ShortcutCenter())
+        module.store.update(second.id) { $0.name = "Holiday photos" }
+        let provider = ShelfLauncherProvider(module: module)
+        checkEqual(provider.results(for: "holiday").first?.title, "Holiday photos", "the launcher finds shelves")
+        check(provider.results(for: "new shelf").contains { $0.title == "New Shelf" }, "and can open a new one")
+        module.store.remove(second.id)
     }
 }

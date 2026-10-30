@@ -41,6 +41,11 @@ cat > "$DATA_DIR/snippets.json" <<'JSON'
 ]
 JSON
 
+# Files to put on a shelf
+mkdir -p "$HOME/Desktop"
+printf 'Agenda\n1. Budget\n2. Launch date\n' > "$HOME/Desktop/Meeting notes.txt"
+screencapture -x "$HOME/Desktop/Screenshot.png"
+
 # 2. One launch per screen: "file name=what TOOLBELT_SHOW opens"
 SCREENS=(
     "menu=menu"
@@ -66,6 +71,8 @@ SCREENS=(
     "windows-snap-preview=windows-snap-preview"
     "settings-snippets=settings-snippets"
     "launcher-snippet=launcher:address"
+    "settings-shelf=settings-shelf"
+    "shelf-demo=shelf-demo"
 )
 for entry in "${SCREENS[@]}"; do
     screen="${entry%%=*}"

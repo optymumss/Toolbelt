@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.register(SnippetsModule { [weak self] in
             self?.settings.show(tab: .module(.snippets))
         })
+        modules.register(ShelfModule(shortcuts: shortcuts))
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -64,6 +65,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "settings-launcher": settings.show(tab: .module(.launcher))
             case "settings-windows": settings.show(tab: .module(.windows))
             case "settings-snippets": settings.show(tab: .module(.snippets))
+            case "settings-shelf": settings.show(tab: .module(.shelf))
+            case "shelf-demo":
+                // A shelf holding one of each kind of item, as if they'd been dropped on it.
+                guard let shelfModule = modules.module(.shelf) as? ShelfModule else { break }
+                let id = shelfModule.newShelf(at: NSPoint(x: 500, y: 450))
+                shelfModule.store.update(id) { $0.name = "Project files" }
+                let pb = NSPasteboard(name: NSPasteboard.Name("toolbelt-demo"))
+                let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+                let files = ["Meeting notes.txt", "Screenshot.png"].map { desktop.appendingPathComponent($0) }
+                    .filter { FileManager.default.fileExists(atPath: $0.path) }
+                for content in [files.map { $0 as NSURL } as [NSPasteboardWriting], ["Remember to send the invoice" as NSString], [URL(string: "https://www.apple.com/macos/")! as NSURL]] where !content.isEmpty {
+                    pb.clearContents()
+                    pb.writeObjects(content)
+                    shelfModule.store.add(from: pb, to: id)
+                }
             case "windows-left-half", "windows-top-right", "windows-center":
                 // Opens Settings, then moves it with the window manager, like pressing the shortcut.
                 settings.show(tab: .module(.windows))

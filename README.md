@@ -1,9 +1,22 @@
-# Toolbelt — v0.6
+# Toolbelt — v0.7
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
-**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management and snippets.
+**Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets and the drop shelf.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.7: the drop shelf
+
+A shelf is a small floating tray you can park things on while you work.
+
+- **Open one** with **⌃⌥S**, from the menu bar icon (**New Shelf**), or by **shaking the pointer** while you're dragging something.
+- **Drop anything on it:** files, folders, images, text or links, from any app.
+- **Drag them out later:** drag a single item, or use **Drag all out** at the bottom to move everything at once.
+- **Have several shelves at once.** Click a shelf's name to rename it, and the coloured dot to colour-tag it.
+- **Quick Look:** click the eye next to an item to preview it.
+- **Settings → Shelf:** choose whether dropped files stay where they are (the shelf just remembers them, the default) or are copied onto the shelf.
+
+Shelves stay open between restarts. Closing a shelf (×) never deletes your original files.
 
 ## What's new in 0.6: snippets
 
