@@ -43,6 +43,8 @@ enum ToolbeltTests {
         t.group("Shelf: dropping and dragging out", ShelfStoreTests.run)
         t.group("Downloads: planning parts", DownloadPlanTests.run)
         t.group("Downloads: real downloads from a test server", DownloadTests.run)
+        t.group("Settings backup", BackupTests.run)
+        t.group("Services menu and right-click", ServicesTests.run)
         t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
@@ -1390,10 +1392,93 @@ enum EndToEndTests {
         spin(1)
         check(windowCount(of: pid) > windowsBefore, "⌃⌥S opens a new shelf")
 
+        // 6. The Services menu, as used from another app's right-click menu
+        let register = Process()
+        register.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+        register.arguments = ["-f", URL(fileURLWithPath: "build/Toolbelt.app").path]
+        try? register.run()
+        register.waitUntilExit()
+        let refresh = Process()
+        refresh.executableURL = URL(fileURLWithPath: "/System/Library/CoreServices/pbs")
+        refresh.arguments = ["-update"]
+        try? refresh.run()
+        refresh.waitUntilExit()
+        spin(2)
+        let shelvesBefore = windowCount(of: pid)
+        let selection = NSPasteboard(name: NSPasteboard.Name("toolbelt-e2e-service"))
+        selection.clearContents()
+        selection.setString("Sent from the Services menu", forType: .string)
+        check(NSPerformService("Add to Toolbelt Shelf", selection), "“Add to Toolbelt Shelf” is offered in the Services menu")
+        spin(1.5)
+        check(windowCount(of: pid) > shelvesBefore, "and choosing it opens a shelf in Toolbelt")
+
         check(app.isRunning, "Toolbelt is still running after all that")
         app.terminate()
         textEdit.forceTerminate()
         try? FileManager.default.removeItem(at: data)
         try? FileManager.default.removeItem(at: document)
+    }
+}
+
+// MARK: - Backup and Services
+
+@MainActor
+enum BackupTests {
+    static func run() {
+        let from = FileManager.default.temporaryDirectory.appendingPathComponent("backup-from-\(UUID().uuidString)")
+        let to = FileManager.default.temporaryDirectory.appendingPathComponent("backup-to-\(UUID().uuidString)")
+        for folder in [from, to] { try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try? Data("settings".utf8).write(to: from.appendingPathComponent("settings.plist"))
+        try? Data("snippets".utf8).write(to: from.appendingPathComponent("snippets.json"))
+        try? Data("history".utf8).write(to: from.appendingPathComponent("history.json"))
+
+        guard let data = try? Backup.export(from: from) else { check(false, "settings can be exported"); return }
+        check(true, "settings can be exported to one file")
+        let restored = (try? Backup.restore(data, into: to)) ?? []
+        checkEqual(restored, ["settings.plist", "snippets.json"], "importing restores settings and snippets")
+        checkEqual(FileManager.default.contents(atPath: to.appendingPathComponent("snippets.json").path), Data("snippets".utf8), "with the same contents")
+        check(!FileManager.default.fileExists(atPath: to.appendingPathComponent("history.json").path), "clipboard history isn't part of a settings backup")
+        check((try? Backup.restore(Data("not a backup".utf8), into: to)) == nil, "other files are refused")
+    }
+}
+
+@MainActor
+enum ServicesTests {
+    static func run() {
+        let shortcuts = ShortcutCenter()
+        let manager = ModuleManager(shortcuts: shortcuts)
+        let shelf = ShelfModule(shortcuts: shortcuts)
+        let snippets = SnippetsModule {}
+        let clipboard = ClipboardModule(shortcuts: shortcuts)
+        manager.register(shelf)
+        manager.register(snippets)
+        manager.register(clipboard)
+        let provider = ServicesProvider(modules: manager)
+        var error: NSString = ""
+
+        let shelvesBefore = shelf.store.shelves.count
+        provider.addToShelf(ShelfStoreTests.pasteboard(["Text from another app" as NSString]), userData: nil, error: &error)
+        checkEqual(shelf.store.shelves.count, shelvesBefore + 1, "“Add to Toolbelt Shelf” opens a shelf")
+        checkEqual(shelf.store.shelves.last?.items.first?.text, "Text from another app", "holding what was selected")
+        if let id = shelf.store.shelves.last?.id { shelf.close(id) }
+
+        provider.saveSnippet(ShelfStoreTests.pasteboard(["Kind regards,\nAlex" as NSString]), userData: nil, error: &error)
+        checkEqual(snippets.store.snippets.last?.text, "Kind regards,\nAlex", "“Save as Toolbelt Snippet” makes a snippet from the selection")
+        snippets.store.snippets.removeLast()
+
+        provider.pinInClipboard(ShelfStoreTests.pasteboard(["Keep this safe" as NSString]), userData: nil, error: &error)
+        check(clipboard.store.items.first.map { $0.text == "Keep this safe" && $0.pinned } == true, "“Pin in Toolbelt Clipboard” saves and pins it")
+
+        error = ""
+        provider.downloadLink(ShelfStoreTests.pasteboard(["just words" as NSString]), userData: nil, error: &error)
+        check(error.length > 0, "a selection that isn't a link is explained, not downloaded")
+
+        let plist = (try? Data(contentsOf: URL(fileURLWithPath: "Info.plist")))
+            .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] }
+        let services = (plist?["NSServices"] as? [[String: Any]])?.compactMap { $0["NSMessage"] as? String } ?? []
+        checkEqual(services.sorted(), ["addToShelf", "downloadLink", "pinInClipboard", "saveSnippet"], "every service in Info.plist has a matching method")
+        for message in services {
+            check(provider.responds(to: Selector("\(message):userData:error:")), "Toolbelt answers “\(message)”")
+        }
     }
 }

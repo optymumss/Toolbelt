@@ -66,6 +66,21 @@ final class ClipboardModule: ToolbeltModule {
         store.saveNow()
     }
 
+    /// Saves text or files from another app (the Services menu) and pins them.
+    @discardableResult
+    func pin(from pasteboard: NSPasteboard) -> Bool {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            let paths = urls.map(\.path)
+            store.add(ClipItem(kind: .file, filePaths: paths, hash: Hashing.of("file:" + paths.joined(separator: "\n")), sourceAppName: "Services"))
+        } else if let text = pasteboard.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            store.add(ClipItem(kind: ClipboardMonitor.isLink(text) ? .link : .text, text: text, hash: Hashing.of("text:" + text), sourceAppName: "Services"))
+        } else {
+            return false
+        }
+        if let first = store.items.first, !first.pinned { store.togglePin(first.id) }
+        return true
+    }
+
     func confirmClear() {
         NSApp.activate()
         let alert = NSAlert()

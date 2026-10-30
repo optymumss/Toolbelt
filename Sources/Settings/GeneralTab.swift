@@ -49,6 +49,12 @@ struct GeneralTab: View {
                         NSWorkspace.shared.activateFileViewerSelecting([SettingsStore.folder])
                     }
                 }
+                LabeledContent("Backup") {
+                    HStack {
+                        Button("Export Settings…") { Backup.exportInteractively() }
+                        Button("Import…") { Backup.importInteractively() }
+                    }
+                }
                 LabeledContent("Version", value: Self.version)
             } footer: {
                 Text("Everything Toolbelt keeps, including settings and clipboard history, stays on this Mac in ~/Library/Application Support/Toolbelt.")

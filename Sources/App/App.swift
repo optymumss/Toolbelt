@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var modules: ModuleManager!
     private var settings: SettingsWindowController!
     private var statusMenu: StatusMenu!
+    private var services: ServicesProvider!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
@@ -47,6 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         modules.refresh()
+
+        // Right-click and Services menu entries (see NSServices in Info.plist).
+        services = ServicesProvider(modules: modules)
+        NSApp.servicesProvider = services
+        NSUpdateDynamicServices()
+
         warnAboutTakenShortcuts()
         showForScreenshot()
     }

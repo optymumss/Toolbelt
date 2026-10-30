@@ -1,9 +1,21 @@
-# Toolbelt — v0.8
+# Toolbelt — v0.9
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.9
+
+- **Back up or move your settings:** Settings → General → **Export Settings…** saves your settings, shortcuts, snippets, quicklinks and shelves in one `.toolbelt` file. **Import…** loads one (on a new Mac, for example) and restarts Toolbelt.
+- **Right-click and Services menu:** select text or files in almost any app (or right-click in Finder → Quick Actions / Services) and choose:
+  - **Add to Toolbelt Shelf**
+  - **Download with Toolbelt** (for a selected link)
+  - **Save as Toolbelt Snippet**
+  - **Pin in Toolbelt Clipboard**
+
+  If they don't show up straight away, log out and back in once, or turn them on in System Settings → Keyboard → Keyboard Shortcuts → Services.
+- **Uses less battery:** no background timers while Settings is closed, fewer wake-ups, and an optimised build for Apple silicon.
 
 ## What's new in 0.8: the download manager
 
