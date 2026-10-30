@@ -45,4 +45,9 @@ jobs:
           git config user.email "github-actions@users.noreply.github.com"
           printf 'Screenshots of Toolbelt from %s at %s\n' "$SRC" "$GITHUB_SHA" > README.md
           git add -A && git commit -q -m "Screenshots from $SRC ($GITHUB_SHA)"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-screenshots
+          # Runs finishing at the same moment can race for the branch; try again a few times.
+          for attempt in 1 2 3 4 5; do
+            git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-screenshots && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
