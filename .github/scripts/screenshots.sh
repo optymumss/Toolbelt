@@ -116,6 +116,7 @@ for entry in "${SCREENS[@]}"; do
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
     # Notes stay on screen by design; remove the demo ones so later screens are clear.
     [ "$screen" = "notes-demo" ] && rm -f "$DATA_DIR/notes.json"
+    [ "$screen" = "shelf-demo" ] && rm -f "$DATA_DIR/shelves.json"
     sleep 1
 done
 
