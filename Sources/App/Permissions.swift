@@ -93,6 +93,8 @@ enum PermissionGate {
     /// why it's needed (once per launch) and offers to open System Settings.
     static func ensure(_ permission: Permission, to feature: String) -> Bool {
         if permission.isGranted { return true }
+        // The automated screenshot check can't click dialogs, so it never gets one.
+        guard ProcessInfo.processInfo.environment["TOOLBELT_SHOW"] == nil else { return false }
         guard !askedThisLaunch.contains(permission) else { return false }
         askedThisLaunch.insert(permission)
 

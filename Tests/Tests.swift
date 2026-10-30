@@ -34,6 +34,10 @@ enum ToolbeltTests {
         t.group("Windows: layouts", WindowLayoutTests.run)
         t.group("Windows: snapping and displays", SnapTests.run)
         t.group("Windows: moving a real window", RealWindowTests.run)
+        t.group("Snippets: placeholders", PlaceholderTests.run)
+        t.group("Snippets: spotting keywords", TypingBufferTests.run)
+        t.group("Snippets: saving and searching", SnippetStoreTests.run)
+        t.group("Snippets: expanding in a real text field", SnippetTypingTests.run)
 
         UserDefaults.standard.removeObject(forKey: "historyLimit")
         t.finish()
@@ -772,5 +776,136 @@ enum RealWindowTests {
         spin(0.5)
         let restored = window.frame ?? .zero
         check(abs(restored.minX - before.minX) < 2 && abs(restored.width - before.width) < 2, "restore puts it back", "now \(restored), was \(before)")
+
+        // Close the test window so it doesn't sit in front of later screenshots.
+        var close: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window.element, kAXCloseButtonAttribute as CFString, &close) == .success,
+           let close, CFGetTypeID(close) == AXUIElementGetTypeID() {
+            AXUIElementPerformAction(close as! AXUIElement, kAXPressAction as CFString)
+        }
+    }
+}
+
+// MARK: - Snippets
+
+@MainActor
+enum PlaceholderTests {
+    static func run() {
+        let date = DateComponents(calendar: Calendar(identifier: .gregorian), timeZone: .current,
+                                  year: 2026, month: 3, day: 14, hour: 9, minute: 5).date!
+        let uk = Locale(identifier: "en_GB")
+        checkEqual(Placeholders.render("Plain text", now: date).text, "Plain text", "text without placeholders is unchanged")
+        checkEqual(Placeholders.render("Today is {date}", now: date, locale: uk).text, "Today is 14 Mar 2026", "{date}")
+        checkEqual(Placeholders.render("{time}", now: date, locale: uk).text, "09:05", "{time}")
+        checkEqual(Placeholders.render("{date:yyyy-MM-dd}", now: date).text, "2026-03-14", "{date:…} with your own format")
+        checkEqual(Placeholders.render("Re: {clipboard}", clipboard: "Invoice 42").text, "Re: Invoice 42", "{clipboard}")
+        let cursor = Placeholders.render("Dear {cursor},\nThanks")
+        checkEqual(cursor.text, "Dear ,\nThanks", "{cursor} is removed from the text")
+        checkEqual(cursor.cursorFromEnd, 8, "and the cursor goes back to where it was")
+        checkEqual(Placeholders.render("{unknown} {braces", now: date).text, "{unknown} {braces", "other braces are left alone")
+    }
+}
+
+@MainActor
+enum TypingBufferTests {
+    static let snippets = [
+        Snippet(keyword: ";addr", name: "Address", text: "42 Example Street"),
+        Snippet(keyword: "omw", name: "On my way", text: "On my way!"),
+    ]
+
+    static func typing(_ text: String) -> TypingBuffer {
+        var buffer = TypingBuffer()
+        for ch in text { buffer.type(String(ch)) }
+        return buffer
+    }
+
+    static func run() {
+        checkEqual(typing("hello ;addr").match(in: snippets)?.name, "Address", "a keyword at the end is spotted")
+        checkEqual(typing(";add").match(in: snippets)?.name, nil, "an unfinished keyword isn't")
+        checkEqual(typing("I'm omw").match(in: snippets)?.name, "On my way", "word keywords work after a space")
+        checkEqual(typing("zomw").match(in: snippets)?.name, nil, "but not in the middle of a word")
+        var buffer = typing(";adx")
+        buffer.deleteBackward()
+        buffer.type("dr")
+        checkEqual(buffer.match(in: snippets)?.name, "Address", "typing mistakes fixed with ⌫ still count")
+        buffer.reset()
+        checkEqual(buffer.text, "", "clicking or pressing arrows starts afresh")
+        checkEqual(typing(String(repeating: "x", count: 500) + ";addr").match(in: snippets)?.name, "Address", "long typing doesn't break it")
+    }
+}
+
+@MainActor
+enum SnippetStoreTests {
+    static func run() {
+        let store = SnippetStore()
+        store.snippets = [Snippet(keyword: ";tb", name: "Toolbelt", text: "Toolbelt is {cursor}great")]
+        let reloaded = SnippetStore()
+        checkEqual(reloaded.snippets.first?.keyword, ";tb", "snippets are saved")
+        check(FileManager.default.fileExists(atPath: SettingsStore.folder.appendingPathComponent("snippets.json").path), "in snippets.json in the data folder")
+
+        let provider = SnippetsLauncherProvider(store: store)
+        checkEqual(provider.results(for: "toolbelt").first?.kind, "Snippet", "the launcher finds snippets by name")
+        checkEqual(provider.results(for: ";tb").first?.title, "Toolbelt", "and by keyword")
+    }
+}
+
+/// Types a keyword into TextEdit, like a person would, and checks it expands — if this Mac
+/// lets the test program use Input Monitoring and Accessibility.
+@MainActor
+enum SnippetTypingTests {
+    static func run() {
+        guard AXIsProcessTrusted(), Permission.inputMonitoring.isGranted else {
+            print("  – skipped: this Mac hasn't given the test program Input Monitoring and Accessibility")
+            return
+        }
+        // A real app with an empty document, in front, ready for typing.
+        let document = FileManager.default.temporaryDirectory.appendingPathComponent("snippet-test-\(UUID().uuidString).txt")
+        FileManager.default.createFile(atPath: document.path, contents: Data())
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "TextEdit", document.path]
+        try? open.run()
+        open.waitUntilExit()
+        spin(3)
+        guard let textEdit = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").first else {
+            check(false, "TextEdit opens to type into")
+            return
+        }
+        textEdit.activate()
+        spin(1)
+        check(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.TextEdit", "TextEdit is in front, ready for typing")
+
+        let store = SnippetStore()
+        store.snippets = [Snippet(keyword: ";tb", name: "Toolbelt", text: "Toolbelt says hi")]
+        let expander = SnippetExpander(store: store)
+        check(expander.start(), "listening to typing starts")
+
+        for key in [kVK_ANSI_Semicolon, kVK_ANSI_T, kVK_ANSI_B] {
+            typeKey(CGKeyCode(key))
+            spin(0.15)
+        }
+        spin(2)
+        checkEqual(text(in: textEdit), "Toolbelt says hi", "typing ;tb in TextEdit turns into the snippet")
+        expander.stop()
+        textEdit.forceTerminate()
+        try? FileManager.default.removeItem(at: document)
+    }
+
+    /// The text in the app's focused text area, read through Accessibility.
+    static func text(in app: NSRunningApplication) -> String {
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return "(nothing focused)" }
+        var value: CFTypeRef?
+        AXUIElementCopyAttributeValue(focused as! AXUIElement, kAXValueAttribute as CFString, &value)
+        return value as? String ?? "(no text)"
+    }
+
+    /// A key press as if from the keyboard (not marked as Toolbelt's own).
+    static func typeKey(_ key: CGKeyCode) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)?.post(tap: .cghidEventTap)
+        CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)?.post(tap: .cghidEventTap)
     }
 }

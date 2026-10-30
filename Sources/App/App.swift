@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.register(WindowsModule(shortcuts: shortcuts) { [weak self] in
             self?.settings.show(tab: .module(.windows))
         })
+        modules.register(SnippetsModule { [weak self] in
+            self?.settings.show(tab: .module(.snippets))
+        })
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -60,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "menu": statusMenu.open()
             case "settings-launcher": settings.show(tab: .module(.launcher))
             case "settings-windows": settings.show(tab: .module(.windows))
+            case "settings-snippets": settings.show(tab: .module(.snippets))
             case "windows-left-half", "windows-top-right", "windows-center":
                 // Opens Settings, then moves it with the window manager, like pressing the shortcut.
                 settings.show(tab: .module(.windows))

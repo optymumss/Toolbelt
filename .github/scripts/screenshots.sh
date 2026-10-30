@@ -33,6 +33,14 @@ fi
 kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 echo "History file: $(ls "$DATA_DIR")"
 
+# Two example snippets, as if you'd made them in Settings → Snippets
+cat > "$DATA_DIR/snippets.json" <<'JSON'
+[
+  {"id": "5D3C1E2A-0000-4000-8000-000000000001", "keyword": ";addr", "name": "Home address", "text": "42 Example Street\nLondon N1 1AA"},
+  {"id": "5D3C1E2A-0000-4000-8000-000000000002", "keyword": ";sig", "name": "Email sign-off", "text": "Best wishes,\n{cursor}\n\nSent {date}"}
+]
+JSON
+
 # 2. One launch per screen: "file name=what TOOLBELT_SHOW opens"
 SCREENS=(
     "menu=menu"
@@ -56,6 +64,8 @@ SCREENS=(
     "windows-top-right=windows-top-right"
     "windows-center=windows-center"
     "windows-snap-preview=windows-snap-preview"
+    "settings-snippets=settings-snippets"
+    "launcher-snippet=launcher:address"
 )
 for entry in "${SCREENS[@]}"; do
     screen="${entry%%=*}"
