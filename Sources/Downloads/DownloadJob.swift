@@ -33,6 +33,8 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
 
     private let maxConnections: Int
     private let maxRetries: Int
+    private let headers: [String: String]
+    private let throttle: DownloadThrottle
     private let lock = NSLock()
     private let queue: OperationQueue
     private var session: URLSession?
@@ -48,8 +50,11 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
     private var stopped = true
     private var finished = false
 
-    init(url: URL, tempURL: URL, segments: [Segment], total: Int64?, acceptsRanges: Bool, connections: Int, retries: Int) {
+    init(url: URL, tempURL: URL, segments: [Segment], total: Int64?, acceptsRanges: Bool, connections: Int, retries: Int,
+         headers: [String: String] = [:], throttle: DownloadThrottle = .shared) {
         self.url = url
+        self.headers = headers
+        self.throttle = throttle
         self.tempURL = tempURL
         self.segments = segments
         self.total = total
@@ -80,6 +85,8 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
         configuration.httpMaximumConnectionsPerHost = maxConnections + 1
         configuration.timeoutIntervalForRequest = 30
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        // Cookies handed over by the browser are sent as they are.
+        if headers["Cookie"] != nil { configuration.httpShouldSetCookies = false }
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
 
         let partial = segments.contains { $0.received > 0 }
@@ -134,6 +141,7 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
 
     private func request(_ index: Int, in session: URLSession) {
         var request = URLRequest(url: url)
+        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
         let segment = segments[index]
         if segment.end >= 0 {
             request.setValue("bytes=\(segment.next)-\(segment.end)", forHTTPHeaderField: "Range")
@@ -221,6 +229,19 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
         if segments[index].isComplete {
             // This part is done (perhaps because another connection took its second half).
             dataTask.cancel()
+            return
+        }
+        // Over the speed limit or the hourly cap: stop reading for a moment.
+        let wait = throttle.take(Int64(chunk.count))
+        if wait > 0 {
+            dataTask.suspend()
+            let id = dataTask.taskIdentifier
+            DispatchQueue.global().asyncAfter(deadline: .now() + wait) { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                if !self.stopped, let task = self.tasks[id] { task.resume() }
+            }
         }
     }
 
@@ -299,9 +320,14 @@ final class FTPDownloadJob: DownloadWorker, @unchecked Sendable {
         self.retries = retries
     }
 
-    static func arguments(url: URL, output: URL, retries: Int) -> [String] {
-        ["--silent", "--show-error", "--fail", "--location", "--retry", String(retries), "--retry-delay", "2",
-         "--continue-at", "-", "--output", output.path, url.absoluteString]
+    /// Speed limit in bytes a second (0: none). FTP downloads follow the speed limit but not the hourly cap.
+    var speedLimit: Int = 0
+
+    static func arguments(url: URL, output: URL, retries: Int, speedLimit: Int = 0) -> [String] {
+        var arguments = ["--silent", "--show-error", "--fail", "--location", "--retry", String(retries), "--retry-delay", "2",
+                         "--continue-at", "-", "--output", output.path]
+        if speedLimit > 0 { arguments += ["--limit-rate", String(speedLimit)] }
+        return arguments + [url.absoluteString]
     }
 
     func start() {
@@ -313,7 +339,7 @@ final class FTPDownloadJob: DownloadWorker, @unchecked Sendable {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        process.arguments = Self.arguments(url: url, output: tempURL, retries: retries)
+        process.arguments = Self.arguments(url: url, output: tempURL, retries: retries, speedLimit: speedLimit)
         let errors = Pipe()
         process.standardError = errors
         process.terminationHandler = { [weak self] finished in

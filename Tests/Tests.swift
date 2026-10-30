@@ -43,6 +43,8 @@ enum ToolbeltTests {
         t.group("Shelf: dropping and dragging out", ShelfStoreTests.run)
         t.group("Downloads: planning parts", DownloadPlanTests.run)
         t.group("Downloads: real downloads from a test server", DownloadTests.run)
+        t.group("Downloads: queues, schedules, limits and the list", DownloadsNextTests.run)
+        t.group("Downloads: the Chrome extension and its bridge", ChromeBridgeTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
@@ -1073,8 +1075,11 @@ final class TestServer: @unchecked Sendable {
     private var _partRequests = 0
     private var _resumedFrom: Int = 0
     private var flakyCount = 0
+    private var _lastCookie: String?
 
     var partRequests: Int { lock.lock(); defer { lock.unlock() }; return _partRequests }
+    /// The Cookie header of the latest request.
+    var lastCookie: String? { lock.lock(); defer { lock.unlock() }; return _lastCookie }
     /// The largest starting point asked for, to tell resuming from restarting.
     var resumedFrom: Int { lock.lock(); defer { lock.unlock() }; return _resumedFrom }
 
@@ -1107,7 +1112,9 @@ final class TestServer: @unchecked Sendable {
             }
             let ranges = isRange && !path.hasPrefix("/noranges")
             if !ranges { start = 0; end = body.count - 1 }
+            let cookie = lines.first { $0.lowercased().hasPrefix("cookie: ") }.map { String($0.dropFirst("cookie: ".count)) }
             lock.lock()
+            if let cookie { _lastCookie = cookie }
             if ranges { _partRequests += 1; _resumedFrom = max(_resumedFrom, start) }
             var dropHalfway = false
             if path.hasPrefix("/flaky") {
@@ -1238,6 +1245,299 @@ enum DownloadTests {
         let provider = DownloadsLauncherProvider(module: module)
         checkEqual(provider.results(for: "https://example.com/big.iso").first?.title, "Download big.iso", "pasting a link in the launcher offers to download it")
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+/// A clock the throttle tests can move by hand.
+final class TestClock: @unchecked Sendable {
+    var now: Date
+    init(_ now: Date) { self.now = now }
+}
+
+@MainActor
+enum DownloadsNextTests {
+    static func run() {
+        throttle()
+        schedule()
+        listDetails()
+        withServer()
+    }
+
+    static func throttle() {
+        let hour = Date(timeIntervalSince1970: 3600 * 480_000)
+        let clock = TestClock(hour.addingTimeInterval(60))
+        let speed = DownloadThrottle(now: { clock.now })
+        speed.configure(bytesPerSecond: 1_000_000, hourlyCap: 0)
+        checkEqual(speed.take(400_000), 0, "a little data under the speed limit needn't wait")
+        let wait = speed.take(1_100_000)
+        check(abs(wait - 1) < 0.01, "going over the speed limit waits just long enough", "\(wait) s")
+        let none = DownloadThrottle(now: { clock.now })
+        checkEqual(none.take(500_000_000), 0, "with no limit nothing waits")
+
+        let cap = DownloadThrottle(now: { clock.now })
+        cap.configure(bytesPerSecond: 0, hourlyCap: 10_000_000)
+        checkEqual(cap.take(5_000_000), 0, "under the hourly cap nothing waits")
+        check(cap.capWait == nil, "and the cap isn't reached")
+        checkEqual(cap.take(5_000_000), 3540, "using up the hourly cap waits until the next hour")
+        checkEqual(cap.capWait, 3540, "which is when downloads carry on")
+        clock.now = hour.addingTimeInterval(3601)
+        check(cap.capWait == nil, "a new hour starts afresh")
+        checkEqual(cap.take(1_000), 0, "and downloads carry on")
+    }
+
+    static func schedule() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func at(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour, minute: minute))!
+        }
+        var night = DownloadQueue(name: "Night")
+        night.startAt = 60
+        night.stopAt = 7 * 60
+        let next = DownloadSchedule.next(after: at(30, 23), queues: [night], calendar: calendar)
+        checkEqual(next?.date, at(31, 1), "a queue set for 01:00–07:00 next starts at 01:00 tomorrow")
+        checkEqual(next?.start, true, "as a start")
+        checkEqual(DownloadSchedule.next(after: at(31, 3), queues: [night], calendar: calendar)?.date, at(31, 7), "and then stops at 07:00")
+        checkEqual(DownloadSchedule.shouldRun(night, at: at(31, 3), calendar: calendar), true, "opening Toolbelt at 03:00 finds it running")
+        checkEqual(DownloadSchedule.shouldRun(night, at: at(31, 8), calendar: calendar), false, "and at 08:00 stopped")
+        checkEqual(DownloadSchedule.shouldRun(night, at: at(31, 0, 30), calendar: calendar), false, "and at 00:30 still stopped")
+        check(DownloadSchedule.shouldRun(.main(), at: at(31, 3), calendar: calendar) == nil, "queues without set times aren't changed")
+        checkEqual(night.scheduleText, "Runs 01:00–07:00", "the times are shown in the list")
+    }
+
+    static func listDetails() {
+        var item = DownloadItem(url: URL(string: "https://example.com/a.zip")!, name: "a.zip")
+        item.received = 1_000_000
+        item.total = 4_000_000
+        item.speed = 500_000
+        item.connections = 4
+        let all = DownloadRow.details(for: item, columns: DownloadColumn.allCases, queue: "Night")
+        check(all.contains("/s") && all.contains("4 connections") && all.contains("left") && all.contains("Night"),
+              "the list can show size, speed, time left, connections and queue", all)
+        let sizeOnly = DownloadRow.details(for: item, columns: [.size], queue: "Night")
+        check(sizeOnly.contains("of") && !sizeOnly.contains("/s") && !sizeOnly.contains("Night"), "or only the columns you choose", sizeOnly)
+        Prefs.downloadColumns = [.speed, .queue]
+        checkEqual(Prefs.downloadColumns, [.speed, .queue], "the chosen columns are saved")
+        Prefs.downloadButtons = [.open]
+        checkEqual(Prefs.downloadButtons, [.open], "and so are the chosen buttons")
+        SettingsStore.shared.set(nil, for: "downloads.columns")
+        SettingsStore.shared.set(nil, for: "downloads.buttons")
+        checkEqual(DownloadManager.safeFileName("Clip: part 1/2"), "Clip- part 1-2", "names from the browser are made safe for files")
+    }
+
+    static func withServer() {
+        guard let server = try? TestServer(size: 6 * 1024 * 1024) else {
+            check(false, "the test web server starts")
+            return
+        }
+        _ = DownloadTests.waitFor(5) { server.port != 0 }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-dlnext-\(UUID().uuidString)")
+        Prefs.downloadFolder = folder
+        Prefs.downloadSortByType = false
+        Prefs.downloadSpeedLimitKB = 0
+        Prefs.downloadHourlyCapMB = 0
+        let manager = DownloadManager()
+        manager.resumeInterrupted()
+        func matches(_ id: UUID) -> Bool {
+            guard let path = manager.item(id)?.finalPath, let data = FileManager.default.contents(atPath: path) else { return false }
+            return data == server.body
+        }
+        func done(_ ids: [UUID]) -> Bool { ids.allSatisfy { manager.item($0)?.state == .completed } }
+
+        // Queues: one at a time
+        manager.queues[0].maxAtOnce = 1
+        let ids = (1...3).compactMap { manager.add(server.url("/slow/queue\($0).bin"))?.id }
+        checkEqual(ids.count, 3, "three downloads are added")
+        checkEqual(ids.map { manager.item($0)?.state }, [.downloading, .queued, .queued], "a queue of one downloads one at a time; the rest wait")
+        check(DownloadTests.waitFor(90) { done(ids) }, "each starts when the one before finishes")
+        let finishes = ids.compactMap { manager.item($0)?.finished }
+        checkEqual(finishes, finishes.sorted(), "in the order they were added")
+        check(ids.allSatisfy(matches), "and every file is right")
+        manager.queues[0].maxAtOnce = 3
+
+        // Stopping and starting a queue
+        guard let paused = manager.add(server.url("/slow/stopped.bin")) else { check(false, "download starts"); return }
+        _ = DownloadTests.waitFor(10) { (manager.item(paused.id)?.received ?? 0) > 300_000 }
+        manager.stopQueue(manager.queues[0].id)
+        checkEqual(manager.item(paused.id)?.state, .queued, "stopping a queue sends its downloads back to waiting")
+        let kept = manager.item(paused.id)?.received ?? 0
+        spin(1)
+        checkEqual(manager.item(paused.id)?.received, kept, "and nothing more downloads")
+        manager.startQueue(manager.queues[0].id)
+        check(DownloadTests.waitFor(40) { done([paused.id]) }, "starting it again finishes the download")
+        check(matches(paused.id), "with the right content")
+
+        // A second queue that starts stopped
+        var night = manager.addQueue(named: "Night")
+        if let index = manager.queues.firstIndex(where: { $0.id == night.id }) {
+            manager.queues[index].isRunning = false
+            night = manager.queues[index]
+        }
+        guard let later = manager.add(server.url("/files/later.bin"), queue: night.id) else { check(false, "download added"); return }
+        spin(1)
+        checkEqual(manager.item(later.id)?.state, .queued, "downloads in a stopped queue wait")
+        checkEqual(manager.hasWork, false, "and don't count as unfinished work")
+        manager.startQueue(night.id)
+        check(DownloadTests.waitFor(30) { done([later.id]) }, "until the queue starts")
+        manager.removeQueue(night.id)
+        checkEqual(manager.queues.count, 1, "queues can be deleted")
+        checkEqual(manager.queue(of: manager.item(later.id)!).id, manager.queues[0].id, "and their downloads move to the first queue")
+        let saved = DownloadManager()
+        checkEqual(saved.queues.map(\.name), ["Main"], "queues are saved")
+
+        // Speed limit
+        Prefs.downloadSpeedLimitKB = 1024
+        let began = Date()
+        guard let limited = manager.add(server.url("/files/limited.bin")) else { check(false, "download added"); return }
+        check(DownloadTests.waitFor(40) { done([limited.id]) }, "a speed-limited download finishes")
+        let seconds = Date().timeIntervalSince(began)
+        check(seconds > 4, "and takes as long as the limit says (6 MB at 1 MB/s)", "\(Int(seconds)) s")
+        check(matches(limited.id), "with the right content")
+        Prefs.downloadSpeedLimitKB = 0
+        manager.applyLimits()
+
+        // Hourly cap, with a clock 10 seconds before the hour
+        let hour = Date(timeIntervalSince1970: 3600 * 480_000)
+        let clock = TestClock(hour.addingTimeInterval(3590))
+        let capped = DownloadManager(throttle: DownloadThrottle(now: { clock.now }))
+        capped.resumeInterrupted()
+        Prefs.downloadHourlyCapMB = 4
+        guard let big = capped.add(server.url("/slow/capped.bin")) else { check(false, "download added"); return }
+        check(DownloadTests.waitFor(20) { capped.cappedUntil != nil }, "downloads stop when the hourly cap is used up")
+        checkEqual(capped.item(big.id)?.state, .queued, "and wait")
+        let part = capped.item(big.id)?.received ?? 0
+        check(part >= 4 * 1024 * 1024 && part < Int64(server.body.count), "having downloaded about the cap", "\(part) bytes")
+        clock.now = hour.addingTimeInterval(3601)
+        check(DownloadTests.waitFor(40) { capped.item(big.id)?.state == .completed }, "and carry on in the next hour")
+        check(capped.item(big.id)?.finalPath.flatMap { FileManager.default.contents(atPath: $0) } == server.body, "with the right content")
+        Prefs.downloadHourlyCapMB = 0
+        capped.stopAll()
+
+        // Cookies and the page address from the browser, and a chosen name
+        guard let fromBrowser = manager.add(server.url("/files/members.bin"), name: "Members video.mp4",
+                                            headers: ["Cookie": "session=abc123", "Referer": "https://example.com/"]) else {
+            check(false, "download added"); return
+        }
+        check(DownloadTests.waitFor(30) { done([fromBrowser.id]) }, "downloads from the browser finish")
+        checkEqual(server.lastCookie, "session=abc123", "and send the browser's cookies, for sites you're signed in to")
+        checkEqual(manager.item(fromBrowser.id)?.name, "Members video.mp4", "with the name the browser chose")
+
+        // Notification hook and "when done"
+        var finishedNames: [String] = []
+        var doneAction: WhenDone?
+        manager.onFinished = { finishedNames.append($0.name) }
+        manager.onAllDone = { doneAction = $0 }
+        manager.whenDone = .sleep
+        guard let last = manager.add(server.url("/files/last.bin")) else { check(false, "download added"); return }
+        check(DownloadTests.waitFor(30) { done([last.id]) }, "the last download finishes")
+        spin(0.5)
+        checkEqual(finishedNames, ["last.bin"], "a finished download is announced (the notification)")
+        checkEqual(doneAction, .sleep, "when everything has finished, the chosen action (sleep) is offered")
+        checkEqual(manager.whenDone, .nothing, "only once")
+        manager.stopAll()
+        try? FileManager.default.removeItem(at: folder)
+        Prefs.downloadSortByType = true
+    }
+}
+
+@MainActor
+enum ChromeBridgeTests {
+    static func run() {
+        // The extension and Chrome's note about the bridge agree on the extension's ID.
+        let manifestURL = URL(fileURLWithPath: "Chrome/manifest.json")
+        let manifest = (try? Data(contentsOf: manifestURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        check(manifest != nil, "the Chrome extension's manifest is valid")
+        let key = manifest?["key"] as? String ?? ""
+        checkEqual(ChromeSetup.extensionID(fromKey: key), ChromeSetup.extensionID, "its key gives the ID Toolbelt allows")
+        let permissions = manifest?["permissions"] as? [String] ?? []
+        check(["downloads", "nativeMessaging", "contextMenus"].allSatisfy(permissions.contains), "it can take over downloads and add a right-click item")
+        checkEqual(manifest?["manifest_version"] as? Int, 3, "and uses Chrome's current extension format")
+
+        let hosts = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-chrome-\(UUID().uuidString)")
+        let problem = ChromeSetup.install(extensionSource: URL(fileURLWithPath: "Chrome"), bridgePath: "/Applications/Toolbelt.app/Contents/MacOS/ToolbeltBridge", hostsFolder: hosts)
+        check(problem == nil, "setting up Chrome works", problem ?? "")
+        let host = (try? Data(contentsOf: ChromeSetup.hostManifestURL(in: hosts))).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        checkEqual(host?["allowed_origins"] as? [String], ["chrome-extension://\(ChromeSetup.extensionID)/"], "Chrome lets only the Toolbelt extension use the bridge")
+        checkEqual(host?["path"] as? String, "/Applications/Toolbelt.app/Contents/MacOS/ToolbeltBridge", "and knows where the bridge is")
+        check(FileManager.default.fileExists(atPath: ChromeSetup.extensionFolder.appendingPathComponent("background.js").path), "the extension is copied to a folder for Load unpacked")
+        try? FileManager.default.removeItem(at: hosts)
+
+        let bridge = "build/Toolbelt.app/Contents/MacOS/ToolbeltBridge"
+        guard FileManager.default.fileExists(atPath: bridge) else {
+            print("  – skipped the bridge: build the app first (bash build.sh)")
+            return
+        }
+        check(FileManager.default.fileExists(atPath: "build/Toolbelt.app/Contents/Resources/ChromeExtension/manifest.json"), "the app carries the extension")
+
+        // Talk to the bridge the way Chrome does, and check the links reach the download list.
+        let module = DownloadsModule()
+        var received: [DownloadRequest] = []
+        let inbox = BrowserInbox { received.append($0) }
+        try? FileManager.default.createDirectory(at: BrowserInbox.folder, withIntermediateDirectories: true)
+        try? #"{"url":"https://example.com/waiting.zip"}"#.write(to: BrowserInbox.folder.appendingPathComponent("early.json"), atomically: true, encoding: .utf8)
+        inbox.start()
+        checkEqual(received.map(\.url), ["https://example.com/waiting.zip"], "links that arrived while Toolbelt was closed are picked up")
+
+        let replies = talk(to: bridge, messages: [
+            ["type": "ping"],
+            ["type": "download", "url": "https://example.com/files/film.mp4", "cookies": "sid=42", "referrer": "https://example.com/watch", "name": "Film.mp4"],
+            ["type": "download", "url": "javascript:alert(1)"],
+        ])
+        checkEqual(replies.count, 3, "the bridge answers every message")
+        checkEqual(replies.first?["ok"] as? Bool, true, "it answers Chrome's “are you there?”")
+        checkEqual(replies.dropFirst().first?["ok"] as? Bool, true, "it accepts a download link")
+        checkEqual(replies.last?["ok"] as? Bool, false, "and refuses anything that isn't a web or FTP link")
+        _ = DownloadTests.waitFor(5) { received.count >= 2 }
+        let film = received.last
+        checkEqual(film?.url, "https://example.com/files/film.mp4", "the link reaches Toolbelt")
+        checkEqual(film?.headers["Cookie"], "sid=42", "with the browser's cookies")
+        checkEqual(film?.headers["Referer"], "https://example.com/watch", "and the page it came from")
+        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: BrowserInbox.folder.path)) ?? []
+        checkEqual(leftovers, [], "and the handed-over files are tidied away")
+        inbox.stop()
+
+        if let film {
+            module.manager.resumeInterrupted()
+            module.received(film)
+            let item = module.manager.items.first
+            checkEqual(item?.name, "Film.mp4", "a link from Chrome joins the download list")
+            checkEqual(item?.headers?["Cookie"], "sid=42", "keeping its cookies for every part")
+            if let item { module.manager.remove(item.id) }
+            module.stop()
+        }
+    }
+
+    /// Sends messages with Chrome's framing (4-byte length, then JSON) and reads the replies.
+    static func talk(to bridge: String, messages: [[String: Any]]) -> [[String: Any]] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: bridge)
+        process.arguments = ["chrome-extension://\(ChromeSetup.extensionID)/"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["TOOLBELT_DATA_DIR"] = SettingsStore.folder.path
+        environment["TOOLBELT_BRIDGE_NO_LAUNCH"] = "1"
+        process.environment = environment
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        guard (try? process.run()) != nil else { return [] }
+        for message in messages {
+            guard let body = try? JSONSerialization.data(withJSONObject: message) else { continue }
+            var length = UInt32(body.count).littleEndian
+            input.fileHandleForWriting.write(Data(bytes: &length, count: 4) + body)
+        }
+        try? input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        var data = output.fileHandleForReading.readDataToEndOfFile()
+        var replies: [[String: Any]] = []
+        while data.count >= 4 {
+            let length = data.prefix(4).withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self))) }
+            guard data.count >= 4 + length else { break }
+            if let reply = try? JSONSerialization.jsonObject(with: data.subdata(in: 4..<(4 + length))) as? [String: Any] {
+                replies.append(reply)
+            }
+            data = data.subdata(in: (4 + length)..<data.count)
+        }
+        return replies
     }
 }
 

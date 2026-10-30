@@ -79,3 +79,13 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Shelf | Zip, resize, convert, rename, copy paths | Tests (real files, sips, ditto, unzip) |
 | Shelf | Drop-target grid: folders, apps, websites, actions | Tests (copy, move, paths, shelf); end-to-end ⌃⌥⌘G; screenshot `drop-grid`; **Manual** for drag-and-drop |
 | Shelf | Shortcut per target (Finder selection) | **Manual** (needs Finder's permission) |
+| Downloads | Queues with a limit on how many run at once | Tests "Downloads: queues, schedules, limits and the list" (3 real downloads, one at a time, in order) |
+| Downloads | Start/stop queues by hand and at set times | Tests (stop/start with a real download; schedule maths incl. reopening Toolbelt mid-window); screenshot `downloads` |
+| Downloads | Sleep or shut down when everything finishes | Tests (the choice is offered once, after the last download); **Manual** for the actual sleep/shut down |
+| Downloads | Speed limit | Tests (6 MB at 1 MB/s takes over 4 s, file correct) |
+| Downloads | Hourly data cap | Tests (fake clock: stops at the cap, carries on in the next hour, file correct) |
+| Downloads | Notification when finished | Tests (the finish is announced); **Manual** for the banner itself (needs the installed app) |
+| Downloads | Choose columns and buttons | Tests (list text per column, saved choices); screenshot `downloads` |
+| Downloads | Chrome extension: hands downloads over, right-click item | Tests "the Chrome extension and its bridge" (real bridge program, Chrome's message format, cookies, inbox → download list); CI checks the scripts; **Manual** in Chrome itself |
+| Downloads | Download button on web videos | CI checks the script; **Manual** on a page with a plain video file |
+| Downloads | Other browsers (Safari, Firefox, Edge) | Not built (owner asked for Chrome only) |

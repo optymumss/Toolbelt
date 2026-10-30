@@ -176,6 +176,45 @@ enum Prefs {
         set { store.set(newValue, for: "downloads.retries") }
     }
 
+    /// 0 means no limit.
+    static var downloadSpeedLimitKB: Int {
+        get { store.value("downloads.speedLimitKB", default: 0) }
+        set { store.set(newValue, for: "downloads.speedLimitKB") }
+    }
+
+    /// 0 means no cap.
+    static var downloadHourlyCapMB: Int {
+        get { store.value("downloads.hourlyCapMB", default: 0) }
+        set { store.set(newValue, for: "downloads.hourlyCapMB") }
+    }
+
+    static var downloadNotify: Bool {
+        get { store.value("downloads.notify", default: true) }
+        set { store.set(newValue, for: "downloads.notify") }
+    }
+
+    /// Hand downloads from Chrome to Toolbelt (once the extension is set up).
+    static var downloadChromeSetUp: Bool {
+        get { store.value("downloads.chrome", default: false) }
+        set { store.set(newValue, for: "downloads.chrome") }
+    }
+
+    static var downloadColumns: [DownloadColumn] {
+        get {
+            guard let raw = store.raw("downloads.columns") as? [String] else { return DownloadColumn.defaults }
+            return raw.compactMap(DownloadColumn.init(rawValue:))
+        }
+        set { store.set(newValue.map(\.rawValue), for: "downloads.columns") }
+    }
+
+    static var downloadButtons: [DownloadButton] {
+        get {
+            guard let raw = store.raw("downloads.buttons") as? [String] else { return DownloadButton.defaults }
+            return raw.compactMap(DownloadButton.init(rawValue:))
+        }
+        set { store.set(newValue.map(\.rawValue), for: "downloads.buttons") }
+    }
+
     // Shelf
 
     static var shelfShakeToOpen: Bool {

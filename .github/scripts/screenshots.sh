@@ -59,7 +59,17 @@ cat > "$DATA_DIR/downloads.json" <<JSON
    "finalPath": "$HOME/Downloads/Programs/macOS-Tools.dmg", "added": 0, "finished": 0},
   {"id": "6E3C1E2A-0000-4000-8000-000000000003", "url": "https://example.com/report.pdf", "name": "Quarterly report.pdf",
    "state": "failed", "received": 0, "segments": [], "acceptsRanges": false,
-   "error": "The server answered 404 (not found).", "added": 0}
+   "error": "The server answered 404 (not found).", "added": 0},
+  {"id": "6E3C1E2A-0000-4000-8000-000000000004", "url": "https://example.com/files/Big-update.pkg", "name": "Big-update.pkg",
+   "state": "queued", "received": 0, "segments": [], "acceptsRanges": false, "added": 0,
+   "queueID": "7F3C1E2A-0000-4000-8000-000000000002"}
+]
+JSON
+# A second queue for overnight downloads, stopped until it's due
+cat > "$DATA_DIR/download-queues.json" <<'JSON'
+[
+  {"id": "7F3C1E2A-0000-4000-8000-000000000001", "name": "Main", "maxAtOnce": 3, "isRunning": true},
+  {"id": "7F3C1E2A-0000-4000-8000-000000000002", "name": "Overnight", "maxAtOnce": 2, "isRunning": false, "stopAt": 420}
 ]
 JSON
 
