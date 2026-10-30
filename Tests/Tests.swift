@@ -49,6 +49,7 @@ enum ToolbeltTests {
         t.group("Launcher: recently used, switcher and notes", LauncherNextTests.run)
         t.group("Snippets: fill-in blanks, picker and folders", SnippetsNextTests.run)
         t.group("Windows: saved layouts and snap areas", WindowsNextTests.run)
+        t.group("Shelf: edges, watched folders, actions and drop targets", ShelfNextTests.run)
         t.group("Settings backup", BackupTests.run)
         t.group("Services menu and right-click", ServicesTests.run)
         t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
@@ -1485,6 +1486,23 @@ enum EndToEndTests {
         spin(1)
         check(windowCount(of: pid) > windowsBefore, "⌃⌥S opens a new shelf")
 
+        // 5b. A new screenshot appears on a shelf; ⌃⌥⌘G shows the drop targets
+        let beforeScreenshot = windowCount(of: pid)
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+        let shot = desktop.appendingPathComponent("Screenshot e2e \(Int.random(in: 1000...9999)).png")
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", shot.path]
+        try? capture.run()
+        capture.waitUntilExit()
+        spin(2.5)
+        check(windowCount(of: pid) > beforeScreenshot, "a new screenshot appears on a shelf by itself")
+        try? FileManager.default.removeItem(at: shot)
+        let beforeGrid = windowCount(of: pid)
+        press(kVK_ANSI_G, [.maskControl, .maskAlternate, .maskCommand])
+        spin(1)
+        check(windowCount(of: pid) > beforeGrid, "⌃⌥⌘G shows the drop targets")
+
         // 6. The Services menu, as used from another app's right-click menu
         let register = Process()
         register.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
@@ -1894,5 +1912,101 @@ enum WindowsNextTests {
         spin(3)
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit").first?.forceTerminate()
         try? FileManager.default.removeItem(at: document)
+    }
+}
+
+// MARK: - Shelf [Next]
+
+@MainActor
+enum ShelfNextTests {
+    static func makeImage(width: Int, height: Int, at url: URL) {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.setColor(.systemTeal, atX: 1, y: 1)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    static func run() {
+        let screen = NSRect(x: 0, y: 0, width: 1512, height: 982)
+        check(ShelfEdge.notch.contains(NSPoint(x: 756, y: 981), screen: screen), "dragging to the top centre (the notch) opens a shelf")
+        check(!ShelfEdge.notch.contains(NSPoint(x: 100, y: 981), screen: screen), "but not the top corners")
+        check(ShelfEdge.left.contains(NSPoint(x: 0, y: 500), screen: screen), "the left edge works when chosen")
+        check(!ShelfEdge.off.contains(NSPoint(x: 756, y: 981), screen: screen), "and nothing happens when it's off")
+
+        check(ScreenshotFolder.isScreenshot("Screenshot 2026-10-30 at 09.41.12.png"), "macOS screenshot names are recognised")
+        check(ScreenshotFolder.isScreenshot("Screen Recording 2026-10-30 at 09.41.12.mov"), "and screen recordings")
+        check(!ScreenshotFolder.isScreenshot("Holiday.png"), "other pictures aren't")
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-next-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        // Watching a folder
+        var seen: [String] = []
+        let watcher = FolderWatcher(folder: folder) { urls in seen += urls.map(\.lastPathComponent) }
+        watcher.start()
+        FileManager.default.createFile(atPath: folder.appendingPathComponent("new report.txt").path, contents: Data("hi".utf8))
+        _ = DownloadTests.waitFor(5) { !seen.isEmpty }
+        checkEqual(seen, ["new report.txt"], "a watched folder notices new files")
+        watcher.stop()
+
+        // Actions
+        let big = folder.appendingPathComponent("Photo.png")
+        let small = folder.appendingPathComponent("Icon.png")
+        makeImage(width: 400, height: 300, at: big)
+        makeImage(width: 64, height: 64, at: small)
+        let out = folder.appendingPathComponent("out")
+        try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+
+        if let archive = ShelfActions.zip([big, small], into: out, name: "Holiday") {
+            let list = Process()
+            list.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            list.arguments = ["-l", archive.path]
+            let pipe = Pipe()
+            list.standardOutput = pipe
+            try? list.run()
+            list.waitUntilExit()
+            let contents = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            check(contents.contains("Photo.png") && contents.contains("Icon.png"), "Zip makes one archive with every file")
+        } else {
+            check(false, "Zip makes an archive")
+        }
+        let halves = ShelfActions.resize([big], into: out, maxSize: nil)
+        checkEqual(halves.first.flatMap { NSImageRep(contentsOf: $0) }.map { "\($0.pixelsWide)×\($0.pixelsHigh)" }, "200×150", "Resize to half size")
+        check(ShelfActions.resize([small], into: out, maxSize: 1024).isEmpty, "resizing never makes an image bigger")
+        let jpegs = ShelfActions.convert([big], into: out, format: "jpeg", fileExtension: "jpg")
+        check(jpegs.first.map { $0.pathExtension == "jpg" && NSImage(contentsOf: $0) != nil } == true, "Convert to JPEG makes a real JPEG")
+        checkEqual(ShelfActions.bulkNames(for: [big, small], base: "Trip").map(\.lastPathComponent), ["Trip 1.png", "Trip 2.png"], "Rename in Bulk numbers the files")
+        let twelve = (1...12).map { folder.appendingPathComponent("f\($0).txt") }
+        checkEqual(ShelfActions.bulkNames(for: twelve, base: "Doc").first?.lastPathComponent, "Doc 01.txt", "with leading zeros so they sort in order")
+
+        let module = ShelfModule(shortcuts: ShortcutCenter())
+        let id = module.shelve([big, small], onShelfNamed: "Actions test")
+        module.perform(.zip, on: id)
+        check(module.store.shelf(id)?.items.contains { $0.url?.pathExtension == "zip" } == true, "the shelf's Actions menu adds the zip to the shelf")
+        let fileItems = module.store.shelf(id)?.items.filter { $0.url?.pathExtension == "png" } ?? []
+        module.rename(fileItems, on: id, base: "Trip")
+        check(FileManager.default.fileExists(atPath: folder.appendingPathComponent("Trip 1.png").path), "Rename in Bulk renames the files")
+        check(module.store.shelf(id)?.items.contains { $0.url?.lastPathComponent == "Trip 2.png" } == true, "and the shelf follows the new names")
+        module.close(id)
+
+        // Drop targets
+        let renamed = folder.appendingPathComponent("Trip 1.png")
+        let destination = folder.appendingPathComponent("Destination")
+        var target = DropTarget(kind: .folder, name: "Dest", target: destination.path, copies: true)
+        DropTargetRunner.run(target, files: [renamed])
+        check(FileManager.default.fileExists(atPath: destination.appendingPathComponent("Trip 1.png").path)
+              && FileManager.default.fileExists(atPath: renamed.path), "a folder target copies dropped files")
+        target.copies = false
+        DropTargetRunner.run(target, files: [renamed])
+        check(FileManager.default.fileExists(atPath: destination.appendingPathComponent("Trip 1 2.png").path)
+              && !FileManager.default.fileExists(atPath: renamed.path), "or moves them, when set to move")
+        DropTargetRunner.run(DropTarget(kind: .copyPaths, name: "Paths"), files: [destination])
+        checkEqual(NSPasteboard.general.string(forType: .string), destination.path, "Copy Paths copies the paths")
+        var shelved: [URL] = []
+        DropTargetRunner.run(DropTarget(kind: .newShelf, name: "Shelf"), files: [destination]) { shelved = $0 }
+        checkEqual(shelved, [destination], "the Shelf target puts files on a shelf")
+        check(DropTargetStore().targets.count >= 4, "the grid starts with useful targets")
+
+        try? FileManager.default.removeItem(at: folder)
     }
 }

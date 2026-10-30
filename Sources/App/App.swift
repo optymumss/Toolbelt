@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     title: "Meeting follow-up",
                     fields: [("Name", "Sam"), ("Date", "Thursday")]) { _ in }
             case "settings-shelf": settings.show(tab: .module(.shelf))
+            case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()
             case "shelf-demo":

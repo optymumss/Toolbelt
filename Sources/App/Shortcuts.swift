@@ -80,10 +80,13 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
     /// Puts saved layout 1–9 back.
     case layout(Int)
     case newShelf
+    case dropGrid
+    /// Runs drop target 1–9 on the files selected in Finder (no default keys).
+    case dropTarget(Int)
     case snippetPicker
 
     static var allCases: [ShortcutAction] {
-        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + (1...9).map { .layout($0) } + [.newShelf, .snippetPicker]
+        [.clipboardHistory, .pasteNextFromStack, .openLauncher, .appSwitcher, .newNote] + WindowAction.allCases.map { .window($0) } + (1...9).map { .layout($0) } + [.newShelf, .dropGrid] + (1...9).map { .dropTarget($0) } + [.snippetPicker]
     }
 
     /// Stable name used to save the shortcut.
@@ -97,6 +100,8 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .window(let action): return "window.\(action.rawValue)"
         case .layout(let n): return "layout.\(n)"
         case .newShelf: return "newShelf"
+        case .dropGrid: return "dropGrid"
+        case .dropTarget(let n): return "dropTarget.\(n)"
         case .snippetPicker: return "snippetPicker"
         }
     }
@@ -113,6 +118,8 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .window(let action): return action.title
         case .layout(let n): return "Apply saved layout \(n)"
         case .newShelf: return "New shelf"
+        case .dropGrid: return "Show drop targets"
+        case .dropTarget(let n): return "Drop target \(n) (on Finder's selection)"
         case .snippetPicker: return "Find and insert a snippet"
         }
     }
@@ -122,7 +129,7 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .clipboardHistory, .pasteNextFromStack: return .clipboard
         case .openLauncher, .appSwitcher, .newNote: return .launcher
         case .window, .layout: return .windows
-        case .newShelf: return .shelf
+        case .newShelf, .dropGrid, .dropTarget: return .shelf
         case .snippetPicker: return .snippets
         }
     }
@@ -136,6 +143,8 @@ enum ShortcutAction: Hashable, CaseIterable, Identifiable {
         case .appSwitcher: return Shortcut(keyCode: kVK_Tab, modifiers: optionKey)
         case .newNote: return Shortcut(keyCode: kVK_ANSI_N, modifiers: ctrlOpt)
         case .newShelf: return Shortcut(keyCode: kVK_ANSI_S, modifiers: ctrlOpt)
+        case .dropGrid: return Shortcut(keyCode: kVK_ANSI_G, modifiers: ctrlOpt | cmdKey)
+        case .dropTarget: return nil
         case .snippetPicker: return Shortcut(keyCode: kVK_ANSI_Semicolon, modifiers: ctrlOpt)
         case .layout(let n):
             return Shortcut(keyCode: [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,

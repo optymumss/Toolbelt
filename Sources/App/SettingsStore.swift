@@ -189,6 +189,21 @@ enum Prefs {
         set { store.set(newValue, for: "shelf.copy") }
     }
 
+    static var shelfEdge: ShelfEdge {
+        get { ShelfEdge(rawValue: store.value("shelf.edge", default: ShelfEdge.notch.rawValue)) ?? .notch }
+        set { store.set(newValue.rawValue, for: "shelf.edge") }
+    }
+
+    static var shelfCatchScreenshots: Bool {
+        get { store.value("shelf.screenshots", default: true) }
+        set { store.set(newValue, for: "shelf.screenshots") }
+    }
+
+    static var shelfWatchedFolders: [String] {
+        get { store.value("shelf.watched", default: [String]()) }
+        set { store.set(newValue, for: "shelf.watched") }
+    }
+
     // Snippets
 
     static var snippetsExpandWhileTyping: Bool {
