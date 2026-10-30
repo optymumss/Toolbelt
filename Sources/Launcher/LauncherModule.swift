@@ -12,6 +12,10 @@ final class LauncherModule: ToolbeltModule {
     let apps = AppsProvider()
     let quicklinks = QuicklinksProvider()
     let commands = SystemCommandsProvider()
+    let switcher = SwitcherProvider()
+    let usage = LauncherUsage()
+    let notes = NotesController(store: NotesStore())
+    private(set) lazy var notesProvider = NotesLauncherProvider(controller: notes)
     private(set) var panel: LauncherPanelController!
     private weak var modules: ModuleManager?
     private let shortcuts: ShortcutCenter
@@ -24,16 +28,23 @@ final class LauncherModule: ToolbeltModule {
             SystemCommand(name: "Quit Toolbelt", keywords: ["quit"], symbol: "xmark.circle") { NSApp.terminate(nil) },
         ]
         let model = LauncherModel { [weak self] in self?.providers() ?? [] }
+        model.usage = usage
         panel = LauncherPanelController(model: model)
 
         shortcuts.setHandler(for: .openLauncher) { [weak self] in
             self?.panel.toggle()
         }
+        shortcuts.setHandler(for: .appSwitcher) { [weak self] in
+            self?.openSwitcher()
+        }
+        shortcuts.setHandler(for: .newNote) { [weak self] in
+            self?.notes.newNote()
+        }
     }
 
     /// Everything one search reaches. Other modules join through `launcherProvider`.
     func providers() -> [LauncherProvider] {
-        var list: [LauncherProvider] = [calculator, quicklinks, commands, apps]
+        var list: [LauncherProvider] = [calculator, quicklinks, commands, apps, notesProvider]
         if let modules {
             for module in modules.modules where module.id != .launcher && modules.isRunning(module.id) {
                 if module.id == .clipboard, !Prefs.launcherSearchClipboard { continue }
@@ -45,10 +56,17 @@ final class LauncherModule: ToolbeltModule {
 
     func start() {
         apps.refreshIfNeeded()
+        notes.showAll()
     }
 
     func stop() {
         panel.hide()
+        notes.hideAll()
+    }
+
+    /// The app and window switcher (⌥⇥).
+    func openSwitcher() {
+        if panel.isVisible { panel.hide() } else { panel.show(switcher: switcher) }
     }
 
     func open() {
@@ -59,7 +77,12 @@ final class LauncherModule: ToolbeltModule {
         panel.show(query: query)
     }
 
-    func menuItems() -> [NSMenuItem] { [] }
+    func menuItems() -> [NSMenuItem] {
+        [
+            ActionMenuItem("Switch Apps and Windows…") { [weak self] in self?.openSwitcher() },
+            ActionMenuItem("New Floating Note") { [weak self] in self?.notes.newNote() },
+        ]
+    }
 
     func settingsView() -> AnyView {
         AnyView(LauncherSettingsTab(shortcuts: shortcuts))

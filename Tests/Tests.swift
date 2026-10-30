@@ -46,6 +46,7 @@ enum ToolbeltTests {
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
+        t.group("Launcher: recently used, switcher and notes", LauncherNextTests.run)
         t.group("Settings backup", BackupTests.run)
         t.group("Services menu and right-click", ServicesTests.run)
         t.group("Whole app: using Toolbelt like a person would", EndToEndTests.run)
@@ -1412,6 +1413,32 @@ enum EndToEndTests {
         check(calculator != nil, "typing calculator and Return opens Calculator")
         calculator?.forceTerminate()
 
+        // 4b. App switcher: ⌥⇥, type, ⌘H hides; ⌥⇥, type, Return brings it back
+        focusTextEdit()
+        let beforeSwitcher = windowCount(of: pid)
+        press(kVK_Tab, .maskAlternate)
+        spin(1)
+        check(windowCount(of: pid) > beforeSwitcher, "⌥⇥ opens the app switcher")
+        type("textedit")
+        spin(0.6)
+        press(kVK_ANSI_H, .maskCommand)
+        spin(1)
+        check(textEdit.isHidden, "⌘H in the switcher hides the chosen app")
+        press(kVK_Escape)
+        press(kVK_Tab, .maskAlternate)
+        spin(1)
+        type("textedit")
+        spin(0.6)
+        press(kVK_Return)
+        spin(1.5)
+        check(!textEdit.isHidden && textEdit.isActive, "Return in the switcher brings it back to the front")
+
+        // 4c. Floating note
+        let beforeNote = windowCount(of: pid)
+        press(kVK_ANSI_N, [.maskControl, .maskAlternate])
+        spin(1)
+        check(windowCount(of: pid) > beforeNote, "⌃⌥N opens a new floating note")
+
         // 5. Shelf shortcut
         focusTextEdit()
         let windowsBefore = windowCount(of: pid)
@@ -1650,5 +1677,72 @@ enum ImageTextTests {
         var item = ClipItem(kind: .image, hash: "ocr")
         item.ocrText = text
         check(PanelModel.matches(item, "invoice overdue"), "so the image can be found by searching for its words")
+    }
+}
+
+// MARK: - Launcher [Next]
+
+@MainActor
+enum LauncherNextTests {
+    static func run() {
+        let usage = LauncherUsage()
+        checkEqual(usage.boost(for: "never-used"), 0, "results you've never picked get no boost")
+        usage.record("app:/Applications/Notes.app")
+        usage.record("app:/Applications/Notes.app")
+        check(usage.boost(for: "app:/Applications/Notes.app") > 15, "results you pick often and recently get a boost")
+        let longAgo = Date().addingTimeInterval(-30 * 86_400)
+        let stale = LauncherUsage()
+        stale.record("old", now: longAgo)
+        check(stale.boost(for: "old") < usage.boost(for: "app:/Applications/Notes.app"), "the boost fades over time")
+
+        let model = LauncherModel { [StaticProvider([
+            LauncherResult(id: "pages", title: "Pages", kind: "Test", icon: .symbol("a"), score: 80) {},
+            LauncherResult(id: "preview", title: "Preview", kind: "Test", icon: .symbol("b"), score: 80) {},
+        ])] }
+        model.usage = LauncherUsage()
+        model.query = "p"
+        checkEqual(model.results.first?.title, "Pages", "equal matches keep their order at first")
+        model.usage?.record("preview")
+        model.usage?.record("preview")
+        model.query = "pr"
+        model.query = "p"
+        checkEqual(model.results.first?.title, "Preview", "recently used comes first")
+        checkEqual(LauncherUsage().uses["preview"]?.count, 2, "what you use is remembered")
+
+        // Switcher
+        let switcher = SwitcherProvider()
+        let all = switcher.results(for: "")
+        check(all.contains { $0.title == "Finder" && $0.kind == "Running" }, "the switcher lists running apps before you type")
+        check(all.first { $0.title == "Finder" }?.extraActions["h"] != nil, "with hide and quit available")
+        check(!all.contains { $0.title == "ToolbeltTests" }, "but not Toolbelt itself")
+        if AXIsProcessTrusted() {
+            NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()))
+            spin(2)
+            let windows = switcher.results(for: "finder")
+            check(windows.contains { $0.kind == "Window" && $0.extraActions["w"] != nil }, "and their windows, which ⌘W can close")
+            if let finderWindow = windows.first(where: { $0.kind == "Window" }) {
+                finderWindow.extraActions["w"]?()
+                spin(1)
+            }
+        }
+        model.switcher = switcher
+        model.query = ""
+        check(!model.results.isEmpty, "the launcher in switcher mode shows everything straight away")
+
+        // Notes
+        let notes = NotesController(store: NotesStore())
+        for note in notes.store.notes { notes.delete(note.id) }
+        let id = notes.newNote(text: "Remember the milk")
+        checkEqual(notes.store.notes.count, 1, "a new floating note is made")
+        check(notes.openWindowCount >= 1, "and shown on screen")
+        notes.store.update(id) { $0.text = "Remember the milk and eggs" }
+        checkEqual(NotesStore().notes.first?.text, "Remember the milk and eggs", "notes are saved as you type")
+        notes.newNote(text: "Second note")
+        checkEqual(notes.store.notes.count, 2, "you can have as many notes as you like")
+        let provider = NotesLauncherProvider(controller: notes)
+        check(provider.results(for: "new note").contains { $0.title == "New Floating Note" }, "the launcher can make a new note")
+        check(provider.results(for: "milk").contains { $0.title == "Remember the milk and eggs" }, "and find notes by what's in them")
+        for note in notes.store.notes { notes.delete(note.id) }
+        checkEqual(NotesStore().notes.count, 0, "deleted notes are gone")
     }
 }

@@ -91,6 +91,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + Double(tabs.count) * 0.4 + 0.5) { [self] in settings.close() }
             case "settings-launcher": settings.show(tab: .module(.launcher))
+            case "launcher-switcher": (modules.module(.launcher) as? LauncherModule)?.openSwitcher()
+            case "notes-demo":
+                guard let launcher = modules.module(.launcher) as? LauncherModule else { break }
+                launcher.notes.newNote(text: "Call the bank about the mortgage\n\n– ask about fixed rates\n– bring payslips")
+                let second = launcher.notes.newNote(text: "Ideas for the weekend\n• Kew Gardens\n• Borough Market")
+                launcher.notes.store.update(second) { $0.x = 700; $0.y = 300 }
             case "settings-windows": settings.show(tab: .module(.windows))
             case "settings-snippets": settings.show(tab: .module(.snippets))
             case "settings-shelf": settings.show(tab: .module(.shelf))

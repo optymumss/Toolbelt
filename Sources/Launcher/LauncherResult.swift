@@ -18,6 +18,8 @@ struct LauncherResult: Identifiable {
     /// Files and apps can also be shown in Finder with ⌘↩.
     var revealURL: URL? = nil
     let action: @MainActor () -> Void
+    /// More actions on ⌘ + a key, for example "q" (quit), "h" (hide) and "w" (close window).
+    var extraActions: [Character: @MainActor () -> Void] = [:]
 }
 
 /// Something the launcher can search: apps, commands, a module's own items…
