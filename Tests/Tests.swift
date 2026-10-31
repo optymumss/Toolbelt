@@ -3205,7 +3205,7 @@ enum VideoStreamTests {
             return manager.item(item.id)
         }
         let picked = stream("/v1080/index.m3u8", "Test stream (1080p).mp4", cookie: true)
-        checkEqual(picked?.state, .completed, "a streamed video downloads at the size picked", picked?.error ?? "")
+        check(picked?.state == .completed, "a streamed video downloads at the size picked", picked?.error ?? "")
         checkEqual(picked?.finalPath, folder.appendingPathComponent("Test stream (1080p).mp4").path, "as one .mp4 named after its size")
         if let path = picked?.finalPath {
             let facts = inspect(URL(fileURLWithPath: path))
@@ -3241,7 +3241,7 @@ enum VideoStreamTests {
             manager.applyLimits()
             manager.resume(item.id)
             _ = DownloadTests.waitFor(60) { manager.item(item.id)?.state == .completed || manager.item(item.id)?.state == .failed }
-            checkEqual(manager.item(item.id)?.state, .completed, "a paused streamed video carries on and finishes", manager.item(item.id)?.error ?? "")
+            check(manager.item(item.id)?.state == .completed, "a paused streamed video carries on and finishes", manager.item(item.id)?.error ?? "")
             let after = server.requests.filter { $0.hasPrefix("/v720/seg") }.count
             check(after - before <= 2, "without fetching every piece again", "\(before) then \(after)")
         }
