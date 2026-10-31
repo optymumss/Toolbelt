@@ -5,10 +5,13 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
 1. **Build** — `build.sh` (optimised, whole-module).
 2. **Automated tests** — `test.sh` runs `Tests/Tests.swift`: logic tests against the real code, plus
    *end-to-end* tests that start the real app and use it with real key presses in TextEdit and Calculator.
-3. **Battery check** — `.github/scripts/energy.sh` leaves the app idle with every module on (and again
+3. **Disk image** — `package.sh` packs `Toolbelt.dmg`; `.github/scripts/dmg.sh` opens it, checks the app,
+   the Applications shortcut, the Chrome helper and the signature are inside, and starts the app from it.
+   On `main` the DMG is attached to the GitHub release for its version.
+4. **Battery check** — `.github/scripts/energy.sh` leaves the app idle with every module on (and again
    after opening every Settings tab) and fails if it uses more than 1% of a CPU core or wakes the
    processor more than 15 times a second.
-4. **Screenshots** — `.github/scripts/screenshots.sh` opens every screen, fails if the app crashes, and
+5. **Screenshots** — `.github/scripts/screenshots.sh` opens every screen, fails if the app crashes, and
    publishes the pictures to the `ci-screenshots` branch, where they're checked by eye.
 
 Some things need a person: they depend on hardware or on permissions a test machine can't grant.
@@ -27,6 +30,7 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | App | Pause Toolbelt | Tests "Modules" |
 | App | Settings kept in Application Support, migrated from 0.1 | Tests "Settings" |
 | App | Battery use while idle | Battery check |
+| App | DMG install (opens, holds the app, app starts from it) | Disk image check; **Manual** for the first-open "Open Anyway" step |
 | Clipboard | Records text, links, images, screenshots, Finder files | Tests "Clipboard recording", "Images, links and iPhone copies" |
 | Clipboard | iPhone/iPad (Universal Clipboard) copies | Tests "Images, links and iPhone copies"; **Manual** with a real iPhone |
 | Clipboard | No duplicates, source app and time | Tests "Clipboard history" |
@@ -105,6 +109,7 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Gestures | Rules for certain apps only / except | Tests (only, except, app rule wins) |
 | Gestures | Actions: Toolbelt commands, shell, AppleScript, open, keys, text, Mac controls | Tests (command, shell, AppleScript, addresses); end-to-end (shell, type text) |
 | Gestures | Listens only while a rule needs it | Tests (tap starts and stops with the rules); battery check |
+| Gestures | Trackpad reader status in Settings; nonsense touch data is ignored, not acted on | Tests "Gestures: trackpad, mouse and keys" |
 | Automation | Trigger: keyboard shortcut | End-to-end: ⌃⌥⌘M runs a macro in the real app |
 | Automation | Trigger: typed text, gesture | End-to-end: typing ;;m runs a macro (through the Gestures module) |
 | Automation | Trigger: key on another keyboard or device | **Manual** (needs a second keyboard; CI Macs have none) |

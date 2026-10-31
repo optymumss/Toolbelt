@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -42,7 +42,10 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Building
 
 - No Xcode project: `build.sh` compiles every file under `Sources/` with `swiftc`; `install.sh` builds,
-  copies to /Applications and launches. Keep `install.sh` a single command.
+  copies to /Applications and launches. Keep `install.sh` a single command. `package.sh` packs
+  `build/Toolbelt.dmg` (app + Applications shortcut); CI opens it and starts the app from it
+  (`.github/scripts/dmg.sh`), and on main attaches it to the release `v<CFBundleShortVersionString>` —
+  bump the version in `Info.plist` for each new release.
 - Development happens on Linux without a Swift/macOS SDK, so the GitHub Actions workflow
   (`.github/workflows/build.yml`, macOS runner) is the test environment. Keep it green.
   macOS minutes count 10× against the account's allowance, so: pull requests only build and test;

@@ -29,6 +29,44 @@ final class MultitouchReader: @unchecked Sendable {
     var isAvailable: Bool { load() }
     var deviceCount: Int { lock.lock(); defer { lock.unlock() }; return devices.count }
 
+    private var started = false
+    /// Frames in a row whose data didn't make sense (see `readTouches`).
+    private var badFramesInARow = 0
+    /// Set when macOS's touch data stops making sense, for example after a macOS update changed
+    /// its layout. Touch gestures then stop, rather than fire at random.
+    private(set) var dataLooksWrong = false
+    static let badFramesAllowed = 10
+
+    enum Status: Equatable {
+        case unavailable, notNeeded, noDevices, working(devices: Int), unreadable
+
+        var text: String {
+            switch self {
+            case .unavailable:
+                return "Trackpad reader: not available on this version of macOS. Trackpad and Magic Mouse gestures are off; everything else works."
+            case .notNeeded:
+                return "Trackpad reader: ready (it starts when you add a trackpad or Magic Mouse gesture)."
+            case .noDevices:
+                return "Trackpad reader: working, but no trackpad or Magic Mouse is connected."
+            case .working(let devices):
+                return "Trackpad reader: working (\(devices) device\(devices == 1 ? "" : "s"))."
+            case .unreadable:
+                return "Trackpad reader: macOS's touch data doesn't look right on this version of macOS, so trackpad and Magic Mouse gestures are paused. Everything else works. A Toolbelt update will fix it."
+            }
+        }
+
+        var isProblem: Bool { self == .unavailable || self == .unreadable }
+    }
+
+    var status: Status {
+        guard load() else { return .unavailable }
+        lock.lock()
+        defer { lock.unlock() }
+        if dataLooksWrong { return .unreadable }
+        if !started { return .notNeeded }
+        return devices.isEmpty ? .noDevices : .working(devices: devices.count)
+    }
+
     private func load() -> Bool {
         if handle != nil { return true }
         handle = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_LAZY)
@@ -43,6 +81,7 @@ final class MultitouchReader: @unchecked Sendable {
     func start() {
         lock.lock()
         defer { lock.unlock() }
+        started = true
         guard devices.isEmpty, load(),
               let list = symbol("MTDeviceCreateList", as: DeviceList.self),
               let register = symbol("MTRegisterContactFrameCallback", as: Register.self),
@@ -64,6 +103,7 @@ final class MultitouchReader: @unchecked Sendable {
 
     func stop() {
         lock.lock()
+        started = false
         let stopping = devices
         devices = []
         recognizers = [:]
@@ -79,24 +119,49 @@ final class MultitouchReader: @unchecked Sendable {
     fileprivate func frame(device: UnsafeMutableRawPointer?, touches: UnsafeMutableRawPointer?, count: Int32, time: Double) {
         guard let device else { return }
         var points: [TouchPoint] = []
-        if let touches, count > 0 {
-            // Each touch record is 96 bytes; its state is at byte 20, its id at 16, and its
-            // position (0–1) at bytes 32 and 36.
-            for index in 0..<Int(min(count, 11)) {
-                let record = touches + index * 96
-                let state = record.load(fromByteOffset: 20, as: Int32.self)
-                guard state >= 3, state <= 5 else { continue } // in contact (not hovering or lifting)
-                points.append(TouchPoint(id: Int(record.load(fromByteOffset: 16, as: Int32.self)),
-                                         x: Double(record.load(fromByteOffset: 32, as: Float.self)),
-                                         y: Double(record.load(fromByteOffset: 36, as: Float.self))))
+        if count > 0 {
+            guard let touches, let read = Self.readTouches(UnsafeRawPointer(touches), count: Int(count)) else {
+                noteBadFrame()
+                return
             }
+            points = read
         }
         lock.lock()
-        let gesture = recognizers[device]?.feed(points, at: time)
+        badFramesInARow = 0
+        let gesture = dataLooksWrong ? nil : recognizers[device]?.feed(points, at: time)
         lock.unlock()
         if let gesture {
             DispatchQueue.main.async { [weak self] in self?.onGesture?(gesture) }
         }
+    }
+
+    private func noteBadFrame() {
+        lock.lock()
+        badFramesInARow += 1
+        if badFramesInARow >= Self.badFramesAllowed { dataLooksWrong = true }
+        lock.unlock()
+    }
+
+    /// Reads the fingers in contact from one frame of touch records, or nil if the data doesn't
+    /// make sense (which would mean macOS changed its layout). Each record is 96 bytes: its id is at
+    /// byte 16, its state at 20, and its position (0–1) at 32 and 36.
+    static func readTouches(_ touches: UnsafeRawPointer, count: Int) -> [TouchPoint]? {
+        guard count > 0, count < 64 else { return nil } // a misread count would be huge or negative
+        var points: [TouchPoint] = []
+        for index in 0..<min(count, 11) {
+            let record = touches + index * 96
+            let id = record.loadUnaligned(fromByteOffset: 16, as: Int32.self)
+            let state = record.loadUnaligned(fromByteOffset: 20, as: Int32.self)
+            let x = Double(record.loadUnaligned(fromByteOffset: 32, as: Float.self))
+            let y = Double(record.loadUnaligned(fromByteOffset: 36, as: Float.self))
+            // States run from 0 (not tracking) to 7 (out of range); ids are small numbers.
+            guard (0...7).contains(state), (0..<1000).contains(id) else { return nil }
+            guard state >= 3, state <= 5 else { continue } // in contact (not hovering or lifting)
+            // A finger on the surface is somewhere between 0 and 1 across and up.
+            guard x.isFinite, y.isFinite, (-0.05...1.05).contains(x), (-0.05...1.05).contains(y) else { return nil }
+            points.append(TouchPoint(id: Int(id), x: x, y: y))
+        }
+        return points
     }
 
     /// The gesture for a click happening now (several fingers, or one finger in a corner).
