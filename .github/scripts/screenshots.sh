@@ -117,6 +117,7 @@ SCREENS=(
     "triggers=triggers"
     "trigger-conditions=trigger-conditions"
     "trigger-group=trigger-group"
+    "trigger-keys=trigger-keys"
     "macros=macros"
     "settings-automation=settings-automation"
     "launcher-switcher=launcher-switcher"

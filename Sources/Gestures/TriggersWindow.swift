@@ -95,9 +95,11 @@ final class TriggersWindowController {
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Triggers"
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 1080, height: 600)
+        window.contentMinSize = NSSize(width: 980, height: 560)
         window.contentViewController = NSHostingController(rootView: TriggersView(module: module, store: module.store, state: state))
-        window.setContentSize(NSSize(width: 1240, height: 720))
+        // As big as fits: smaller screens get a smaller window rather than one running off the edge.
+        let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        window.setContentSize(NSSize(width: min(1240, screen.width - 40), height: min(720, screen.height - 40)))
         window.center()
         window.setFrameAutosaveName("ToolbeltTriggers")
     }
@@ -115,18 +117,18 @@ struct TriggersView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 200)
+            sidebar.frame(width: 190)
             Divider()
             VStack(spacing: 0) {
                 categoryBar
                 Divider()
                 triggerList
             }
-            .frame(minWidth: 320)
+            .frame(minWidth: 280)
             Divider()
-            actionsColumn.frame(minWidth: 280)
+            actionsColumn.frame(minWidth: 240)
             Divider()
-            settingsColumn.frame(width: 300)
+            settingsColumn.frame(width: 280)
         }
         .sheet(isPresented: Binding(get: { state.editingGroup != nil }, set: { if !$0 { state.editingGroup = nil } })) {
             if let id = state.editingGroup, let index = store.groups.firstIndex(where: { $0.id == id }) {
@@ -242,22 +244,26 @@ struct TriggersView: View {
 
     // MARK: Column 2: the triggers
 
+    @ViewBuilder
     private var categoryBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(TriggerCategory.allCases) { category in
                 Button { state.category = category } label: {
                     Image(systemName: category.symbol)
-                        .frame(width: 30, height: 24)
+                        .frame(width: 28, height: 24)
                         .background(state.category == category ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.borderless)
                 .help(category.title)
             }
-            Spacer()
-            Text(state.category.title).font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.top, 8)
+        Text(state.category.title).font(.caption).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
     }
 
     private var shownRules: [GestureRule] {

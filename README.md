@@ -1,9 +1,22 @@
-# Toolbelt — v0.23
+# Toolbelt — v0.24
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.24: key up, long hold, repeat, left/right keys, more trackpad gestures
+In the Triggers window:
+- **Actions for other moments.** Under a trigger's actions, **Add Action For Another Moment**:
+  - keyboard shortcuts: on key release, on a long hold, on a quick release, on release after a long hold, after all modifier keys are let go (e.g. middle-click down on press and up on release);
+  - trackpad and Magic Mouse gestures: when the fingers lift.
+- **Repeat while held** (Basic tab): keep running the actions while the keys are held, or while the fingers stay down, with sliders for how many times a second and how long before the first repeat.
+- **Tell left and right modifier keys apart:** e.g. right ⌘ + Space can do something different from left ⌘ + Space. Record the shortcut with the side you want.
+- **Follow the keyboard layout:** the shortcut stays on the same letter if you switch layouts.
+- These shortcut options need Toolbelt to watch the keyboard: macOS asks for **Input Monitoring** and **Accessibility** the first time.
+- **More trackpad gestures:** touch start (the moment that many fingers touch), long touch (hold them still), two-to-five-finger taps near the top or bottom, and **Force Click** (experimental: tell me if it doesn't react on your MacBook).
+- **Live View:** a trackpad gesture's settings show your fingers on the trackpad as dots, live.
+- The Triggers window now fits smaller screens.
 
 ## What's new in 0.23: the Triggers window and conditions (like BetterTouchTool)
 - **One window for every trigger:** menu bar icon → **Triggers…** (or Settings → Gestures → Open the Triggers Window). Four columns, left to right:

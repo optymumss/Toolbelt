@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -40,6 +40,9 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   settings), `Conditions` (`ConditionGroup` all/any/none, nested `ConditionNode`s, `ActivationGroup`,
   `ConditionContext.current()` built only when a matching rule needs it). `GestureRule.matches` picks the most
   specific rule (condition > group > app > everywhere) plus `parallel` ones. `HUD` (Sources/App) shows messages.
+  Shortcuts with phase actions/repeat/sides/layout (`needsKeyWatching`) go through an active key tap
+  (`GestureEventTap.watchTap` → `GesturesModule.keyEvent`), others through Carbon hot keys. `TriggerPhase` actions;
+  touch "fingers lift" via `MultitouchReader.onLift`; Force Click via pressure events (type 34) in the mouse tap.
 - `Chrome/` — the Chrome extension (Manifest V3, loaded unpacked; its fixed ID comes from the `key`).
   `Bridge/main.swift` — `ToolbeltBridge`, the native-messaging helper Chrome starts; it writes requests into
   `<data>/inbox/`, which `BrowserInbox` watches. `build.sh` builds both into the app bundle.
