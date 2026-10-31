@@ -190,6 +190,10 @@ struct GesturesSettingsTab: View {
             } header: {
                 Text("Gestures")
             } footer: {
+                let reader = MultitouchReader.shared.status
+                Label(reader.text, systemImage: reader.isProblem ? "exclamationmark.triangle" : "hand.point.up.left")
+                    .font(.caption)
+                    .foregroundStyle(reader.isProblem ? Color.orange : Color.secondary)
                 Text("Trackpad and Magic Mouse gestures work alongside macOS's own; switch off any of macOS's you replace in System Settings → Trackpad. Mouse buttons and strokes need Accessibility; key taps and typed sequences need Input Monitoring. Toolbelt only listens while a gesture needs it.")
                     .font(.caption).foregroundStyle(.secondary)
             }

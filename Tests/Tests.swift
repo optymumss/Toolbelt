@@ -1704,7 +1704,40 @@ enum GestureTests {
         points.enumerated().map { TouchPoint(id: $0.offset, x: $0.element.0, y: $0.element.1) }
     }
 
+    /// Raw touch records laid out the way macOS hands them over (96 bytes each).
+    static func records(_ touches: [(id: Int32, state: Int32, x: Float, y: Float)]) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: max(1, touches.count) * 96)
+        bytes.withUnsafeMutableBytes { raw in
+            for (index, touch) in touches.enumerated() {
+                raw.storeBytes(of: touch.id, toByteOffset: index * 96 + 16, as: Int32.self)
+                raw.storeBytes(of: touch.state, toByteOffset: index * 96 + 20, as: Int32.self)
+                raw.storeBytes(of: touch.x, toByteOffset: index * 96 + 32, as: Float.self)
+                raw.storeBytes(of: touch.y, toByteOffset: index * 96 + 36, as: Float.self)
+            }
+        }
+        return bytes
+    }
+
+    static func read(_ touches: [(id: Int32, state: Int32, x: Float, y: Float)], count: Int? = nil) -> [TouchPoint]? {
+        let bytes = records(touches)
+        return bytes.withUnsafeBytes { MultitouchReader.readTouches($0.baseAddress!, count: count ?? touches.count) }
+    }
+
     static func run() {
+        // Reading raw touch data: good frames give fingers, nonsense is refused
+        checkEqual(read([(1, 4, 0.25, 0.5), (2, 4, 0.75, 0.5)]), [TouchPoint(id: 1, x: 0.25, y: 0.5), TouchPoint(id: 2, x: 0.75, y: 0.5)],
+                   "two fingers on the trackpad are read")
+        checkEqual(read([(1, 4, 0.5, 0.5), (2, 1, 0.9, 0.9), (3, 6, 0.1, 0.1)])?.map(\.id), [1],
+                   "hovering and lifting fingers are left out")
+        check(read([(1, 4, 5, 0.5)]) == nil, "a position far outside the trackpad is refused")
+        check(read([(1, 4, .nan, 0.5)]) == nil, "a position that isn't a number is refused")
+        check(read([(1, 42, 0.5, 0.5)]) == nil, "an unknown touch state is refused")
+        check(read([(-7, 4, 0.5, 0.5)]) == nil, "a nonsense touch id is refused")
+        check(read([(1, 4, 0.5, 0.5)], count: 5000) == nil, "a nonsense finger count is refused")
+        check(MultitouchReader.Status.unreadable.isProblem && !MultitouchReader.Status.working(devices: 1).isProblem,
+              "bad touch data is shown as a problem in Settings")
+        check(MultitouchReader.Status.working(devices: 2).text.contains("working (2 devices)"), "the reader's status reads well")
+
         // Trackpad: taps, swipes and pinches from made-up touches
         var pad = TouchRecognizer(source: .trackpad)
         let three = [(0.4, 0.5), (0.5, 0.52), (0.6, 0.5)]

@@ -2,9 +2,9 @@ name: Build
 
 # macOS minutes count ten times against the account's GitHub Actions allowance, so each run does
 # only what it needs to:
-# - pull requests: build and run every test (about 5 minutes);
+# - pull requests: build, run every test and check the DMG opens (about 5 minutes);
 # - main, after a merge, and "Run workflow" by hand: also the battery check and screenshots
-#   (and the Chrome test, where present);
+#   (and the Chrome test, where present), and main attaches Toolbelt.dmg to a release;
 # - changes to documentation only don't start a run, and a newer push to the same branch
 #   stops the older run.
 on:
@@ -44,6 +44,22 @@ jobs:
         run: set -e; for f in Chrome/*.js; do node --check "$f"; echo "✓ $f"; done
       - name: Run automated tests
         run: bash test.sh
+      - name: Pack Toolbelt.dmg
+        run: bash package.sh
+      - name: Open the DMG and start the app from it
+        run: bash .github/scripts/dmg.sh
+      - name: Attach Toolbelt.dmg to a release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist)"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" build/Toolbelt.dmg --clobber
+          else
+            gh release create "v$VERSION" build/Toolbelt.dmg --target "$GITHUB_SHA" --title "Toolbelt $VERSION" \
+              --notes "Download Toolbelt.dmg below, open it and drag Toolbelt onto Applications. See the README for the one-time \"Open Anyway\" step."
+          fi
       - name: Test the Chrome extension in Chrome
         if: env.FULL == 'true'
         run: bash .github/scripts/chrome.sh

@@ -1,9 +1,13 @@
-# Toolbelt — v0.14
+# Toolbelt — v0.19
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.19: install from a DMG
+- **Toolbelt.dmg:** download it, open it, drag Toolbelt onto Applications. No Terminal needed (see *Install* below).
+- **Gestures:** Settings → Gestures now says whether the trackpad reader is working. If a macOS update ever changes the touch data Toolbelt reads, trackpad and Magic Mouse gestures pause (and Settings says so) rather than firing at random.
 
 ## What's new in 0.14: more shelf
 
@@ -208,7 +212,19 @@ The first time you use **Empty Bin** or **Toggle Dark Mode**, macOS asks whether
 - **Light, dark, or match the system:** Settings → General → Appearance.
 - **Settings now live with your data** in `~/Library/Application Support/Toolbelt/settings.plist`. Your 0.1 settings are carried over automatically.
 
-## Install (about 5 minutes the first time)
+## Install from the DMG (easiest)
+
+1. Download **Toolbelt.dmg** from the latest release: https://github.com/optymumss/Toolbelt/releases/latest
+2. Double-click it. In the window that opens, drag **Toolbelt** onto **Applications**. Then eject the disk (the ⏏ next to "Toolbelt" in Finder's sidebar).
+3. Open Toolbelt from Applications. **The first time only**, macOS says "Apple could not verify Toolbelt is free of malware" (it isn't signed with a paid Apple developer account). Click **Done**, then go to **System Settings → Privacy & Security**, scroll down to the message about Toolbelt and click **Open Anyway**, then **Open Anyway** again and enter your password.
+
+A wrench-and-screwdriver icon shows up in your menu bar.
+
+**To update later:** quit Toolbelt (menu bar icon → Quit), download the new DMG and drag it onto Applications again, choosing **Replace**. You may need to do the Open Anyway step again, and macOS forgets the Accessibility, Input Monitoring and Screen Recording permissions: turn Toolbelt off and on again in those lists when asked.
+
+> Getting rid of the Open Anyway step needs Apple's notarization, which needs a paid Apple Developer account ($99 a year). It isn't needed for Toolbelt to work.
+
+## Install by building it yourself (about 5 minutes the first time)
 
 1. Unzip `Toolbelt.zip` (double-click it). You get a `Toolbelt` folder.
 2. Open **Terminal** (press ⌘Space, type *Terminal*, press Return).
