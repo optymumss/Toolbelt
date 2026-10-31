@@ -15,6 +15,7 @@ enum TouchSource: String, Codable, CaseIterable, Identifiable {
 enum TouchKind: String, Codable, CaseIterable, Identifiable {
     case tap, click, swipeLeft, swipeRight, swipeUp, swipeDown, pinchIn, pinchOut
     case cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight
+    case doubleTap, scrollLeft, scrollRight, scrollUp, scrollDown
 
     var id: String { rawValue }
 
@@ -32,10 +33,17 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         case .cornerTopRight: return "Click top-right corner"
         case .cornerBottomLeft: return "Click bottom-left corner"
         case .cornerBottomRight: return "Click bottom-right corner"
+        case .doubleTap: return "Double tap"
+        case .scrollLeft: return "Scroll left (repeats while sliding)"
+        case .scrollRight: return "Scroll right (repeats while sliding)"
+        case .scrollUp: return "Scroll up (repeats while sliding)"
+        case .scrollDown: return "Scroll down (repeats while sliding)"
         }
     }
 
     var isCorner: Bool { rawValue.hasPrefix("corner") }
+    /// Fires again and again while the fingers keep sliding, rather than once per touch.
+    var isScroll: Bool { rawValue.hasPrefix("scroll") }
 }
 
 enum ModifierKey: String, Codable, CaseIterable, Identifiable {
@@ -125,6 +133,15 @@ enum Gesture: Codable, Hashable {
         }
     }
 
+    /// For a tap or a double tap: the double-tap gesture with the same key or fingers.
+    var doubleTapVersion: Gesture? {
+        switch self {
+        case let .modifierTap(key, _): return .modifierTap(key, taps: 2)
+        case let .touch(source, .tap, fingers), let .touch(source, .doubleTap, fingers): return .touch(source, .doubleTap, fingers: fingers)
+        default: return nil
+        }
+    }
+
     /// Whether this rule's gesture is met by what happened.
     func accepts(_ event: Gesture) -> Bool {
         switch (self, event) {
@@ -148,7 +165,9 @@ struct TouchPoint: Equatable {
 }
 
 /// Turns the stream of touches from one trackpad or Magic Mouse into taps, swipes and pinches.
-/// Each gesture fires once per touch: from the first finger down to the last finger up.
+/// Taps, swipes and pinches fire once per touch: from the first finger down to the last finger up.
+/// Scrolls (when `scrolls` is on) fire once for every `scrollStep` the fingers slide, for as long
+/// as they keep sliding, and in the other direction when they slide back.
 struct TouchRecognizer {
     let source: TouchSource
     /// How far (0–1 of the surface) the fingers must move together for a swipe.
@@ -156,6 +175,14 @@ struct TouchRecognizer {
     /// A tap is shorter than this and barely moves.
     var tapTime = 0.3
     var tapMovement = 0.035
+    /// A second tap with the same fingers starting this soon after the first one ends is a double tap.
+    var doubleTapGap = 0.35
+    /// Whether to report scrolls. Off, the recognizer behaves exactly as before scrolls existed.
+    var scrolls = false
+    /// How far the fingers slide for each scroll step (about 22 steps across the whole trackpad).
+    var scrollStep = 0.045
+    /// Movement before a scroll picks its direction (across or up and down) for the rest of the touch.
+    var scrollLock = 0.025
 
     private var started: Double?
     private var maxFingers = 0
@@ -163,6 +190,11 @@ struct TouchRecognizer {
     private var moved = 0.0
     private var fired = false
     private var countStart: (count: Int, centre: (Double, Double), spread: Double)?
+    /// Where the last scroll step was counted from, and whether scrolling goes across (true) or up and down.
+    private var scrollAnchor: (Double, Double)?
+    private var scrollAcross: Bool?
+    private var scrolled = false
+    private var lastTap: (fingers: Int, ended: Double)?
     /// The latest touches, for working out clicks with several fingers or in a corner.
     private(set) var current: [TouchPoint] = []
 
@@ -170,17 +202,28 @@ struct TouchRecognizer {
         self.source = source
     }
 
-    /// Feeds one frame of touches; returns a gesture if one was just completed.
+    /// Feeds one frame of touches; returns a gesture if one was just completed (the first, if several were).
     mutating func feed(_ touches: [TouchPoint], at time: Double) -> Gesture? {
+        feedAll(touches, at: time).first
+    }
+
+    /// Feeds one frame of touches; returns every gesture it completed, in order. A second tap
+    /// gives both a tap and a double tap; a quick slide can give several scroll steps.
+    mutating func feedAll(_ touches: [TouchPoint], at time: Double) -> [Gesture] {
         current = touches
         if touches.isEmpty {
             defer { reset() }
-            guard let started, !fired, maxFingers >= 1 else { return nil }
+            guard let started, !fired, !scrolled, maxFingers >= 1 else { return [] }
             let short = time - started <= tapTime
-            if short, moved <= tapMovement {
-                return .touch(source, .tap, fingers: maxFingers)
+            guard short, moved <= tapMovement else { return [] }
+            var gestures: [Gesture] = [.touch(source, .tap, fingers: maxFingers)]
+            if let previous = lastTap, previous.fingers == maxFingers, started - previous.ended <= doubleTapGap {
+                gestures.append(.touch(source, .doubleTap, fingers: maxFingers))
+                lastTap = nil
+            } else {
+                lastTap = (maxFingers, time)
             }
-            return nil
+            return gestures
         }
         if started == nil { started = time }
         maxFingers = max(maxFingers, touches.count)
@@ -191,29 +234,55 @@ struct TouchRecognizer {
                 firstPositions[touch.id] = touch
             }
         }
-        guard !fired else { return nil }
 
         // Measure movement from when the number of fingers last changed.
         let centre = Self.centre(of: touches)
         let spread = Self.spread(of: touches, around: centre)
         guard let start = countStart, start.count == touches.count else {
             countStart = (touches.count, centre, spread)
-            return nil
+            scrollAnchor = centre
+            scrollAcross = nil
+            return []
         }
         let count = touches.count
+        var gestures = scrolls ? scrollSteps(at: centre, from: start.centre, fingers: count) : []
+        guard !fired else { return gestures }
+
         if count >= 2, start.spread > 0.02 {
             let ratio = spread / start.spread
             let travel = hypot(centre.0 - start.centre.0, centre.1 - start.centre.1)
             if travel < swipeDistance * 0.6 {
-                if ratio < 0.6 { fired = true; return .touch(source, .pinchIn, fingers: count) }
-                if ratio > 1.6 { fired = true; return .touch(source, .pinchOut, fingers: count) }
+                if ratio < 0.6 { fired = true; return gestures + [.touch(source, .pinchIn, fingers: count)] }
+                if ratio > 1.6 { fired = true; return gestures + [.touch(source, .pinchOut, fingers: count)] }
             }
         }
         let dx = centre.0 - start.centre.0, dy = centre.1 - start.centre.1
-        guard max(abs(dx), abs(dy)) >= swipeDistance else { return nil }
+        guard max(abs(dx), abs(dy)) >= swipeDistance else { return gestures }
         fired = true
         let kind: TouchKind = abs(dx) > abs(dy) ? (dx < 0 ? .swipeLeft : .swipeRight) : (dy > 0 ? .swipeUp : .swipeDown)
-        return .touch(source, kind, fingers: count)
+        return gestures + [.touch(source, kind, fingers: count)]
+    }
+
+    private mutating func scrollSteps(at centre: (Double, Double), from start: (Double, Double), fingers: Int) -> [Gesture] {
+        if scrollAcross == nil {
+            let dx = centre.0 - start.0, dy = centre.1 - start.1
+            guard max(abs(dx), abs(dy)) >= scrollLock else { return [] }
+            scrollAcross = abs(dx) > abs(dy)
+        }
+        guard let across = scrollAcross, var anchor = scrollAnchor else { return [] }
+        var gestures: [Gesture] = []
+        // At most a trackpad's width of steps in one frame, so a glitch can't run away.
+        for _ in 0..<30 {
+            let delta = across ? centre.0 - anchor.0 : centre.1 - anchor.1
+            guard abs(delta) >= scrollStep else { break }
+            let step = delta > 0 ? scrollStep : -scrollStep
+            if across { anchor.0 += step } else { anchor.1 += step }
+            let kind: TouchKind = across ? (step < 0 ? .scrollLeft : .scrollRight) : (step > 0 ? .scrollUp : .scrollDown)
+            gestures.append(.touch(source, kind, fingers: fingers))
+        }
+        scrollAnchor = anchor
+        if !gestures.isEmpty { scrolled = true }
+        return gestures
     }
 
     /// The gesture for a physical click right now: several fingers, or one finger in a corner.
@@ -239,6 +308,9 @@ struct TouchRecognizer {
         moved = 0
         fired = false
         countStart = nil
+        scrollAnchor = nil
+        scrollAcross = nil
+        scrolled = false
     }
 
     static func centre(of touches: [TouchPoint]) -> (Double, Double) {

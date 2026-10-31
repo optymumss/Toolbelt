@@ -110,6 +110,19 @@ enum ChromeSetup {
         if (try? Data(contentsOf: hostManifestURL())) != wanted {
             try? wanted.write(to: hostManifestURL(), options: .atomic)
         }
+        // A newer extension inside this copy of Toolbelt: update the folder Chrome loads it from.
+        // (Chrome picks it up when it next starts, or straight away with Reload on its Extensions page.)
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("ChromeExtension"),
+           extensionVersion(in: bundled) != nil, extensionVersion(in: bundled) != extensionVersion(in: extensionFolder) {
+            try? FileManager.default.removeItem(at: extensionFolder)
+            try? FileManager.default.copyItem(at: bundled, to: extensionFolder)
+        }
+    }
+
+    static func extensionVersion(in folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")),
+              let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return manifest["version"] as? String
     }
 
     /// Installs, then shows the folder and Chrome's extensions page with the steps to finish.

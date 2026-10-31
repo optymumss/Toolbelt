@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,6 +13,7 @@ final class DownloadsModule: ToolbeltModule {
     let notifier = DownloadNotifier()
     private(set) lazy var inbox = BrowserInbox { [weak self] request in self?.received(request) }
     private var window: NSWindow?
+    private var badgeWatcher: AnyCancellable?
 
     func start() {
         manager.onFinished = { [weak self] item in self?.notifier.finished(item) }
@@ -20,17 +22,38 @@ final class DownloadsModule: ToolbeltModule {
         ChromeSetup.refreshIfSetUp()
         inbox.start()
         manager.resumeInterrupted()
+        badgeWatcher = manager.$items.sink { items in
+            MenuBarBadge.shared.show(active: Self.isActive(items), progress: Self.progress(of: items))
+        }
+    }
+
+    static func isActive(_ items: [DownloadItem]) -> Bool { items.contains { $0.state == .downloading } }
+
+    /// How far all running downloads have got together, when their sizes are known.
+    static func progress(of items: [DownloadItem]) -> Double? {
+        let active = items.filter { $0.state == .downloading }
+        guard !active.isEmpty, active.allSatisfy({ ($0.total ?? 0) > 0 }) else { return nil }
+        let total = active.reduce(Int64(0)) { $0 + ($1.total ?? 0) }
+        return min(1, Double(active.reduce(Int64(0)) { $0 + $1.received }) / Double(total))
     }
 
     func stop() {
+        badgeWatcher = nil
+        MenuBarBadge.shared.show(active: false, progress: nil)
         inbox.stop()
         manager.stopAll()
         window?.orderOut(nil)
     }
 
     /// A link from the Chrome extension: download it and show the list, without taking the focus from Chrome.
+    /// From the video button the list stays hidden: progress shows next to the menu bar icon instead.
     func received(_ request: DownloadRequest) {
-        guard manager.add(request.url, name: request.name, headers: request.headers) != nil else { return }
+        guard manager.add(request.url, name: request.name, headers: request.headers,
+                          stream: request.kind == "hls", audio: request.audioUrl) != nil else { return }
+        if request.quiet == true {
+            MenuBarBadge.shared.flash()
+            return
+        }
         makeWindow()
         window?.orderFrontRegardless()
     }
@@ -104,9 +127,10 @@ final class DownloadsModule: ToolbeltModule {
         list.append(whenDone)
         if !active.isEmpty {
             let total = active.reduce(0.0) { $0 + $1.speed }
-            let status = NSMenuItem(title: "\(active.count) downloading · \(ByteFormat.speed(total))", action: nil, keyEquivalent: "")
-            status.isEnabled = false
-            list.append(status)
+            let progress = Self.progress(of: manager.items).map { " · \(Int($0 * 100))%" } ?? ""
+            list.insert(ActionMenuItem("Show Downloads — \(active.count) downloading\(progress) · \(ByteFormat.speed(total))") { [weak self] in
+                self?.open()
+            }, at: 0)
         }
         return list
     }

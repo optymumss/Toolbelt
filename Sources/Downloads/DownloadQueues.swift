@@ -219,11 +219,22 @@ struct DownloadRequest: Codable {
     var referrer: String?
     var cookies: String?
     var userAgent: String?
+    /// "hls" for a streamed video picked from the video button's list of sizes.
+    var kind: String?
+    var audioUrl: String?
+    /// From the video button: download quietly (progress shows in the menu bar) instead of showing the list.
+    var quiet: Bool?
 
     var headers: [String: String] {
         var headers: [String: String] = [:]
         if let cookies, !cookies.isEmpty { headers["Cookie"] = cookies }
-        if let referrer, !referrer.isEmpty { headers["Referer"] = referrer }
+        if let referrer, !referrer.isEmpty {
+            headers["Referer"] = referrer
+            // Video servers often check where the request comes from.
+            if kind == "hls", let url = URL(string: referrer), let scheme = url.scheme, let host = url.host {
+                headers["Origin"] = "\(scheme)://\(host)" + (url.port.map { ":\($0)" } ?? "")
+            }
+        }
         if let userAgent, !userAgent.isEmpty { headers["User-Agent"] = userAgent }
         return headers
     }

@@ -37,6 +37,12 @@ struct DownloadItem: Identifiable, Codable, Equatable {
     var headers: [String: String]? = nil
     /// The name was chosen (by the browser), so the server's name doesn't replace it.
     var nameIsFixed: Bool? = nil
+    /// "hls" for a streamed video (`url` is its playlist); nil for an ordinary file.
+    var kind: String? = nil
+    /// A streamed video's separate sound playlist, when it has one.
+    var audioURL: URL? = nil
+
+    var isStream: Bool { kind == "hls" }
 
     // Shown while downloading; not saved.
     var speed: Double = 0
@@ -44,6 +50,7 @@ struct DownloadItem: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers, nameIsFixed
+        case kind, audioURL
     }
 
     var progress: Double? {

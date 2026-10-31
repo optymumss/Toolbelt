@@ -16,6 +16,21 @@ final class GestureStore: ObservableObject {
         }
     }
 
+    /// Brightness and volume on the trackpad, and sleep, as asked for in place of BetterTouchTool.
+    /// Gestures that already have a rule are left as they are.
+    static let controlSet: [GestureRule] = [
+        GestureRule(gesture: .touch(.trackpad, .doubleTap, fingers: 4), action: .system(.brightnessUp)),
+        GestureRule(gesture: .touch(.trackpad, .scrollDown, fingers: 4), action: .system(.brightnessDown)),
+        GestureRule(gesture: .touch(.trackpad, .scrollLeft, fingers: 3), action: .system(.volumeDown)),
+        GestureRule(gesture: .touch(.trackpad, .scrollRight, fingers: 3), action: .system(.volumeUp)),
+        GestureRule(gesture: .touch(.trackpad, .swipeUp, fingers: 4), action: .system(.sleep)),
+    ]
+
+    func addControlSet() {
+        let new = Self.controlSet.filter { preset in !rules.contains { $0.gesture == preset.gesture } }
+        rules += new.map { var rule = $0; rule.id = UUID(); return rule }
+    }
+
     private func save() {
         do {
             try JSONEncoder().encode(rules).write(to: file, options: .atomic)
@@ -74,16 +89,19 @@ final class GesturesModule: ToolbeltModule {
         let rules = running ? allRules.filter(\.enabled) : []
         var needs = GestureEventTap.Needs()
         var touches = false
+        var scrolls = false
         for rule in rules {
             switch rule.gesture {
             case let .touch(_, kind, _):
                 touches = true
+                if kind.isScroll { scrolls = true }
                 if kind == .click || kind.isCorner { needs.clicks = true }
             case .mouseButton(let button): needs.buttons.insert(button)
             case .stroke(let button, _): needs.strokeButtons.insert(button)
             case .modifierTap, .keySequence: needs.keyboard = true
             }
         }
+        MultitouchReader.shared.setScrolls(scrolls)
         if touches { MultitouchReader.shared.start() } else { MultitouchReader.shared.stop() }
         let mouse = !needs.buttons.isEmpty || !needs.strokeButtons.isEmpty || needs.clicks
         if mouse, !PermissionGate.ensure(.accessibility, to: "use mouse gestures") {
@@ -101,12 +119,12 @@ final class GesturesModule: ToolbeltModule {
     @discardableResult
     func handle(_ gesture: Gesture) -> Bool {
         let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        // A single tap waits a moment when the same key also has a double-tap rule.
-        if case let .modifierTap(key, taps) = gesture {
-            if taps == 2 {
+        // A single tap waits a moment when the same key or fingers also have a double-tap rule.
+        if let double = gesture.doubleTapVersion {
+            if double == gesture {
                 pendingSingleTap?.cancel()
                 pendingSingleTap = nil
-            } else if GestureRule.match(.modifierTap(key, taps: 2), app: app, in: allRules) != nil {
+            } else if GestureRule.match(double, app: app, in: allRules) != nil {
                 guard let rule = GestureRule.match(gesture, app: app, in: allRules) else { return false }
                 let work = DispatchWorkItem { [weak self] in
                     MainActor.assumeIsolated { self?.run(rule, for: gesture) }
@@ -187,6 +205,8 @@ struct GesturesSettingsTab: View {
                     }
                 }
                 .fixedSize()
+                Button("Add Brightness, Volume and Sleep Gestures") { store.addControlSet() }
+                    .help("Four-finger double tap: brightness up · four-finger scroll down: brightness down · three-finger scroll left / right: volume down / up · four-finger swipe up: sleep")
             } header: {
                 Text("Gestures")
             } footer: {
@@ -194,7 +214,7 @@ struct GesturesSettingsTab: View {
                 Label(reader.text, systemImage: reader.isProblem ? "exclamationmark.triangle" : "hand.point.up.left")
                     .font(.caption)
                     .foregroundStyle(reader.isProblem ? Color.orange : Color.secondary)
-                Text("Trackpad and Magic Mouse gestures work alongside macOS's own; switch off any of macOS's you replace in System Settings → Trackpad. Mouse buttons and strokes need Accessibility; key taps and typed sequences need Input Monitoring. Toolbelt only listens while a gesture needs it.")
+                Text("Trackpad and Magic Mouse gestures work alongside macOS's own; switch off any of macOS's you replace in System Settings → Trackpad (for the four-finger set above: More Gestures → Mission Control and App Exposé off). A double tap makes a single tap with the same fingers wait a moment. Scrolls repeat while your fingers keep sliding; swipes happen once. Mouse buttons and strokes need Accessibility; key taps and typed sequences need Input Monitoring. Toolbelt only listens while a gesture needs it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -202,6 +222,8 @@ struct GesturesSettingsTab: View {
 
     static let templates: [(String, Gesture)] = [
         ("Trackpad: tap with three fingers", .touch(.trackpad, .tap, fingers: 3)),
+        ("Trackpad: double tap with four fingers", .touch(.trackpad, .doubleTap, fingers: 4)),
+        ("Trackpad: scroll with three fingers (repeats)", .touch(.trackpad, .scrollRight, fingers: 3)),
         ("Trackpad: swipe with four fingers", .touch(.trackpad, .swipeUp, fingers: 4)),
         ("Trackpad: pinch", .touch(.trackpad, .pinchIn, fingers: 4)),
         ("Trackpad: click with three fingers", .touch(.trackpad, .click, fingers: 3)),

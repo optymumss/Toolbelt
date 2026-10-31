@@ -1,9 +1,21 @@
-# Toolbelt — v0.19
+# Toolbelt — v0.20
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.20: video sizes, brightness and volume gestures
+- **Download a video at the size you want.** On a video site, point at the video and click **⬇ Download**. Toolbelt lists every size the site streams it at (for example 1080p, 720p, 360p) with roughly how big each file will be. Click one and it downloads in the background: the list of downloads stays out of the way, and the menu bar icon shows how far it's got (e.g. **42%**). Menu bar icon → **Show Downloads** opens the list.
+  - It works on most video sites: those that stream without copy protection, and pages with several video files.
+  - Not on YouTube (its terms forbid downloading), nor on copy-protected (DRM) video like Netflix: the button says so.
+  - The video is saved as one ordinary `.mp4` that QuickTime plays, named after the page and the size, e.g. `My video (720p).mp4`.
+  - **After updating:** restart Chrome once (or click **Reload** on Toolbelt Downloads in `chrome://extensions`) so it picks up the new extension.
+- **Brightness, volume and sleep on the trackpad:** Settings → Gestures → **Add Brightness, Volume and Sleep Gestures**:
+  - four-finger double tap: brightness up; four-finger scroll down: brightness down;
+  - three-finger scroll left / right: volume down / up; four-finger swipe up: sleep.
+  - Then in **System Settings → Trackpad → More Gestures**, turn **Mission Control** and **App Exposé** off (or set them to three fingers if you don't use three-finger scrolls), so macOS doesn't react to the same swipes.
+- **New trackpad gestures** for any action: **double tap**, and **scroll** left/right/up/down, which repeats while your fingers keep sliding (like dragging a slider). The one-step-per-swipe **swipe** gestures are still there: pick whichever you like for each gesture.
 
 ## What's new in 0.19: install from a DMG
 - **Toolbelt.dmg:** download it, open it, drag Toolbelt onto Applications. No Terminal needed (see *Install* below).

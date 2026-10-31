@@ -49,6 +49,8 @@ xcrun swiftc \
     -framework CoreLocation \
     -framework CoreAudio \
     -framework Network \
+    -framework AVFoundation \
+    -framework CoreMedia \
     "${SOURCES[@]}" \
     -o "$APP/Contents/MacOS/$APP_NAME"
 

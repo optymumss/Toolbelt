@@ -25,16 +25,49 @@ PLIST
 TOOLBELT_DATA_DIR="$DATA" build/Toolbelt.app/Contents/MacOS/Toolbelt &
 APP=$!
 
-# A small website: a page with a download link and a video.
+# A small website: a page with a download link and videos, and a page that streams a video the way
+# video sites do (a playlist listing it at 360p, 720p and 1080p, played through a blob: address).
 head -c 1500000 /dev/urandom > "$SITE/report.zip"
 head -c 900000 /dev/urandom > "$SITE/clip.mp4"
+head -c 700000 /dev/urandom > "$SITE/clip-720.mp4"
+head -c 300000 /dev/urandom > "$SITE/clip-360.mp4"
+cp -R Tests/Fixtures/hls "$SITE/hls"
+cat > "$SITE/hls/protected.m3u8" <<'M3U8'
+#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720
+protected-720.m3u8
+M3U8
+cat > "$SITE/hls/protected-720.m3u8" <<'M3U8'
+#EXTM3U
+#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://key",KEYFORMAT="com.apple.streamingkeydelivery"
+#EXTINF:2.0,
+seg0.ts
+#EXT-X-ENDLIST
+M3U8
 cat > "$SITE/index.html" <<'HTML'
-<!doctype html><html><body>
+<!doctype html><html><head><title>Toolbelt test page</title></head><body>
 <h1>Toolbelt test page</h1>
 <a id="link" href="report.zip" download>Download the report</a>
 <p><video id="video" src="clip.mp4" width="400" height="225" controls></video></p>
+<p><video id="multi" width="400" height="225" controls>
+  <source src="clip-720.mp4" type="video/mp4" label="720p">
+  <source src="clip-360.mp4" type="video/mp4" label="360p">
+</video></p>
 </body></html>
 HTML
+for page in stream protected; do
+  playlist=$([ $page = stream ] && echo master || echo protected)
+  cat > "$SITE/$page.html" <<HTML
+<!doctype html><html><head><title>Toolbelt $page test</title></head><body>
+<video id="stream" width="640" height="360" controls></video>
+<script>
+  const video = document.getElementById("stream");
+  video.src = URL.createObjectURL(new MediaSource());
+  fetch("hls/$playlist.m3u8").then((r) => r.text()).then(() => (document.body.dataset.loaded = "yes"));
+</script>
+</body></html>
+HTML
+done
 python3 -m http.server 8765 --bind 127.0.0.1 --directory "$SITE" >/dev/null 2>&1 &
 SERVER=$!
 

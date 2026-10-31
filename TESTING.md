@@ -94,6 +94,9 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Downloads | Right-click "Download with Toolbelt" | **Manual** (Chrome's own menu can't be clicked by the test) |
 | Downloads | Download button on web videos | CI step "Test the Chrome extension in Chrome": the button appears, downloads the video, and isn't shown on streamed (blob:) videos |
 | Downloads | Other browsers (Safari, Firefox, Edge) | Not built (owner asked for Chrome only) |
+| Downloads | Video sizes: the Download button lists every resolution a streamed (HLS) video or a page with several files offers; the one picked downloads quietly | Chrome test (real Chrome, a test site streaming 360p/720p/1080p); Tests "Downloads: streamed videos at a chosen resolution" |
+| Downloads | Streams joined into a playable .mp4 (MPEG-TS, fragmented MP4, AES-128, separate sound), resumable; DRM and YouTube refused | Tests "Downloads: streamed videos at a chosen resolution" (AVFoundation decodes every frame and the sound); Chrome test (DRM) |
+| Downloads | Progress next to the menu bar icon | Tests "Downloads: streamed videos at a chosen resolution" |
 | Screenshots | Capture the whole screen, an area | Tests (real captures with macOS's screencapture: whole screen, a given area) |
 | Screenshots | Drag out an area / click a window | **Manual** (needs a person to drag or click; uses macOS's own crosshair) |
 | Screenshots | Editor: arrows, boxes, text, highlight, blur, crop, undo/redo | Tests "Screenshots: capture, mark up and read text" (checks the actual pixels); screenshot `screenshot-editor` |
@@ -110,6 +113,7 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Gestures | Actions: Toolbelt commands, shell, AppleScript, open, keys, text, Mac controls | Tests (command, shell, AppleScript, addresses); end-to-end (shell, type text) |
 | Gestures | Listens only while a rule needs it | Tests (tap starts and stops with the rules); battery check |
 | Gestures | Trackpad reader status in Settings; nonsense touch data is ignored, not acted on | Tests "Gestures: trackpad, mouse and keys" |
+| Gestures | Double taps; scrolls that repeat while sliding; the brightness/volume/sleep set | Tests "Gestures: trackpad, mouse and keys" (made-up touches); **Manual** on a real trackpad |
 | Automation | Trigger: keyboard shortcut | End-to-end: ⌃⌥⌘M runs a macro in the real app |
 | Automation | Trigger: typed text, gesture | End-to-end: typing ;;m runs a macro (through the Gestures module) |
 | Automation | Trigger: key on another keyboard or device | **Manual** (needs a second keyboard; CI Macs have none) |

@@ -30,6 +30,15 @@ final class MultitouchReader: @unchecked Sendable {
     var deviceCount: Int { lock.lock(); defer { lock.unlock() }; return devices.count }
 
     private var started = false
+    private var scrollsWanted = false
+
+    /// Scroll steps are only worked out while a rule uses them.
+    func setScrolls(_ on: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        scrollsWanted = on
+        for key in recognizers.keys { recognizers[key]?.scrolls = on }
+    }
     /// Frames in a row whose data didn't make sense (see `readTouches`).
     private var badFramesInARow = 0
     /// Set when macOS's touch data stops making sense, for example after a macOS update changed
@@ -94,7 +103,9 @@ final class MultitouchReader: @unchecked Sendable {
             _ = family?(device, &id)
             // Magic Mouse family IDs are 112 and 113; everything else here is a trackpad.
             let source: TouchSource = (id == 112 || id == 113) ? .magicMouse : .trackpad
-            recognizers[device] = TouchRecognizer(source: source)
+            var recognizer = TouchRecognizer(source: source)
+            recognizer.scrolls = scrollsWanted
+            recognizers[device] = recognizer
             register(device, multitouchFrame)
             startDevice(device, 0)
             devices.append(device)
@@ -128,10 +139,12 @@ final class MultitouchReader: @unchecked Sendable {
         }
         lock.lock()
         badFramesInARow = 0
-        let gesture = dataLooksWrong ? nil : recognizers[device]?.feed(points, at: time)
+        let gestures = dataLooksWrong ? [] : recognizers[device]?.feedAll(points, at: time) ?? []
         lock.unlock()
-        if let gesture {
-            DispatchQueue.main.async { [weak self] in self?.onGesture?(gesture) }
+        if !gestures.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                for gesture in gestures { self?.onGesture?(gesture) }
+            }
         }
     }
 

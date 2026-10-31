@@ -105,7 +105,8 @@ final class DownloadManager: ObservableObject {
 
     /// Starts downloading a link. Returns nil if the text isn't a link Toolbelt can download.
     @discardableResult
-    func add(_ text: String, name: String? = nil, headers: [String: String] = [:], queue: UUID? = nil) -> DownloadItem? {
+    func add(_ text: String, name: String? = nil, headers: [String: String] = [:], queue: UUID? = nil,
+             stream: Bool = false, audio: String? = nil) -> DownloadItem? {
         guard let url = Self.downloadableURL(from: text) else { return nil }
         let fromURL = url.lastPathComponent.isEmpty || url.lastPathComponent == "/" ? (url.host ?? "download") : url.lastPathComponent
         let chosen = name.map(Self.safeFileName).flatMap { $0.isEmpty ? nil : $0 }
@@ -113,6 +114,13 @@ final class DownloadManager: ObservableObject {
         item.queueID = queue
         item.headers = headers.isEmpty ? nil : headers
         if chosen != nil { item.nameIsFixed = true }
+        if stream {
+            item.kind = "hls"
+            item.audioURL = audio.flatMap(Self.downloadableURL)
+            if (item.name as NSString).pathExtension.lowercased() != "mp4" {
+                item.name = ((item.name as NSString).deletingPathExtension) + ".mp4"
+            }
+        }
         items.insert(item, at: 0)
         started = true
         schedule()
@@ -166,6 +174,7 @@ final class DownloadManager: ObservableObject {
         workers[id]?.pause()
         workers[id] = nil
         try? FileManager.default.removeItem(at: tempURL(for: id))
+        try? FileManager.default.removeItem(at: streamFolder(for: id))
         items.removeAll { $0.id == id }
         schedule()
         save()
@@ -309,13 +318,22 @@ final class DownloadManager: ObservableObject {
         partsFolder.appendingPathComponent(id.uuidString + ".part")
     }
 
+    /// Where a streamed video's pieces wait until they're joined.
+    func streamFolder(for id: UUID) -> URL {
+        partsFolder.appendingPathComponent(id.uuidString + ".hls", isDirectory: true)
+    }
+
     // MARK: Running
 
     private func run(_ id: UUID) {
         guard workers[id] == nil, let item = item(id) else { return }
         applyLimits()
         let worker: DownloadWorker
-        if item.url.scheme?.lowercased() == "ftp" {
+        if item.isStream {
+            worker = HLSDownloadJob(playlist: item.url, audio: item.audioURL, folder: streamFolder(for: id), tempURL: tempURL(for: id),
+                                    headers: item.headers ?? [:], connections: Prefs.downloadConnections, retries: Prefs.downloadRetries,
+                                    throttle: throttle)
+        } else if item.url.scheme?.lowercased() == "ftp" {
             let ftp = FTPDownloadJob(url: item.url, tempURL: tempURL(for: id), total: item.total, retries: Prefs.downloadRetries)
             ftp.speedLimit = Prefs.downloadSpeedLimitKB * 1024
             worker = ftp

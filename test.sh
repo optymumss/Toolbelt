@@ -38,6 +38,8 @@ xcrun swiftc \
     -framework CoreLocation \
     -framework CoreAudio \
     -framework Network \
+    -framework AVFoundation \
+    -framework CoreMedia \
     "${SOURCES[@]}" \
     -o build/ToolbeltTests
 
