@@ -7,12 +7,28 @@ final class GestureStore: ObservableObject {
     @Published var rules: [GestureRule] = [] {
         didSet { if rules != oldValue { save(); onChange?() } }
     }
+    /// Conditional activation groups ("Browsers", "Not in a private window"…).
+    @Published var groups: [ActivationGroup] = [] {
+        didSet { if groups != oldValue { saveGroups(); onChange?() } }
+    }
     var onChange: (() -> Void)?
     private let file = SettingsStore.folder.appendingPathComponent("gestures.json")
+    private let groupsFile = SettingsStore.folder.appendingPathComponent("trigger-groups.json")
 
     init() {
         if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([GestureRule].self, from: data) {
             rules = saved
+        }
+        if let data = try? Data(contentsOf: groupsFile), let saved = try? JSONDecoder().decode([ActivationGroup].self, from: data) {
+            groups = saved
+        }
+    }
+
+    private func saveGroups() {
+        do {
+            try JSONEncoder().encode(groups).write(to: groupsFile, options: .atomic)
+        } catch {
+            NSLog("Toolbelt: could not save activation groups: \(error)")
         }
     }
 
@@ -44,7 +60,7 @@ final class GestureStore: ObservableObject {
 @MainActor
 final class GesturesModule: ToolbeltModule {
     let id = ModuleID.gestures
-    let openTitle = "Gestures…"
+    let openTitle = "Triggers…"
 
     let store = GestureStore()
     let tap = GestureEventTap()
@@ -53,6 +69,9 @@ final class GesturesModule: ToolbeltModule {
     private var running = false
     private var typed = TypingBuffer()
     private var pendingSingleTap: DispatchWorkItem?
+    private var shortcutKeys: [HotKey] = []
+    private var lastRun: [UUID: Date] = [:]
+    private var triggersWindow: TriggersWindowController?
     /// For tests: what ran, most recent last.
     private(set) var log: [Gesture] = []
     /// More rules from other modules (macros started by a gesture or typed text).
@@ -68,6 +87,7 @@ final class GesturesModule: ToolbeltModule {
         tap.onBackspace = { [weak self] in self?.typed.deleteBackward() }
         tap.onClick = { [weak self] in self?.typed.reset() }
         MultitouchReader.shared.onGesture = { [weak self] gesture in _ = self?.handle(gesture) }
+        TriggersWindowController.openFromSettings = { [weak self] in self?.open() }
     }
 
     func start() {
@@ -80,9 +100,13 @@ final class GesturesModule: ToolbeltModule {
         updateListening()
     }
 
+    /// The Triggers window: every gesture, shortcut and key trigger, with its actions and conditions.
     func open() {
-        openSettings()
+        if triggersWindow == nil { triggersWindow = TriggersWindowController(module: self) }
+        triggersWindow?.show()
     }
+
+    var triggersWindowController: TriggersWindowController? { triggersWindow }
 
     /// Listens only to the devices the enabled rules use, and asks for permission only then.
     func updateListening() {
@@ -99,7 +123,19 @@ final class GesturesModule: ToolbeltModule {
             case .mouseButton(let button): needs.buttons.insert(button)
             case .stroke(let button, _): needs.strokeButtons.insert(button)
             case .modifierTap, .keySequence: needs.keyboard = true
+            case .shortcut: break // registered below, no permission needed
             }
+        }
+        // Keyboard shortcuts, through macOS's own hot keys.
+        shortcutKeys.forEach { $0.unregister() }
+        shortcutKeys = []
+        var registered = Set<Gesture>()
+        for rule in rules {
+            guard case let .shortcut(keyCode, modifiers) = rule.gesture, keyCode != 0 || modifiers != 0,
+                  registered.insert(rule.gesture).inserted else { continue }
+            let gesture = rule.gesture
+            let key = HotKey(shortcut: Shortcut(keyCode: keyCode, modifiers: modifiers)) { [weak self] in _ = self?.handle(gesture) }
+            if key.isRegistered { shortcutKeys.append(key) }
         }
         MultitouchReader.shared.setScrolls(scrolls)
         MultitouchReader.shared.setSensitivity(Prefs.gestureSensitivity)
@@ -116,38 +152,55 @@ final class GesturesModule: ToolbeltModule {
         tap.update(needs)
     }
 
-    /// Runs the rule for a gesture, if there's one for the app in front. Returns whether one ran.
+    /// The rules that apply to a gesture right now (app in front, activation groups, conditions).
+    func matches(for gesture: Gesture, app: String? = NSWorkspace.shared.frontmostApplication?.bundleIdentifier) -> [GestureRule] {
+        GestureRule.matches(gesture, app: app, in: allRules, groups: store.groups, context: { ConditionContext.current() })
+    }
+
+    /// Runs the rules for a gesture, if any apply. Returns whether one ran.
     @discardableResult
     func handle(_ gesture: Gesture) -> Bool {
-        let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         // A single tap waits a moment when the same key or fingers also have a double-tap rule.
         if let double = gesture.doubleTapVersion {
             if double == gesture {
                 pendingSingleTap?.cancel()
                 pendingSingleTap = nil
-            } else if GestureRule.match(double, app: app, in: allRules) != nil {
-                guard let rule = GestureRule.match(gesture, app: app, in: allRules) else { return false }
+            } else if !matches(for: double).isEmpty {
+                let rules = matches(for: gesture)
+                guard !rules.isEmpty else { return false }
                 let work = DispatchWorkItem { [weak self] in
-                    MainActor.assumeIsolated { self?.run(rule, for: gesture) }
+                    MainActor.assumeIsolated { self?.runAll(rules, for: gesture) }
                 }
                 pendingSingleTap = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
                 return true
             }
         }
-        guard let rule = GestureRule.match(gesture, app: app, in: allRules) else { return false }
+        let rules = matches(for: gesture)
+        guard !rules.isEmpty else { return false }
         // Typing just now: a palm brushing the trackpad isn't a gesture.
         if case .touch = gesture, Self.typedRecently() { return false }
         // Run after the event has been dealt with, so the tap is never held up.
         DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated { self?.run(rule, for: gesture) }
+            MainActor.assumeIsolated { self?.runAll(rules, for: gesture) }
         }
         return true
     }
 
-    private func run(_ rule: GestureRule, for gesture: Gesture) {
+    private func runAll(_ rules: [GestureRule], for gesture: Gesture) {
+        for rule in rules { run(rule, for: gesture) }
+    }
+
+    /// Runs one rule's actions (also used by the ▶︎ button in the Triggers window).
+    func run(_ rule: GestureRule, for gesture: Gesture) {
+        // A keyboard trigger whose action presses its own keys mustn't set itself off again and again.
+        if rule.isKeyboard, rule.preventRecursion != false, let last = lastRun[rule.id], Date().timeIntervalSince(last) < 0.3 { return }
+        lastRun[rule.id] = Date()
         log.append(gesture)
         if log.count > 50 { log.removeFirst() }
+        if rule.showHUD == true {
+            HUD.show(rule.hasNotes ? rule.notes ?? "" : rule.gesture.title, detail: rule.summary, symbol: "hand.tap")
+        }
         for action in rule.actions { runner.run(action) }
     }
 
@@ -161,15 +214,16 @@ final class GesturesModule: ToolbeltModule {
 
     private func typedText(_ text: String) {
         typed.type(text)
-        let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        for rule in allRules where rule.enabled && rule.applies(in: app) {
+        for rule in allRules where rule.enabled {
             guard case .keySequence(let sequence) = rule.gesture, !sequence.isEmpty, typed.text.hasSuffix(sequence) else { continue }
+            let chosen = matches(for: rule.gesture)
+            guard let first = chosen.first else { continue }
             typed.reset()
-            let count = rule.deleteTyped ? sequence.count : 0
+            let count = first.deleteTyped ? sequence.count : 0
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     for _ in 0..<count { TextInserter.press(CGKeyCode(51)) }
-                    self?.run(rule, for: rule.gesture)
+                    self?.runAll(chosen, for: rule.gesture)
                 }
             }
             return
@@ -183,6 +237,7 @@ final class GesturesModule: ToolbeltModule {
     }
 
     func willTerminate() {
+        shortcutKeys.forEach { $0.unregister() }
         tap.stop()
         MultitouchReader.shared.stop()
     }
@@ -217,6 +272,7 @@ struct GesturesSettingsTab: View {
                     }
                 }
                 .fixedSize()
+                Button("Open the Triggers Window…") { TriggersWindowController.openFromSettings?() }
                 Button("Add Brightness, Volume and Sleep Gestures") { store.addControlSet() }
                     .help("Four-finger double tap: brightness up · four-finger scroll down: brightness down · three-finger scroll left / right: volume down / up · four-finger swipe up: sleep")
             } header: {
@@ -269,6 +325,7 @@ struct GesturesSettingsTab: View {
         ("Mouse: hold the right button and draw", .stroke(button: 1, path: "L")),
         ("Keyboard: tap a modifier key twice", .modifierTap(.rightCommand, taps: 2)),
         ("Keyboard: type a sequence", .keySequence(";;")),
+        ("Keyboard: shortcut", .shortcut(keyCode: 0, modifiers: 0)),
     ]
 }
 
@@ -384,6 +441,10 @@ struct GestureEditor: View {
                 }
                 .fixedSize()
             }
+        case .shortcut:
+            // Read the gesture afresh each time: the recorder sets the key, then the modifiers.
+            KeyCapture(keyCode: Binding(get: { shortcutParts.key }, set: { gesture = .shortcut(keyCode: $0, modifiers: shortcutParts.modifiers) }),
+                       modifiers: Binding(get: { shortcutParts.modifiers }, set: { gesture = .shortcut(keyCode: shortcutParts.key, modifiers: $0) }))
         case .keySequence(let keys):
             HStack {
                 TextField("Typed sequence, e.g. ;;", text: Binding(get: { keys }, set: { gesture = .keySequence($0) }))
@@ -394,6 +455,11 @@ struct GestureEditor: View {
 }
 
 extension GestureEditor {
+    var shortcutParts: (key: Int, modifiers: Int) {
+        if case let .shortcut(key, modifiers) = gesture { return (key, modifiers) }
+        return (0, 0)
+    }
+
     static func number(_ count: Int) -> String {
         ["Zero", "One", "Two", "Three", "Four", "Five"][min(max(count, 0), 5)]
     }

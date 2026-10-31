@@ -165,6 +165,8 @@ enum Gesture: Codable, Hashable {
     case stroke(button: Int, path: String)
     case modifierTap(ModifierKey, taps: Int)
     case keySequence(String)
+    /// A keyboard shortcut: a key with ⌘ ⌥ ⌃ ⇧ (Carbon modifier flags).
+    case shortcut(keyCode: Int, modifiers: Int)
 
     var title: String {
         switch self {
@@ -178,6 +180,8 @@ enum Gesture: Codable, Hashable {
             return "Hold \(button == 2 ? "middle" : "right") button and draw \(arrows)"
         case let .modifierTap(key, taps): return "\(taps == 2 ? "Double-tap" : "Tap") \(key.title)"
         case .keySequence(let keys): return "Type “\(keys)”"
+        case let .shortcut(keyCode, modifiers):
+            return keyCode == 0 && modifiers == 0 ? "Keyboard shortcut (not set)" : Shortcut(keyCode: keyCode, modifiers: modifiers).display
         }
     }
 
@@ -527,6 +531,36 @@ struct GestureRule: Identifiable, Codable, Equatable {
     var deleteTyped = true
     /// Further actions, run after `action` in order. Optional so rules saved before it existed still load.
     var moreActions: [MacroAction]? = nil
+    /// Your own note about what it's for; shown instead of the description when `showNotes` is on.
+    var notes: String? = nil
+    var showNotes: Bool? = nil
+    /// Show a small on-screen message when it runs.
+    var showHUD: Bool? = nil
+    /// When other triggers match at the same time, run alongside them instead of only the best match.
+    var parallel: Bool? = nil
+    /// Keyboard triggers ignore themselves for a moment after running, so an action that presses their
+    /// own keys can't set them off again and again. On unless switched off.
+    var preventRecursion: Bool? = nil
+    /// Only while this activation group's conditions are true.
+    var groupID: UUID? = nil
+    /// Its own conditions ("Advanced conditions"), checked when it's triggered.
+    var condition: ConditionGroup? = nil
+
+    var hasNotes: Bool { !(notes ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+    var hasCondition: Bool { !(condition?.isEmpty ?? true) }
+
+    /// The line under the trigger in lists: its notes if asked for, otherwise its actions.
+    var listDescription: String { showNotes == true && hasNotes ? notes ?? "" : "Action: " + summary }
+
+    /// How specific it is: conditions and groups beat app lists, which beat "everywhere".
+    var specificity: Int { (hasCondition ? 4 : 0) + (groupID != nil ? 2 : 0) + (scope == .only ? 1 : 0) }
+
+    var isKeyboard: Bool {
+        switch gesture {
+        case .shortcut, .keySequence, .modifierTap: return true
+        default: return false
+        }
+    }
 
     var actions: [MacroAction] { [action] + (moreActions ?? []) }
     var summary: String {
@@ -544,7 +578,34 @@ struct GestureRule: Identifiable, Codable, Equatable {
 
     /// The first enabled rule for this gesture in this app. App-specific rules win over general ones.
     static func match(_ event: Gesture, app: String?, in rules: [GestureRule]) -> GestureRule? {
-        let candidates = rules.filter { $0.enabled && $0.gesture.accepts(event) && $0.applies(in: app) }
-        return candidates.first { $0.scope == .only } ?? candidates.first
+        matches(event, app: app, in: rules).first
+    }
+
+    /// The rules to run for what happened: the most specific match (conditions, then activation groups,
+    /// then app lists, then everywhere), plus any others that allow running alongside it.
+    /// `context` is only worked out when a matching rule has conditions.
+    static func matches(_ event: Gesture, app: String?, in rules: [GestureRule], groups: [ActivationGroup] = [],
+                        context: () -> ConditionContext = { ConditionContext() }) -> [GestureRule] {
+        var cached: ConditionContext?
+        func now() -> ConditionContext {
+            if let cached { return cached }
+            let made = context()
+            cached = made
+            return made
+        }
+        let candidates = rules.filter { rule in
+            guard rule.enabled, rule.gesture.accepts(event), rule.applies(in: app) else { return false }
+            if let groupID = rule.groupID {
+                guard let group = groups.first(where: { $0.id == groupID }), group.enabled,
+                      group.condition.isTrue(in: now()) else { return false }
+            }
+            if rule.hasCondition, !(rule.condition?.isTrue(in: now()) ?? true) { return false }
+            return true
+        }
+        guard let best = candidates.enumerated().max(by: { a, b in
+            a.element.specificity != b.element.specificity ? a.element.specificity < b.element.specificity : a.offset > b.offset
+        })?.element else { return [] }
+        guard best.parallel == true else { return [best] }
+        return [best] + candidates.filter { $0.id != best.id && $0.parallel == true }
     }
 }

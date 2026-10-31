@@ -1,9 +1,22 @@
-# Toolbelt — v0.22
+# Toolbelt — v0.23
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.23: the Triggers window and conditions (like BetterTouchTool)
+- **One window for every trigger:** menu bar icon → **Triggers…** (or Settings → Gestures → Open the Triggers Window). Four columns, left to right:
+  1. **Where it applies:** For All Apps, your activation groups, and apps you've added (+ → Choose App, Running Apps, or New Activation Group).
+  2. **The triggers:** pick a kind from the row of icons (trackpad, Magic Mouse, mouse buttons, drawings, keyboard shortcuts, modifier taps, typed sequences); + adds one, 🗑 deletes it.
+  3. **Its actions,** run in order; **Add Action** adds more; **Try It** runs them now.
+  4. **Its settings:** the gesture or keys, on/off, **notes** (and "show notes instead of the description"), and two tabs: **Basic** (show an on-screen message when it runs, run alongside other matching triggers, prevent recursive triggers) and **Advanced** (conditions, activation group, which apps).
+- **Keyboard shortcuts** are now triggers too, with any number of actions.
+- **Conditional activation groups:** a named set of rules, e.g. "Browsers" = app name contains Safari, Chrome or Firefox, and the window title contains neither Private nor Incognito. Rules can say *all*, *any* or *none* of the following are true, and groups can sit inside groups. Triggers in a group only work while it's true. The editor shows the rules written out and whether they're **currently true**, updated every second.
+- **Advanced conditions on one trigger:** e.g. a three-finger tap that does one thing when the pointer is over the window's top-left quarter and another elsewhere. You can check the app, window title, the app under the pointer, where the pointer is in the window or on the screen (%), the hour, the weekday, dark mode and the number of displays.
+- **The most specific trigger wins:** one with its own conditions beats one in an activation group, which beats one for a single app, which beats one for every app; or tick "run alongside" to run them together.
+- **On-screen message** (like the volume pop-up): per trigger, or as an action ("Show an on-screen message").
+- Window titles need the **Accessibility** permission (Toolbelt already asks for it for other features).
 
 ## What's new in 0.22: download as many videos at once as you like (like IDM)
 - **No more waiting list.** Every video you click starts downloading straight away. Open 100 tabs, click a resolution in each, and all 100 download at the same time.

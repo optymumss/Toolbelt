@@ -114,6 +114,9 @@ SCREENS=(
     "screenshot-editor=screenshot-editor"
     "launcher-screenshot=launcher:screenshot"
     "settings-gestures=settings-gestures"
+    "triggers=triggers"
+    "trigger-conditions=trigger-conditions"
+    "trigger-group=trigger-group"
     "macros=macros"
     "settings-automation=settings-automation"
     "launcher-switcher=launcher-switcher"
@@ -137,6 +140,7 @@ for entry in "${SCREENS[@]}"; do
     [ "$screen" = "snap-areas-editor" ] && rm -f "$DATA_DIR/snapareas.json"
     [ "$screen" = "shelf-demo" ] && rm -f "$DATA_DIR/shelves.json"
     [ "$screen" = "settings-gestures" ] && rm -f "$DATA_DIR/gestures.json"
+    case "$screen" in trigger*) rm -f "$DATA_DIR/gestures.json" "$DATA_DIR/trigger-groups.json" ;; esac
     sleep 1
 done
 

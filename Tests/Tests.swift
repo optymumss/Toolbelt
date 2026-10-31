@@ -50,6 +50,7 @@ enum ToolbeltTests {
         t.group("Downloads: 100 videos at once, like IDM", HundredDownloadsTests.run)
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
+        t.group("Triggers: conditions, activation groups and the Triggers window", TriggerTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -3597,5 +3598,139 @@ enum HundredDownloadsTests {
         checkEqual(manager.item(waiting?.id ?? UUID())?.state, .completed, "and finish")
         manager.stopAll()
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+// MARK: - Triggers window, conditions and activation groups
+
+@MainActor
+enum TriggerTests {
+    static func context(app: String, title: String = "", x: Double = 50, y: Double = 50) -> ConditionContext {
+        ConditionContext(values: [.appName: app, .windowTitle: title, .pointerXInWindow: String(x), .pointerYInWindow: String(y), .hour: "14"])
+    }
+
+    static let browsers = ConditionGroup(mode: .all, items: [
+        .group(ConditionGroup(mode: .any, items: ["Safari", "Chrome", "Firefox"].map { .rule(ConditionRule(field: .appName, op: .contains, value: $0)) })),
+        .group(ConditionGroup(mode: .none, items: ["Private", "Incognito"].map { .rule(ConditionRule(field: .windowTitle, op: .contains, value: $0)) })),
+    ])
+
+    static func run() {
+        // Conditions
+        check(browsers.isTrue(in: context(app: "Safari", title: "Apple")), "“Browsers”: Safari counts")
+        check(browsers.isTrue(in: context(app: "Google Chrome")), "so does Google Chrome (contains, ignoring capitals)")
+        check(!browsers.isTrue(in: context(app: "Safari", title: "Private Browsing")), "but not a private window")
+        check(!browsers.isTrue(in: context(app: "Firefox", title: "Mozilla Firefox Private Browsing")), "nor a private Firefox window")
+        check(!browsers.isTrue(in: context(app: "Notes")), "and not other apps")
+        checkEqual(browsers.text, #"(appName CONTAINS "Safari" OR appName CONTAINS "Chrome" OR appName CONTAINS "Firefox") AND NOT (windowTitle CONTAINS "Private" OR windowTitle CONTAINS "Incognito")"#,
+                   "conditions are written out like BetterTouchTool's predicate text")
+        let topLeft = ConditionGroup(mode: .all, items: [
+            .rule(ConditionRule(field: .pointerXInWindow, op: .lessThan, value: "50")),
+            .rule(ConditionRule(field: .pointerYInWindow, op: .greaterOrEqual, value: "50")),
+        ])
+        check(topLeft.isTrue(in: context(app: "Notes", x: 20, y: 80)), "pointer in the window's top-left quarter")
+        check(!topLeft.isTrue(in: context(app: "Notes", x: 70, y: 80)) && !topLeft.isTrue(in: context(app: "Notes", x: 20, y: 30)),
+              "and not in the other quarters")
+        check(ConditionGroup().isTrue(in: context(app: "Notes")), "no conditions at all is always true")
+        check(ConditionRule(field: .appName, op: .matches, value: "^(Safari|Arc)$").isTrue(in: context(app: "Arc")), "patterns match")
+        check(ConditionRule(field: .appName, op: .startsWith, value: "goo").isTrue(in: context(app: "Google Chrome"))
+              && ConditionRule(field: .appName, op: .endsWith, value: "chrome").isTrue(in: context(app: "Google Chrome"))
+              && ConditionRule(field: .appName, op: .notContains, value: "Safari").isTrue(in: context(app: "Notes")),
+              "starts with, ends with and doesn't contain")
+        check(ConditionRule(field: .hour, op: .greaterOrEqual, value: "9").isTrue(in: context(app: "Notes"))
+              && !ConditionRule(field: .hour, op: .lessThan, value: "12").isTrue(in: context(app: "Notes")), "numbers compare as numbers")
+        check(!ConditionRule(field: .hour, op: .equals, value: "soon").isTrue(in: context(app: "Notes")), "a number that isn't a number is never true")
+        checkEqual(ConditionField.pointerXInWindow.operators.first, .equals, "number fields offer =, <, > and so on")
+        let saved = ActivationGroup(name: "Browsers", condition: browsers)
+        let loaded = (try? JSONEncoder().encode([saved])).flatMap { try? JSONDecoder().decode([ActivationGroup].self, from: $0) }
+        checkEqual(loaded, [saved], "activation groups are saved and read back exactly, groups inside groups too")
+
+        // Matching: the most specific trigger wins
+        let group = ActivationGroup(name: "Browsers", condition: browsers)
+        let general = GestureRule(gesture: .touch(.trackpad, .tap, fingers: 3), action: .system(.missionControl))
+        var inBrowsers = GestureRule(gesture: .touch(.trackpad, .tap, fingers: 3), action: .system(.back))
+        inBrowsers.groupID = group.id
+        var corner = GestureRule(gesture: .touch(.trackpad, .tap, fingers: 3), action: .system(.showDesktop))
+        corner.condition = topLeft
+        let rules = [general, inBrowsers, corner]
+        func pick(_ context: ConditionContext, groups: [ActivationGroup] = [group]) -> [MacroAction] {
+            GestureRule.matches(.touch(.trackpad, .tap, fingers: 3), app: nil, in: rules, groups: groups, context: { context }).map(\.action)
+        }
+        checkEqual(pick(context(app: "Safari", x: 20, y: 80)), [.system(.showDesktop)], "a trigger with its own conditions beats the others when they're true")
+        checkEqual(pick(context(app: "Safari", x: 80, y: 80)), [.system(.back)], "then one in an activation group whose conditions are true")
+        checkEqual(pick(context(app: "Safari", title: "Private", x: 80)), [.system(.missionControl)], "otherwise the trigger for every app")
+        var off = group
+        off.enabled = false
+        checkEqual(pick(context(app: "Safari", x: 80), groups: [off]), [.system(.missionControl)], "a switched-off group's triggers don't run")
+        var calls = 0
+        _ = GestureRule.matches(.touch(.trackpad, .tap, fingers: 3), app: nil, in: [general], groups: [], context: { calls += 1; return ConditionContext() })
+        checkEqual(calls, 0, "the Mac's state is only looked at when a matching trigger has conditions (no work otherwise)")
+        _ = GestureRule.matches(.touch(.trackpad, .tap, fingers: 3), app: nil, in: rules, groups: [group], context: { calls += 1; return context(app: "Notes") })
+        checkEqual(calls, 1, "and then only once, however many triggers need it")
+        var alongside = rules
+        alongside[0].parallel = true
+        alongside[2].parallel = true
+        let both = GestureRule.matches(.touch(.trackpad, .tap, fingers: 3), app: nil, in: alongside, groups: [group], context: { context(app: "Notes", x: 20, y: 80) })
+        checkEqual(both.map(\.action), [.system(.showDesktop), .system(.missionControl)], "triggers set to run alongside others all run")
+
+        // Trigger settings
+        var noted = GestureRule(gesture: .shortcut(keyCode: 9, modifiers: 6400), action: .toolbelt(.clipboardHistory))
+        checkEqual(noted.gesture.title, "⌃⌥⌘V", "keyboard shortcuts are triggers too")
+        checkEqual(noted.listDescription, "Action: Open clipboard history", "the list shows what a trigger does")
+        noted.notes = "Clipboard manager"
+        noted.showNotes = true
+        checkEqual(noted.listDescription, "Clipboard manager", "or its notes, when chosen")
+        check(noted.isKeyboard && !general.isKeyboard, "keyboard triggers are told apart (for loop protection)")
+        let decoded = (try? JSONEncoder().encode([noted])).flatMap { try? JSONDecoder().decode([GestureRule].self, from: $0) }
+        checkEqual(decoded, [noted], "shortcut triggers, notes and settings are saved")
+
+        // On-screen message
+        HUD.show("Brightness up", detail: "Four-finger double tap")
+        check(HUD.isShowing && HUD.lastMessage == "Brightness up", "an on-screen message appears")
+        ActionRunner(shortcuts: ShortcutCenter()).run(MacroAction(kind: .showHUD, value: "Saved"))
+        checkEqual(HUD.lastMessage, "Saved", "“Show an on-screen message” is an action too")
+        spin(1.8)
+        check(!HUD.isShowing, "and it fades by itself")
+
+        // The module: loop protection, and the window
+        let module = GesturesModule(shortcuts: ShortcutCenter())
+        module.store.rules = []
+        module.store.groups = []
+        var quiet = GestureRule(gesture: .shortcut(keyCode: 0, modifiers: 0), action: MacroAction(kind: .setClipboard, value: "x"))
+        quiet.id = UUID()
+        let before = module.log.count
+        module.run(quiet, for: quiet.gesture)
+        module.run(quiet, for: quiet.gesture)
+        checkEqual(module.log.count - before, 1, "a keyboard trigger set off again straight away by its own action is ignored")
+        var repeating = quiet
+        repeating.preventRecursion = false
+        module.run(repeating, for: repeating.gesture)
+        module.run(repeating, for: repeating.gesture)
+        checkEqual(module.log.count - before, 3, "unless that protection is switched off")
+        let swipe = GestureRule(gesture: .touch(.trackpad, .scrollRight, fingers: 3), action: MacroAction(kind: .setClipboard, value: "y"))
+        module.run(swipe, for: swipe.gesture)
+        module.run(swipe, for: swipe.gesture)
+        checkEqual(module.log.count - before, 5, "trackpad scrolls still repeat as fast as you slide")
+
+        module.store.groups = [group]
+        module.store.rules = rules
+        module.open()
+        let window = NSApp.windows.first { $0.title == "Triggers" && $0.isVisible }
+        check(window != nil, "the Triggers window opens")
+        if let state = module.triggersWindowController?.state {
+            state.scope = .group(group.id)
+            state.selected = inBrowsers.id
+            spin(0.3)
+            check(window?.isVisible == true, "and shows an activation group's triggers")
+        }
+        window?.close()
+        module.store.rules = []
+        module.store.groups = []
+
+        // The Mac's state, as conditions see it
+        let now = ConditionContext.current()
+        check(Int(now.values[.displayCount] ?? "") ?? 0 >= 1, "conditions can see the displays")
+        let across = Double(now.values[.pointerXOnScreen] ?? "-1") ?? -1
+        check((0...100).contains(across), "and where the pointer is (\(across)% across the screen)")
+        check(now.values[.hour] != nil && now.values[.appName] != nil, "the time and the app in front")
     }
 }
