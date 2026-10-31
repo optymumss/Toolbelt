@@ -153,7 +153,8 @@ final class GesturesModule: ToolbeltModule {
 
     /// Whether a key was pressed within the "ignore the trackpad after typing" time. Asks macOS when the
     /// last key went down, which needs no permission and costs nothing while no gesture happens.
-    static func typedRecently(pause: Double = Prefs.gestureTypingPause) -> Bool {
+    static func typedRecently(pause: Double? = nil) -> Bool {
+        let pause = pause ?? Prefs.gestureTypingPause
         guard pause > 0 else { return false }
         return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown) < pause
     }
