@@ -431,7 +431,7 @@ struct TriggerSettings: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text(rule.gesture.title).font(.headline)
                 if case .shortcut = rule.gesture {
-                    ShortcutRecorder(rule: $rule)
+                    TriggerKeysRecorder(rule: $rule)
                 } else {
                     GestureEditor(gesture: $rule.gesture, deleteTyped: $rule.deleteTyped, inUse: inUse)
                 }
@@ -729,7 +729,7 @@ struct PhaseActionsEditor: View {
 }
 
 /// Records a keyboard shortcut, including which side's modifier keys were used and the letter it types.
-struct ShortcutRecorder: View {
+struct TriggerKeysRecorder: View {
     @Binding var rule: GestureRule
     @State private var recording = false
     @State private var monitor: Any?
