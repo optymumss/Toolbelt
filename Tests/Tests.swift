@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Carbon
 import Network
 import SwiftUI
@@ -45,6 +46,7 @@ enum ToolbeltTests {
         t.group("Downloads: real downloads from a test server", DownloadTests.run)
         t.group("Downloads: queues, schedules, limits and the list", DownloadsNextTests.run)
         t.group("Downloads: the Chrome extension and its bridge", ChromeBridgeTests.run)
+        t.group("Downloads: streamed videos at a chosen resolution", VideoStreamTests.run)
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
@@ -1789,6 +1791,70 @@ enum GestureTests {
         }
         checkEqual(mouseFired, .touch(.magicMouse, .swipeRight, fingers: 2), "Magic Mouse swipes are told apart from the trackpad's")
 
+        // Double taps and scrolls (repeating while the fingers slide)
+        var controls = TouchRecognizer(source: .trackpad)
+        controls.scrolls = true
+        let fourDown = [(0.35, 0.5), (0.45, 0.52), (0.55, 0.52), (0.65, 0.5)]
+        func tap(_ points: [(Double, Double)], at time: Double) -> [Gesture] {
+            _ = controls.feedAll(fingers(points), at: time)
+            _ = controls.feedAll(fingers(points), at: time + 0.05)
+            return controls.feedAll([], at: time + 0.1)
+        }
+        checkEqual(tap(fourDown, at: 10), [.touch(.trackpad, .tap, fingers: 4)], "a first four-finger tap is a tap")
+        checkEqual(tap(fourDown, at: 10.3), [.touch(.trackpad, .tap, fingers: 4), .touch(.trackpad, .doubleTap, fingers: 4)],
+                   "a second one straight after is a double tap")
+        checkEqual(tap(fourDown, at: 10.6), [.touch(.trackpad, .tap, fingers: 4)], "and a third starts counting again")
+        checkEqual(tap(fourDown, at: 12), [.touch(.trackpad, .tap, fingers: 4)], "a tap long after the last isn't a double tap")
+        _ = tap(three, at: 12.3)
+        check(!tap(fourDown, at: 12.6).contains(.touch(.trackpad, .doubleTap, fingers: 4)), "taps with different fingers aren't a double tap")
+
+        func slide(_ points: [(Double, Double)], by offset: (Double, Double), steps: Int = 20, at time: Double, release: Bool = true) -> [Gesture] {
+            var all: [Gesture] = []
+            for step in 0...steps {
+                let f = Double(step) / Double(steps)
+                all += controls.feedAll(fingers(points.map { ($0.0 + offset.0 * f, $0.1 + offset.1 * f) }), at: time + Double(step) * 0.016)
+            }
+            if release { all += controls.feedAll([], at: time + Double(steps) * 0.016 + 0.05) }
+            return all
+        }
+        let rightSlide = slide(three, by: (0.2, 0.01), at: 20)
+        checkEqual(rightSlide.filter { $0 == .touch(.trackpad, .scrollRight, fingers: 3) }.count, 4,
+                   "sliding three fingers a fifth of the way right gives four scroll-right steps")
+        check(rightSlide.contains(.touch(.trackpad, .swipeRight, fingers: 3)), "and still counts as one swipe right, for swipe rules")
+        check(!rightSlide.contains { if case .touch(_, .tap, _) = $0 { return true }; return false }, "a slide is never a tap")
+        let leftSlide = slide(three, by: (-0.1, 0), at: 21)
+        checkEqual(leftSlide, [.touch(.trackpad, .scrollLeft, fingers: 3), .touch(.trackpad, .scrollLeft, fingers: 3)],
+                   "sliding left gives scroll-left steps")
+        var backAndForth = slide(three, by: (0.14, 0), at: 22, release: false)
+        let back = three.map { ($0.0 + 0.14, $0.1) }
+        backAndForth += slide(back, by: (-0.16, 0), at: 22.4)
+        checkEqual(backAndForth.filter { $0 == .touch(.trackpad, .scrollLeft, fingers: 3) }.count, 3,
+                   "sliding back the other way without lifting steps back down")
+        let downSlide = slide(fourDown, by: (0.01, -0.15), at: 23)
+        checkEqual(downSlide.filter { $0 == .touch(.trackpad, .scrollDown, fingers: 4) }.count, 3, "four fingers sliding down give scroll-down steps")
+        check(!downSlide.contains(.touch(.trackpad, .scrollRight, fingers: 4)), "a slide down never steps sideways")
+        let upSlide = slide(fourDown, by: (0, 0.2), at: 24)
+        check(upSlide.contains(.touch(.trackpad, .swipeUp, fingers: 4)), "four fingers swiping up is a swipe up (for sleep)")
+        checkEqual(upSlide.filter { $0 == .touch(.trackpad, .swipeUp, fingers: 4) }.count, 1, "which happens only once per swipe")
+        var plain = TouchRecognizer(source: .trackpad)
+        var plainFired: [Gesture] = []
+        for step in 0...20 { plainFired += plain.feedAll(fingers(three.map { ($0.0 + 0.01 * Double(step), $0.1) }), at: Double(step) * 0.016) }
+        check(!plainFired.contains { if case .touch(_, let kind, _) = $0 { return kind.isScroll }; return false },
+              "with no scroll rules, sliding gives no scroll steps (nothing extra is worked out)")
+
+        // The brightness, volume and sleep set
+        let set = GestureStore.controlSet
+        func action(_ gesture: Gesture) -> MacroAction? { GestureRule.match(gesture, app: nil, in: set)?.action }
+        checkEqual(action(.touch(.trackpad, .doubleTap, fingers: 4)), .system(.brightnessUp), "four-finger double tap: brightness up")
+        checkEqual(action(.touch(.trackpad, .scrollDown, fingers: 4)), .system(.brightnessDown), "four-finger scroll down: brightness down")
+        checkEqual(action(.touch(.trackpad, .scrollLeft, fingers: 3)), .system(.volumeDown), "three-finger scroll left: volume down")
+        checkEqual(action(.touch(.trackpad, .scrollRight, fingers: 3)), .system(.volumeUp), "three-finger scroll right: volume up")
+        checkEqual(action(.touch(.trackpad, .swipeUp, fingers: 4)), .system(.sleep), "four-finger swipe up: sleep")
+        check(action(.touch(.trackpad, .scrollUp, fingers: 4)) == nil && action(.touch(.trackpad, .tap, fingers: 4)) == nil,
+              "nothing else in the set reacts")
+        checkEqual(Gesture.touch(.trackpad, .tap, fingers: 4).doubleTapVersion, .touch(.trackpad, .doubleTap, fingers: 4),
+                   "a single tap knows to wait when its fingers have a double-tap rule")
+
         // Mouse strokes
         checkEqual(StrokeRecognizer.path(of: (0...10).map { CGPoint(x: 500 - $0 * 15, y: 300) }), "L", "dragging left draws L")
         let downRight = (0...6).map { CGPoint(x: 300, y: 300 + $0 * 15) } + (1...6).map { CGPoint(x: 300 + $0 * 15, y: 390) }
@@ -2914,5 +2980,298 @@ enum ShelfNextTests {
         check(DropTargetStore().targets.count >= 4, "the grid starts with useful targets")
 
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+// MARK: - Streamed videos
+
+/// Serves the files in a folder over HTTP, for the streamed-video tests.
+final class FolderServer: @unchecked Sendable {
+    let folder: URL
+    private let listener: NWListener
+    private let lock = NSLock()
+    private var _requests: [String] = []
+    private var _cookies: [String: String] = [:]
+
+    var requests: [String] { lock.lock(); defer { lock.unlock() }; return _requests }
+    /// The Cookie header sent with each path, if any.
+    var cookies: [String: String] { lock.lock(); defer { lock.unlock() }; return _cookies }
+
+    init(folder: URL) throws {
+        self.folder = folder
+        listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in self?.serve(connection) }
+        listener.start(queue: .global())
+    }
+
+    var port: UInt16 { listener.port?.rawValue ?? 0 }
+    func url(_ path: String) -> String { "http://127.0.0.1:\(port)\(path)" }
+
+    private func serve(_ connection: NWConnection) {
+        connection.start(queue: .global())
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] data, _, _, _ in
+            guard let data, let request = String(data: data, encoding: .utf8) else { connection.cancel(); return }
+            let lines = request.components(separatedBy: "\r\n")
+            let path = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+            let cookie = lines.first { $0.lowercased().hasPrefix("cookie: ") }.map { String($0.dropFirst("cookie: ".count)) }
+            lock.lock()
+            _requests.append(path)
+            if let cookie { _cookies[path] = cookie }
+            lock.unlock()
+            let file = folder.appendingPathComponent(String(path.dropFirst()).components(separatedBy: "?")[0])
+            let response: Data
+            if let body = try? Data(contentsOf: file) {
+                response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
+            } else {
+                response = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+            }
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+}
+
+/// What AVFoundation (QuickTime's engine) makes of a video file.
+struct VideoFacts: Sendable {
+    var width = 0, height = 0
+    var duration = 0.0
+    var videoFrames = 0
+    var audioTracks = 0
+    var audioSamples = 0
+    var error: String?
+}
+
+@MainActor
+enum VideoStreamTests {
+    static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/hls")
+
+    static func fixture(_ path: String) -> URL { fixtures.appendingPathComponent(path) }
+
+    static func media(_ path: String) -> HLSMediaPlaylist? {
+        guard let text = try? String(contentsOf: fixture(path), encoding: .utf8),
+              case .media(let playlist)? = HLSPlaylist.parse(text, base: fixture(path)) else { return nil }
+        return playlist
+    }
+
+    /// Opens a file the way QuickTime would and decodes every frame and all the sound.
+    static func inspect(_ url: URL) -> VideoFacts {
+        final class Box: @unchecked Sendable { var facts: VideoFacts?; }
+        let box = Box()
+        Task.detached {
+            var facts = VideoFacts()
+            do {
+                let asset = AVURLAsset(url: url)
+                facts.duration = try await asset.load(.duration).seconds
+                let videoTracks = try await asset.loadTracks(withMediaType: .video)
+                let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+                facts.audioTracks = audioTracks.count
+                if let track = videoTracks.first {
+                    let size = try await track.load(.naturalSize)
+                    facts.width = Int(size.width)
+                    facts.height = Int(size.height)
+                }
+                let reader = try AVAssetReader(asset: asset)
+                var outputs: [(AVAssetReaderTrackOutput, Bool)] = []
+                if let track = videoTracks.first {
+                    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+                    reader.add(output)
+                    outputs.append((output, true))
+                }
+                if let track = audioTracks.first {
+                    let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+                    reader.add(output)
+                    outputs.append((output, false))
+                }
+                reader.startReading()
+                for (output, isVideo) in outputs {
+                    while let sample = output.copyNextSampleBuffer() {
+                        if isVideo { facts.videoFrames += CMSampleBufferGetNumSamples(sample) } else { facts.audioSamples += CMSampleBufferGetNumSamples(sample) }
+                    }
+                }
+                if reader.status == .failed { facts.error = reader.error?.localizedDescription }
+            } catch {
+                facts.error = error.localizedDescription
+            }
+            box.facts = facts
+        }
+        _ = DownloadTests.waitFor(60) { box.facts != nil }
+        return box.facts ?? VideoFacts(error: "timed out")
+    }
+
+    static func run() {
+        // Reading playlists
+        let masterText = (try? String(contentsOf: fixture("master.m3u8"), encoding: .utf8)) ?? ""
+        if case .master(let variants)? = HLSPlaylist.parse(masterText, base: fixture("master.m3u8")) {
+            checkEqual(variants.map(\.label), ["360p", "720p", "1080p"], "a master playlist lists every size")
+            checkEqual(variants.map(\.bandwidth), [400_000, 1_200_000, 2_500_000], "with its bit rate")
+            checkEqual(variants[1].url, fixture("v720/index.m3u8"), "and where each size's playlist is")
+        } else {
+            check(false, "a master playlist is read")
+        }
+        let splitText = (try? String(contentsOf: fixture("split/master.m3u8"), encoding: .utf8)) ?? ""
+        if case .master(let variants)? = HLSPlaylist.parse(splitText, base: fixture("split/master.m3u8")) {
+            checkEqual(variants.first?.audioURL, fixture("split/audio/index.m3u8"), "a separate sound stream is found")
+        } else {
+            check(false, "a master playlist with separate sound is read")
+        }
+        let ts = media("v720/index.m3u8")
+        checkEqual(ts?.segments.count, 2, "a media playlist lists its pieces")
+        checkEqual(ts?.duration, 4, "and how long they last")
+        check(ts?.isFragmentedMP4 == false && ts?.isProtected == false, "MPEG-TS pieces, not protected")
+        check(media("fmp4/index.m3u8")?.isFragmentedMP4 == true, "fragmented-MP4 streams are told apart")
+        checkEqual(media("aes/index.m3u8")?.segments.first?.key.method, .aes128, "AES-128 encryption (not DRM) is read")
+        checkEqual(media("aes/index.m3u8")?.segments.first?.key.iv, Data(hexString: "00112233445566778899aabbccddeeff"), "with its IV")
+        let drm = "#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://x\",KEYFORMAT=\"com.apple.streamingkeydelivery\"\n#EXTINF:4,\na.ts\n"
+        if case .media(let locked)? = HLSPlaylist.parse(drm, base: URL(string: "https://example.com/v.m3u8")!) {
+            check(locked.isProtected, "copy-protected (DRM) streams are recognised")
+        }
+        let ranged = "#EXTM3U\n#EXT-X-MAP:URI=\"all.mp4\",BYTERANGE=\"800@0\"\n#EXTINF:2,\n#EXT-X-BYTERANGE:1000@800\nall.mp4\n#EXTINF:2,\n#EXT-X-BYTERANGE:500\nall.mp4\n"
+        if case .media(let parts)? = HLSPlaylist.parse(ranged, base: URL(string: "https://example.com/v/index.m3u8")!) {
+            check(parts.segments.count == 2 && parts.segments[1].byteRange?.offset == 1800 && parts.segments[1].byteRange?.length == 500,
+                  "pieces given as parts of one file follow on from each other")
+            checkEqual(parts.segments.first?.map?.byteRange?.length, 800, "and the init section's part is read")
+        }
+        checkEqual(HLSDownloadJob.sequenceIV(5), Data(count: 15) + Data([5]), "without an IV, the piece's number is used")
+
+        // Decrypting
+        if let key = try? Data(contentsOf: fixture("aes/key.bin")), let piece = try? Data(contentsOf: fixture("aes/seg0.ts")),
+           let iv = Data(hexString: "00112233445566778899aabbccddeeff") {
+            let plain = try? HLSDownloadJob.decrypt(piece, key: key, iv: iv)
+            check(plain?.first == 0x47 && (plain?.count ?? 0) % 188 == 0, "AES-128 pieces are decrypted into readable video")
+        } else {
+            check(false, "the encrypted test piece is there")
+        }
+
+        // Taking pieces apart
+        var demuxer = TSDemuxer()
+        for name in ["seg0.ts", "seg1.ts"] { if let data = try? Data(contentsOf: fixture("v720/\(name)")) { demuxer.feed(data) } }
+        let frames = demuxer.takeVideo(), sound = demuxer.takeAudio()
+        checkEqual(frames.count, 60, "every video frame is found (4 seconds at 15 a second)")
+        checkEqual(frames.filter(\.isKey).count, 2, "with its key frames")
+        check(abs(sound.count - 172) <= 4, "and the sound, in AAC frames", "\(sound.count)")
+        checkEqual(demuxer.aac, AACConfig(objectType: 2, frequencyIndex: 4, channels: 2), "AAC at 44.1 kHz, stereo")
+        check(zip(frames, frames.dropFirst()).allSatisfy { $0.dts < $1.dts }, "frames come in decoding order")
+
+        // Joining pieces into a file QuickTime plays
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-video-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let joined = work.appendingPathComponent("720.mp4")
+        do {
+            try VideoRemuxer.remuxTS(video: [fixture("v720/seg0.ts"), fixture("v720/seg1.ts")], to: joined)
+            let facts = inspect(joined)
+            check(facts.error == nil, "the joined MPEG-TS video opens", facts.error ?? "")
+            check(facts.width == 1280 && facts.height == 720, "at 1280 × 720", "\(facts.width) × \(facts.height)")
+            check(abs(facts.duration - 4) < 0.3, "and lasts 4 seconds", "\(facts.duration)")
+            checkEqual(facts.videoFrames, 60, "every frame decodes")
+            check(facts.audioTracks == 1 && facts.audioSamples > 150_000, "and the sound decodes too", "\(facts.audioSamples) samples")
+        } catch {
+            check(false, "MPEG-TS pieces are joined into an MP4", error.localizedDescription)
+        }
+        let fragmented = work.appendingPathComponent("fmp4.mp4")
+        do {
+            try VideoRemuxer.joinFragments(initSection: fixture("fmp4/init.mp4"), pieces: [fixture("fmp4/seg0.m4s"), fixture("fmp4/seg1.m4s")], to: fragmented)
+            let facts = inspect(fragmented)
+            check(facts.error == nil && facts.width == 1280 && abs(facts.duration - 4) < 0.3 && facts.videoFrames == 60 && facts.audioTracks == 1,
+                  "fragmented-MP4 pieces are joined into a playable file", "\(facts)")
+        } catch {
+            check(false, "fragmented-MP4 pieces are joined", error.localizedDescription)
+        }
+        let combined = work.appendingPathComponent("split.mp4")
+        do {
+            try VideoRemuxer.remuxTS(video: (0...1).map { fixture("split/video/seg\($0).ts") },
+                                     audio: (0...2).map { fixture("split/audio/seg\($0).ts") }, to: combined)
+            let facts = inspect(combined)
+            check(facts.error == nil && facts.width == 640 && facts.videoFrames == 60 && facts.audioTracks == 1 && facts.audioSamples > 150_000,
+                  "a video and its separate sound stream end up in one file", "\(facts)")
+        } catch {
+            check(false, "separate video and sound are joined", error.localizedDescription)
+        }
+
+        // The whole download, from a web server, through the download manager
+        guard let server = try? FolderServer(folder: fixtures) else {
+            check(false, "the test web server for streams starts")
+            return
+        }
+        _ = DownloadTests.waitFor(5) { server.port != 0 }
+        let folder = work.appendingPathComponent("Downloads")
+        Prefs.downloadFolder = folder
+        Prefs.downloadSortByType = false
+        Prefs.downloadSpeedLimitKB = 0
+        Prefs.downloadHourlyCapMB = 0
+        let manager = DownloadManager()
+        func stream(_ path: String, _ name: String, audio: String? = nil, cookie: Bool = false) -> DownloadItem? {
+            guard let item = manager.add(server.url(path), name: name, headers: cookie ? ["Cookie": "session=abc", "Referer": server.url("/page")] : [:],
+                                         stream: true, audio: audio.map(server.url)) else { return nil }
+            _ = DownloadTests.waitFor(60) { manager.item(item.id)?.state == .completed || manager.item(item.id)?.state == .failed }
+            return manager.item(item.id)
+        }
+        let picked = stream("/v1080/index.m3u8", "Test stream (1080p).mp4", cookie: true)
+        checkEqual(picked?.state, .completed, "a streamed video downloads at the size picked", picked?.error ?? "")
+        checkEqual(picked?.finalPath, folder.appendingPathComponent("Test stream (1080p).mp4").path, "as one .mp4 named after its size")
+        if let path = picked?.finalPath {
+            let facts = inspect(URL(fileURLWithPath: path))
+            check(facts.height == 1080 && facts.videoFrames == 60 && facts.audioSamples > 150_000, "which plays at 1080p, with sound", "\(facts)")
+        }
+        check(!server.requests.contains { $0.hasPrefix("/v720") || $0.hasPrefix("/v360") }, "no other size is fetched")
+        checkEqual(server.cookies["/v1080/seg0.ts"], "session=abc", "the site's cookies go with each piece")
+        check(!FileManager.default.fileExists(atPath: manager.streamFolder(for: picked?.id ?? UUID()).path), "and the pieces are tidied away")
+
+        let master = stream("/master.m3u8", "Best.mp4")
+        if let path = master?.finalPath { checkEqual(inspect(URL(fileURLWithPath: path)).height, 1080, "given a master playlist, the biggest size is downloaded") }
+        else { check(false, "a master playlist downloads", master?.error ?? "") }
+        let encrypted = stream("/aes/index.m3u8", "Encrypted.mp4")
+        if let path = encrypted?.finalPath { checkEqual(inspect(URL(fileURLWithPath: path)).videoFrames, 60, "encrypted (AES-128) streams download and play") }
+        else { check(false, "an encrypted stream downloads", encrypted?.error ?? "") }
+        let separate = stream("/split/video/index.m3u8", "Separate.mp4", audio: "/split/audio/index.m3u8")
+        if let path = separate?.finalPath { checkEqual(inspect(URL(fileURLWithPath: path)).audioTracks, 1, "a separate sound stream is downloaded with the video") }
+        else { check(false, "a stream with separate sound downloads", separate?.error ?? "") }
+        let mp4Stream = stream("/fmp4/index.m3u8", "Fragmented.mp4")
+        if let path = mp4Stream?.finalPath { checkEqual(inspect(URL(fileURLWithPath: path)).videoFrames, 60, "fragmented-MP4 streams download and play") }
+        else { check(false, "a fragmented-MP4 stream downloads", mp4Stream?.error ?? "") }
+        let missing = stream("/nothing/index.m3u8", "Missing.mp4")
+        check(missing?.state == .failed && missing?.error?.contains("404") == true, "a playlist that's gone fails with a clear message", missing?.error ?? "")
+
+        // Pausing part-way and carrying on keeps the pieces already downloaded
+        Prefs.downloadSpeedLimitKB = 40
+        manager.applyLimits()
+        if let item = manager.add(server.url("/v720/index.m3u8"), name: "Paused.mp4", stream: true) {
+            _ = DownloadTests.waitFor(20) { (manager.item(item.id)?.received ?? 0) > 0 }
+            manager.pause(item.id)
+            let before = server.requests.filter { $0.hasPrefix("/v720/seg") }.count
+            Prefs.downloadSpeedLimitKB = 0
+            manager.applyLimits()
+            manager.resume(item.id)
+            _ = DownloadTests.waitFor(60) { manager.item(item.id)?.state == .completed || manager.item(item.id)?.state == .failed }
+            checkEqual(manager.item(item.id)?.state, .completed, "a paused streamed video carries on and finishes", manager.item(item.id)?.error ?? "")
+            let after = server.requests.filter { $0.hasPrefix("/v720/seg") }.count
+            check(after - before <= 2, "without fetching every piece again", "\(before) then \(after)")
+        }
+        Prefs.downloadSpeedLimitKB = 0
+        manager.applyLimits()
+
+        // Quiet downloads from the video button, and the menu bar
+        let badge = MenuBarBadge.shared
+        badge.show(active: true, progress: 0.42)
+        checkEqual(badge.text, "42%", "the menu bar shows how far downloads have got")
+        badge.show(active: true, progress: nil)
+        checkEqual(badge.text, "⬇", "or an arrow while the size isn't known")
+        badge.show(active: false, progress: nil)
+        check(badge.text == nil, "and nothing once they're done")
+        let running = [DownloadItem(url: URL(string: "https://a/b")!, name: "b", state: .downloading, received: 25, total: 100),
+                       DownloadItem(url: URL(string: "https://a/c")!, name: "c", state: .downloading, received: 25, total: 100)]
+        checkEqual(DownloadsModule.progress(of: running), 0.25, "progress is for every running download together")
+        let module = DownloadsModule()
+        let request = try? JSONDecoder().decode(DownloadRequest.self, from: Data(#"{"url":"\#(server.url("/v360/index.m3u8"))","name":"Quiet (360p).mp4","kind":"hls","quiet":true,"referrer":"https://videos.example/watch/1"}"#.utf8))
+        check(request?.kind == "hls" && request?.quiet == true, "the video button's request says it's a stream, to download quietly")
+        checkEqual(request?.headers["Origin"], "https://videos.example", "streams also say which site they're from")
+        if let request {
+            module.received(request)
+            check(!NSApp.windows.contains { $0.title == "Downloads" && $0.isVisible }, "picking a size doesn't put the downloads list in front")
+            check(badge.text != nil, "the menu bar icon shows the download instead")
+            if let item = module.manager.items.first {
+                checkEqual(item.isStream, true, "and it's downloaded as a stream")
+                module.manager.remove(item.id)
+            }
+        }
+        try? FileManager.default.removeItem(at: work)
     }
 }

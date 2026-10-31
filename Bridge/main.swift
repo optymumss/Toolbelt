@@ -53,10 +53,13 @@ func handOver(_ message: [String: Any]) -> [String: Any] {
           ["http", "https", "ftp"].contains(scheme) else {
         return ["ok": false, "error": "Not a web or FTP link"]
     }
-    var request: [String: String] = ["url": url]
-    for key in ["name", "referrer", "cookies", "userAgent"] {
+    var request: [String: Any] = ["url": url]
+    for key in ["name", "referrer", "cookies", "userAgent", "audioUrl"] {
         if let value = message[key] as? String, !value.isEmpty { request[key] = value }
     }
+    // A streamed video picked from the video button's list of sizes.
+    if message["kind"] as? String == "hls" { request["kind"] = "hls" }
+    if message["quiet"] as? Bool == true { request["quiet"] = true }
     let inbox = dataFolder().appendingPathComponent("inbox", isDirectory: true)
     do {
         try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
