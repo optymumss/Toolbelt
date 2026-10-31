@@ -32,6 +32,16 @@ final class MultitouchReader: @unchecked Sendable {
     private var started = false
     private var scrollsWanted = false
 
+    private var sensitivity = 1.0
+
+    /// Below 1 gestures are easier to trigger, above 1 harder.
+    func setSensitivity(_ value: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        sensitivity = value
+        for key in recognizers.keys { recognizers[key]?.tune(value) }
+    }
+
     /// Scroll steps are only worked out while a rule uses them.
     func setScrolls(_ on: Bool) {
         lock.lock()
@@ -105,6 +115,7 @@ final class MultitouchReader: @unchecked Sendable {
             let source: TouchSource = (id == 112 || id == 113) ? .magicMouse : .trackpad
             var recognizer = TouchRecognizer(source: source)
             recognizer.scrolls = scrollsWanted
+            recognizer.tune(sensitivity)
             recognizers[device] = recognizer
             register(device, multitouchFrame)
             startDevice(device, 0)
@@ -181,7 +192,8 @@ final class MultitouchReader: @unchecked Sendable {
     func clickGesture() -> Gesture? {
         lock.lock()
         defer { lock.unlock() }
-        for recognizer in recognizers.values where recognizer.source == .trackpad {
+        // The device with fingers on it is the one being clicked.
+        for recognizer in recognizers.values.sorted(by: { $0.current.count > $1.current.count }) {
             if let gesture = recognizer.click() { return gesture }
         }
         return nil

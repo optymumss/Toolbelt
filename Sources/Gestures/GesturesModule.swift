@@ -95,13 +95,14 @@ final class GesturesModule: ToolbeltModule {
             case let .touch(_, kind, _):
                 touches = true
                 if kind.isScroll { scrolls = true }
-                if kind == .click || kind.isCorner { needs.clicks = true }
+                if kind == .click || kind.isCorner || kind == .clickMiddle { needs.clicks = true }
             case .mouseButton(let button): needs.buttons.insert(button)
             case .stroke(let button, _): needs.strokeButtons.insert(button)
             case .modifierTap, .keySequence: needs.keyboard = true
             }
         }
         MultitouchReader.shared.setScrolls(scrolls)
+        MultitouchReader.shared.setSensitivity(Prefs.gestureSensitivity)
         if touches { MultitouchReader.shared.start() } else { MultitouchReader.shared.stop() }
         let mouse = !needs.buttons.isEmpty || !needs.strokeButtons.isEmpty || needs.clicks
         if mouse, !PermissionGate.ensure(.accessibility, to: "use mouse gestures") {
@@ -135,6 +136,8 @@ final class GesturesModule: ToolbeltModule {
             }
         }
         guard let rule = GestureRule.match(gesture, app: app, in: allRules) else { return false }
+        // Typing just now: a palm brushing the trackpad isn't a gesture.
+        if case .touch = gesture, Self.typedRecently() { return false }
         // Run after the event has been dealt with, so the tap is never held up.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.run(rule, for: gesture) }
@@ -145,7 +148,14 @@ final class GesturesModule: ToolbeltModule {
     private func run(_ rule: GestureRule, for gesture: Gesture) {
         log.append(gesture)
         if log.count > 50 { log.removeFirst() }
-        runner.run(rule.action)
+        for action in rule.actions { runner.run(action) }
+    }
+
+    /// Whether a key was pressed within the "ignore the trackpad after typing" time. Asks macOS when the
+    /// last key went down, which needs no permission and costs nothing while no gesture happens.
+    static func typedRecently(pause: Double = Prefs.gestureTypingPause) -> Bool {
+        guard pause > 0 else { return false }
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown) < pause
     }
 
     private func typedText(_ text: String) {
@@ -181,6 +191,7 @@ final class GesturesModule: ToolbeltModule {
 
 struct GesturesSettingsTab: View {
     @ObservedObject var store: GestureStore
+    @ObservedObject private var settings = GestureSettings.shared
     @State private var expanded: UUID?
 
     var body: some View {
@@ -191,7 +202,7 @@ struct GesturesSettingsTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach($store.rules) { $rule in
-                    GestureRuleRow(rule: $rule, expanded: expanded == rule.id,
+                    GestureRuleRow(rule: $rule, inUse: Set(store.rules.filter { $0.id != rule.id }.map(\.gesture)), expanded: expanded == rule.id,
                                    toggle: { expanded = expanded == rule.id ? nil : rule.id },
                                    remove: { store.rules.removeAll { $0.id == rule.id } })
                 }
@@ -217,6 +228,29 @@ struct GesturesSettingsTab: View {
                 Text("Trackpad and Magic Mouse gestures work alongside macOS's own; switch off any of macOS's you replace in System Settings → Trackpad (for the four-finger set above: More Gestures → Mission Control and App Exposé off). A double tap makes a single tap with the same fingers wait a moment. Scrolls repeat while your fingers keep sliding; swipes happen once. Mouse buttons and strokes need Accessibility; key taps and typed sequences need Input Monitoring. Toolbelt only listens while a gesture needs it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section {
+                LabeledContent("Sensitivity") {
+                    HStack {
+                        Text("Easier to trigger").font(.caption).foregroundStyle(.secondary)
+                        Slider(value: $settings.gestureSensitivity, in: 0.6...1.6, step: 0.1)
+                            .frame(maxWidth: 220)
+                            .onChange(of: settings.gestureSensitivity) { _, value in MultitouchReader.shared.setSensitivity(value) }
+                        Text("Harder").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Picker("After typing, ignore the trackpad for", selection: $settings.gestureTypingPause) {
+                    Text("No time (off)").tag(0.0)
+                    Text("0.3 seconds").tag(0.3)
+                    Text("0.5 seconds").tag(0.5)
+                    Text("1 second").tag(1.0)
+                    Text("2 seconds").tag(2.0)
+                }
+            } header: {
+                Text("Trackpad and Magic Mouse")
+            } footer: {
+                Text("Harder to trigger means swipes and scrolls need longer slides, and taps must be quicker and stiller. Ignoring the trackpad after typing stops a resting palm from setting off gestures.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -239,6 +273,8 @@ struct GesturesSettingsTab: View {
 
 struct GestureRuleRow: View {
     @Binding var rule: GestureRule
+    /// Gestures other rules already use, marked in the picker.
+    var inUse: Set<Gesture> = []
     let expanded: Bool
     let toggle: () -> Void
     let remove: () -> Void
@@ -249,7 +285,7 @@ struct GestureRuleRow: View {
                 Toggle("", isOn: $rule.enabled).labelsHidden().toggleStyle(.switch).controlSize(.mini)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(rule.gesture.title)
-                    Text(rule.action.summary + (rule.scope == .everywhere ? "" : " · \(rule.scope.title.lowercased()) \(rule.apps.count) app\(rule.apps.count == 1 ? "" : "s")"))
+                    Text(rule.summary + (rule.scope == .everywhere ? "" : " · \(rule.scope.title.lowercased()) \(rule.apps.count) app\(rule.apps.count == 1 ? "" : "s")"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -257,8 +293,22 @@ struct GestureRuleRow: View {
                 Button(action: remove) { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
             if expanded {
-                GestureEditor(gesture: $rule.gesture, deleteTyped: $rule.deleteTyped)
+                GestureEditor(gesture: $rule.gesture, deleteTyped: $rule.deleteTyped, inUse: inUse)
                 ActionEditor(action: $rule.action)
+                // More actions, run one after another (like BetterTouchTool's action list).
+                ForEach(Array((rule.moreActions ?? []).indices), id: \.self) { index in
+                    HStack(alignment: .top) {
+                        Text("then").font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                        ActionEditor(action: Binding(
+                            get: { (rule.moreActions ?? [])[safe: index] ?? MacroAction(kind: .system) },
+                            set: { if rule.moreActions?.indices.contains(index) == true { rule.moreActions?[index] = $0 } }))
+                        Button { rule.moreActions?.remove(at: index); if rule.moreActions?.isEmpty == true { rule.moreActions = nil } } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                Button("Add Another Action") { rule.moreActions = (rule.moreActions ?? []) + [MacroAction(kind: .system)] }
                 AppScopeEditor(scope: $rule.scope, apps: $rule.apps)
             }
         }
@@ -270,22 +320,40 @@ struct GestureRuleRow: View {
 struct GestureEditor: View {
     @Binding var gesture: Gesture
     @Binding var deleteTyped: Bool
+    var inUse: Set<Gesture> = []
 
     var body: some View {
         switch gesture {
         case let .touch(source, kind, fingers):
             HStack {
-                Picker("Device", selection: Binding(get: { source }, set: { gesture = .touch($0, kind, fingers: fingers) })) {
+                Picker("Device", selection: Binding(get: { source }, set: { newSource in
+                    // Keep the same gesture if the other device has it, otherwise its first one-finger gesture.
+                    let choices = TouchKind.choices(for: newSource)
+                    let keeps = choices.first { $0.fingers == fingers }?.kinds.contains(kind) == true
+                    gesture = keeps ? .touch(newSource, kind, fingers: fingers) : .touch(newSource, .tap, fingers: choices[0].fingers)
+                })) {
                     ForEach(TouchSource.allCases) { Text($0.title).tag($0) }
                 }
-                Picker("Gesture", selection: Binding(get: { kind }, set: { gesture = .touch(source, $0, fingers: $0.isCorner ? 1 : max(fingers, 2)) })) {
-                    ForEach(TouchKind.allCases) { Text($0.title).tag($0) }
-                }
-                if !kind.isCorner {
-                    Picker("Fingers", selection: Binding(get: { fingers }, set: { gesture = .touch(source, kind, fingers: $0) })) {
-                        ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
+                .fixedSize()
+                // Grouped by the number of fingers, like BetterTouchTool's list; gestures other rules use are marked.
+                Menu(gesture.title.replacingOccurrences(of: "\(source.title): ", with: "")) {
+                    ForEach(TouchKind.choices(for: source), id: \.fingers) { group in
+                        Section(group.fingers == 1 ? "One finger" : "\(Self.number(group.fingers)) fingers") {
+                            ForEach(group.kinds) { choice in
+                                let option = Gesture.touch(source, choice, fingers: group.fingers)
+                                Button {
+                                    gesture = option
+                                } label: {
+                                    let mark = option == gesture ? "✓ " : ""
+                                    Text(mark + choice.title + (inUse.contains(option) ? "  · in use" : ""))
+                                }
+                            }
+                        }
                     }
-                    .fixedSize()
+                }
+                .help("Choose a gesture. “In use” ones already have a rule.")
+                if inUse.contains(gesture) {
+                    Text("Another rule uses this gesture").font(.caption).foregroundStyle(.orange)
                 }
             }
         case .mouseButton(let button):
@@ -322,6 +390,16 @@ struct GestureEditor: View {
             }
         }
     }
+}
+
+extension GestureEditor {
+    static func number(_ count: Int) -> String {
+        ["Zero", "One", "Two", "Three", "Four", "Five"][min(max(count, 0), 5)]
+    }
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 /// "In every app", "Only in" or "Everywhere except", and the apps.
@@ -361,4 +439,12 @@ enum AppNames {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
         return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
     }
+}
+
+/// The trackpad settings, observable for the Settings tab (stored in Prefs).
+@MainActor
+final class GestureSettings: ObservableObject {
+    static let shared = GestureSettings()
+    @Published var gestureSensitivity = Prefs.gestureSensitivity { didSet { Prefs.gestureSensitivity = gestureSensitivity } }
+    @Published var gestureTypingPause = Prefs.gestureTypingPause { didSet { Prefs.gestureTypingPause = gestureTypingPause } }
 }

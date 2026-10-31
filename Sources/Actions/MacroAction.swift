@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import CoreAudio
 import SwiftUI
 
 /// Something Toolbelt can do when a gesture or a macro's trigger happens.
@@ -80,6 +81,7 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
     case playPause, nextTrack, previousTrack, volumeUp, volumeDown, mute
     case brightnessUp, brightnessDown, lockScreen, sleepDisplay, sleep, toggleDarkMode
     case closeWindow, quitApp, hideApp, fullScreen, newTab, closeTab, back, forward
+    case muteMicrophone, spotlight, launchpad, siri, keyboardBrightnessUp, keyboardBrightnessDown
 
     var id: String { rawValue }
 
@@ -109,6 +111,12 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
         case .closeTab: return "Close tab (⌘W)"
         case .back: return "Back (⌘[)"
         case .forward: return "Forward (⌘])"
+        case .muteMicrophone: return "Mute / unmute the microphone"
+        case .spotlight: return "Spotlight search"
+        case .launchpad: return "Launchpad / Apps"
+        case .siri: return "Siri"
+        case .keyboardBrightnessUp: return "Keyboard light up"
+        case .keyboardBrightnessDown: return "Keyboard light down"
         }
     }
 }
@@ -232,6 +240,18 @@ final class ActionRunner {
         case .newTab: keys(kVK_ANSI_T, [.maskCommand])
         case .back: keys(kVK_ANSI_LeftBracket, [.maskCommand])
         case .forward: keys(kVK_ANSI_RightBracket, [.maskCommand])
+        case .muteMicrophone: Microphone.toggleMute()
+        case .spotlight: keys(kVK_Space, [.maskCommand])
+        case .launchpad:
+            // macOS 26 replaced Launchpad with the Apps view; older versions still have Launchpad.
+            let apps = ["/System/Applications/Apps.app", "/System/Applications/Launchpad.app"]
+            if let path = apps.first(where: FileManager.default.fileExists) {
+                NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: NSWorkspace.OpenConfiguration())
+            }
+        case .siri:
+            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/System/Applications/Siri.app"), configuration: NSWorkspace.OpenConfiguration())
+        case .keyboardBrightnessUp: KeyboardLight.change(by: 1.0 / 16)
+        case .keyboardBrightnessDown: KeyboardLight.change(by: -1.0 / 16)
         }
     }
 
@@ -246,10 +266,110 @@ final class ActionRunner {
     }
 }
 
+/// The default microphone's mute switch (Core Audio). Microphones without one are turned right down instead.
+enum Microphone {
+    private static var savedVolume: Float32 = 0.75
+
+    private static func defaultInput() -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var id = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id) == noErr, id != 0 else { return nil }
+        return id
+    }
+
+    /// Whether the microphone is muted now (nil if there's no microphone).
+    static var isMuted: Bool? {
+        guard let id = defaultInput() else { return nil }
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioDevicePropertyScopeInput,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var muted: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectHasProperty(id, &address), AudioObjectGetPropertyData(id, &address, 0, nil, &size, &muted) == noErr {
+            return muted != 0
+        }
+        return volume(of: id).map { $0 < 0.01 }
+    }
+
+    @discardableResult
+    static func toggleMute() -> Bool {
+        guard let id = defaultInput(), let muted = isMuted else { return false }
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioDevicePropertyScopeInput,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var settable: DarwinBoolean = false
+        if AudioObjectHasProperty(id, &address), AudioObjectIsPropertySettable(id, &address, &settable) == noErr, settable.boolValue {
+            var value: UInt32 = muted ? 0 : 1
+            return AudioObjectSetPropertyData(id, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+        }
+        // No mute switch: turn the input volume to nothing, and back to where it was.
+        if !muted, let current = volume(of: id) { savedVolume = max(current, 0.1) }
+        return setVolume(muted ? savedVolume : 0, of: id)
+    }
+
+    private static func volume(of id: AudioObjectID) -> Float32? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var value: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectHasProperty(id, &address), AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value
+    }
+
+    private static func setVolume(_ volume: Float32, of id: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var value = volume
+        return AudioObjectSetPropertyData(id, &address, 0, nil, UInt32(MemoryLayout<Float32>.size), &value) == noErr
+    }
+}
+
+/// The keyboard's backlight, through macOS's own brightness service (the one Control Centre uses).
+enum KeyboardLight {
+    private typealias Getter = @convention(c) (AnyObject, Selector, UInt64) -> Float
+    private typealias Setter = @convention(c) (AnyObject, Selector, Float, UInt64) -> Bool
+
+    private static let client: NSObject? = {
+        guard Bundle(path: "/System/Library/PrivateFrameworks/CoreBrightness.framework")?.load() == true,
+              let type = NSClassFromString("KeyboardBrightnessClient") as? NSObject.Type else { return nil }
+        return type.init()
+    }()
+
+    /// The keyboards that have a light (the built-in one, and Magic Keyboards that do).
+    static var keyboards: [UInt64] {
+        guard let client, client.responds(to: NSSelectorFromString("copyKeyboardBacklightIDs")),
+              let ids = client.perform(NSSelectorFromString("copyKeyboardBacklightIDs"))?.takeRetainedValue() as? [NSNumber] else { return [] }
+        return ids.map(\.uint64Value)
+    }
+
+    /// The light's level from 0 to 1, or nil if there's no keyboard light.
+    static var level: Float? {
+        guard let client, let keyboard = keyboards.first else { return nil }
+        let selector = NSSelectorFromString("brightnessForKeyboard:")
+        guard client.responds(to: selector) else { return nil }
+        let get = unsafeBitCast(client.method(for: selector), to: Getter.self)
+        return get(client, selector, keyboard)
+    }
+
+    static func change(by delta: Float) {
+        let get = NSSelectorFromString("brightnessForKeyboard:"), set = NSSelectorFromString("setBrightness:forKeyboard:")
+        guard let client, client.responds(to: get), client.responds(to: set), !keyboards.isEmpty else {
+            MediaKeys.press(delta > 0 ? MediaKeys.illuminationUp : MediaKeys.illuminationDown) // older Macs
+            return
+        }
+        let read = unsafeBitCast(client.method(for: get), to: Getter.self)
+        let write = unsafeBitCast(client.method(for: set), to: Setter.self)
+        for keyboard in keyboards {
+            _ = write(client, set, min(1, max(0, read(client, get, keyboard) + delta)), keyboard)
+        }
+    }
+}
+
 /// The keyboard's media and brightness keys, pressed the way the keyboard does.
 enum MediaKeys {
     static let soundUp: Int32 = 0, soundDown: Int32 = 1, brightnessUp: Int32 = 2, brightnessDown: Int32 = 3
     static let mute: Int32 = 7, play: Int32 = 16, next: Int32 = 17, previous: Int32 = 18
+    static let illuminationUp: Int32 = 21, illuminationDown: Int32 = 22
 
     static func press(_ key: Int32) {
         for down in [true, false] {

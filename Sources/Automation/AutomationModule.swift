@@ -29,6 +29,21 @@ final class AutomationModule: ToolbeltModule {
 
     static var terminalFolder: URL { SettingsStore.folder.appendingPathComponent("inbox-macros", isDirectory: true) }
 
+    let web = WebServer()
+
+    /// Starts, restarts or stops the web server to match Settings.
+    func updateWebServer() {
+        guard running, Prefs.webServerOn else { web.stop(); return }
+        web.start(port: UInt16(clamping: Prefs.webServerPort), everyone: Prefs.webServerEveryone, api: webAPI)
+    }
+
+    var webAPI: WebAPI {
+        WebAPI(secret: Prefs.webServerSecret,
+               macroNames: { [weak self] in self?.store.macros.filter(\.enabled).map(\.name) ?? [] },
+               runMacro: { [weak self] name, input in self?.run(named: name, trigger: input) },
+               runAction: { [weak self] action in self?.runner.run(action) })
+    }
+
     init(shortcuts: ShortcutCenter, gestures: GesturesModule? = nil) {
         runner = ActionRunner(shortcuts: shortcuts)
         self.gestures = gestures
@@ -40,10 +55,12 @@ final class AutomationModule: ToolbeltModule {
         running = true
         ActionRunner.runMacro = { [weak self] name in self?.run(named: name) }
         arm()
+        updateWebServer()
     }
 
     func stop() {
         running = false
+        web.stop()
         disarm()
         gestures?.updateListening()
     }
@@ -262,10 +279,11 @@ final class AutomationModule: ToolbeltModule {
     }
 
     func settingsView() -> AnyView {
-        AnyView(AutomationSettingsTab(store: store) { [weak self] in self?.open() })
+        AnyView(AutomationSettingsTab(store: store, web: self) { [weak self] in self?.open() })
     }
 
     func willTerminate() {
+        web.stop()
         disarm()
     }
 
