@@ -151,7 +151,6 @@ enum ChromeSetup {
 final class DownloadNotifier: NSObject, UNUserNotificationCenterDelegate {
     /// Notifications only work from the real app (not the automated test program).
     private var available: Bool { Bundle.main.bundleURL.pathExtension == "app" && Bundle.main.bundleIdentifier != nil }
-    private var asked = false
 
     func setUp() {
         guard available else { return }
@@ -160,29 +159,21 @@ final class DownloadNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     func finished(_ item: DownloadItem) {
         guard available, Prefs.downloadNotify else { return }
-        let (id, name, path) = (item.id.uuidString, item.name, item.finalPath)
-        if asked {
-            Self.post(id: id, name: name, path: path)
-        } else {
-            // macOS asks once, the first time a download finishes.
-            asked = true
-            Self.askThenPost(id: id, name: name, path: path)
-        }
+        Self.post(id: item.id.uuidString, title: "Download finished", body: item.name, path: item.finalPath)
     }
 
-    // Not on the main actor: macOS calls back on its own threads.
-    nonisolated private static func askThenPost(id: String, name: String, path: String?) {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            if granted { post(id: id, name: name, path: path) }
+    /// Shows a notification (macOS asks once whether Toolbelt may). Clicking one with a path shows the file.
+    /// Not on the main actor: macOS calls back on its own threads.
+    nonisolated static func post(id: String, title: String, body: String, path: String?) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            if let path { content.userInfo = ["path": path] }
+            center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
         }
-    }
-
-    nonisolated private static func post(id: String, name: String, path: String?) {
-        let content = UNMutableNotificationContent()
-        content.title = "Download finished"
-        content.body = name
-        if let path { content.userInfo = ["path": path] }
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,

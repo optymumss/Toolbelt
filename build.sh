@@ -45,6 +45,10 @@ xcrun swiftc \
     -framework IOKit \
     -framework Quartz \
     -framework Vision \
+    -framework CoreWLAN \
+    -framework CoreLocation \
+    -framework CoreAudio \
+    -framework Network \
     "${SOURCES[@]}" \
     -o "$APP/Contents/MacOS/$APP_NAME"
 

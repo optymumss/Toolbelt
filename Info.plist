@@ -17,13 +17,17 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.17</string>
+    <string>0.18</string>
     <key>CFBundleVersion</key>
-    <string>17</string>
+    <string>18</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Toolbelt asks Finder, System Events and the login window to empty the Bin, switch dark mode, restart, shut down or log out when you choose those commands.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>macOS only tells apps the name of your Wi-Fi network if they may use Location Services. Toolbelt uses it only for macros that start when you join a particular Wi-Fi network.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>macOS only tells apps the name of your Wi-Fi network if they may use Location Services. Toolbelt uses it only for macros that start when you join a particular Wi-Fi network.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <!-- The download manager must be able to fetch plain http:// links too. -->

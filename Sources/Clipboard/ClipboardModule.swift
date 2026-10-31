@@ -47,6 +47,11 @@ final class ClipboardModule: ToolbeltModule {
         shortcuts.setHandler(for: .pasteNextFromStack) { [weak self] in
             self?.pasteNextFromStack()
         }
+        // Gestures and macros can paste named clipboards.
+        ActionRunner.pasteNamedClipboard = { [weak self] name in
+            guard let self, let clip = self.named.clip(named: name) else { return }
+            self.paster.paste(clip.item, plainText: false)
+        }
     }
 
     func start() {

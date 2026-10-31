@@ -42,9 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.register(ShelfModule(shortcuts: shortcuts))
         modules.register(DownloadsModule())
         modules.register(ScreenshotsModule(shortcuts: shortcuts))
-        modules.register(GesturesModule(shortcuts: shortcuts) { [weak self] in
+        let gestures = GesturesModule(shortcuts: shortcuts) { [weak self] in
             self?.settings.show(tab: .module(.gestures))
-        })
+        }
+        modules.register(gestures)
+        modules.register(AutomationModule(shortcuts: shortcuts, gestures: gestures))
 
         settings = SettingsWindowController(modules: modules, shortcuts: shortcuts)
         statusMenu = StatusMenu(modules: modules, shortcuts: shortcuts) { [weak self] tab in
@@ -119,6 +121,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "settings-shelf": settings.show(tab: .module(.shelf))
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-screenshots": settings.show(tab: .module(.screenshots))
+            case "settings-automation": settings.show(tab: .module(.automation))
+            case "macros":
+                // An example macro, opened in the Macros window.
+                guard let automation = modules.module(.automation) as? AutomationModule else { break }
+                var ask = MacroStep(kind: .askInput)
+                ask.text = "Who is the email for?"
+                ask.name = "Name"
+                var check = MacroStep(kind: .ifThen)
+                check.condition = MacroCondition(left: "%Name%", test: .isEmpty, right: "")
+                check.steps = [MacroStep(kind: .stop)]
+                var type = MacroStep(kind: .action)
+                type.action = MacroAction(kind: .typeText, value: "Hi %Name%,\n\nThanks for your message.")
+                var hotKey = MacroTrigger(kind: .hotKey)
+                hotKey.keyCode = 14 // E
+                hotKey.modifiers = 0x1000 | 0x0800 | 0x0100 // ⌃⌥⌘
+                var morning = MacroTrigger(kind: .timeOfDay)
+                morning.number = 9 * 60
+                morning.weekdays = [2, 3, 4, 5, 6]
+                automation.store.groups = [MacroGroup(name: "Email", scope: .only, apps: ["com.apple.mail"])]
+                automation.store.macros = [
+                    Macro(name: "Reply to email", groupID: automation.store.groups.first?.id, triggers: [hotKey, MacroTrigger(kind: .launcher)], steps: [ask, check, type]),
+                    Macro(name: "Start the work day", triggers: [morning, MacroTrigger(kind: .menuBar)], steps: [
+                        MacroStep(kind: .action, action: MacroAction(kind: .openApp, value: "/System/Applications/Calendar.app")),
+                        MacroStep(kind: .action, action: .toolbelt(.layout(1))),
+                    ]),
+                ]
+                automation.open()
             case "settings-gestures":
                 // A few example gestures, one opened for editing.
                 guard let gestures = modules.module(.gestures) as? GesturesModule else { break }

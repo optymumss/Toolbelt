@@ -114,6 +114,8 @@ SCREENS=(
     "screenshot-editor=screenshot-editor"
     "launcher-screenshot=launcher:screenshot"
     "settings-gestures=settings-gestures"
+    "macros=macros"
+    "settings-automation=settings-automation"
     "launcher-switcher=launcher-switcher"
     "notes-demo=notes-demo"
 )

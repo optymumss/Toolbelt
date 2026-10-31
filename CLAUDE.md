@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros.
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -30,6 +30,10 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   from `launcherProvider` (see `ClipboardLauncherProvider`).
 - `Sources/Actions/` — `MacroAction` and `ActionRunner`: everything a gesture or macro can do. Gestures and
   Automation share it, so every trigger can run every action.
+- `Sources/Automation/` — macros: `MacroModel` (macros, groups, triggers, steps), `MacroEngine` (`MacroRun`:
+  variables, conditions, loops), `SystemHelpers` (menu items by name, resolution, sound output, other
+  keyboards, Wi-Fi), `AutomationModule` (watches only the triggers macros use), `MacroEditor` (the Macros window).
+  Typed-text and gesture triggers are handed to the Gestures module as extra rules.
 - `Chrome/` — the Chrome extension (Manifest V3, loaded unpacked; its fixed ID comes from the `key`).
   `Bridge/main.swift` — `ToolbeltBridge`, the native-messaging helper Chrome starts; it writes requests into
   `<data>/inbox/`, which `BrowserInbox` watches. `build.sh` builds both into the app bundle.

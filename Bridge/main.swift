@@ -72,6 +72,25 @@ func handOver(_ message: [String: Any]) -> [String: Any] {
     return ["ok": true]
 }
 
+// From Terminal: ToolbeltBridge run "Macro name" [text for %Trigger%]
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "run" {
+    let inbox = dataFolder().appendingPathComponent("inbox-macros", isDirectory: true)
+    var request = ["macro": CommandLine.arguments[2]]
+    if CommandLine.arguments.count >= 4 { request["input"] = CommandLine.arguments[3...].joined(separator: " ") }
+    do {
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        let id = UUID().uuidString
+        let hidden = inbox.appendingPathComponent(".\(id).json")
+        try JSONSerialization.data(withJSONObject: request).write(to: hidden)
+        try FileManager.default.moveItem(at: hidden, to: inbox.appendingPathComponent("\(id).json"))
+        openToolbeltIfNeeded()
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("Couldn't hand the macro to Toolbelt: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+
 while let message = readMessage() {
     switch message["type"] as? String {
     case "ping": send(["ok": true, "version": 1])
