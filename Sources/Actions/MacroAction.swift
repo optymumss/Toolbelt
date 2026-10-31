@@ -8,7 +8,7 @@ import SwiftUI
 struct MacroAction: Codable, Equatable, Hashable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
         case toolbelt, openApp, open, pressKeys, typeText, system, menuItem, resolution, audioOutput
-        case setClipboard, pasteNamed, macro, shell, appleScript, javaScript
+        case setClipboard, pasteNamed, macro, shell, appleScript, javaScript, showHUD
 
         var id: String { rawValue }
 
@@ -29,6 +29,7 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .shell: return "Run a shell script"
             case .appleScript: return "Run an AppleScript"
             case .javaScript: return "Run a JavaScript"
+            case .showHUD: return "Show an on-screen message"
             }
         }
     }
@@ -61,6 +62,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .shell: return "Shell: \(value.split(separator: "\n").first ?? "")"
         case .appleScript: return "AppleScript"
         case .javaScript: return "JavaScript"
+        case .showHUD: return "Show “\(value.prefix(30))”"
         }
     }
 }
@@ -168,6 +170,8 @@ final class ActionRunner {
             Self.runScript("/usr/bin/osascript", ["-e", action.value])
         case .javaScript:
             Self.runScript("/usr/bin/osascript", ["-l", "JavaScript", "-e", action.value])
+        case .showHUD:
+            HUD.show(Placeholders.render(action.value).text)
         }
     }
 
@@ -437,6 +441,8 @@ struct ActionEditor: View {
                 TextField("Named clipboard", text: $action.value)
             case .macro:
                 TextField("Macro name", text: $action.value)
+            case .showHUD:
+                TextField("Message (placeholders like {date} work)", text: $action.value)
             case .shell, .appleScript, .javaScript:
                 TextEditor(text: $action.value)
                     .font(.system(.caption, design: .monospaced))

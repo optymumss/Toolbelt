@@ -173,6 +173,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Annotation(tool: .text, start: CGPoint(x: w * 0.12, y: h * 0.8), end: .zero, color: .red, text: "Look here"),
                 ]
                 editor.model.crop = CGRect(x: w * 0.02, y: h * 0.01, width: w * 0.96, height: h * 0.95)
+            case "triggers", "trigger-conditions", "trigger-group":
+                // The Triggers window with an example set: a group for browsers, a trigger with its own
+                // conditions and notes, a keyboard shortcut with an on-screen message.
+                guard let gestures = modules.module(.gestures) as? GesturesModule else { break }
+                let browsers = ActivationGroup(name: "Browsers", condition: ConditionGroup(mode: .all, items: [
+                    .group(ConditionGroup(mode: .any, items: ["Safari", "Chrome", "Firefox"].map { .rule(ConditionRule(field: .appName, op: .contains, value: $0)) })),
+                    .group(ConditionGroup(mode: .none, items: ["Private", "Incognito"].map { .rule(ConditionRule(field: .windowTitle, op: .contains, value: $0)) })),
+                ]))
+                gestures.store.groups = [browsers]
+                var corner = GestureRule(gesture: .touch(.trackpad, .tap, fingers: 3), action: .system(.missionControl))
+                corner.notes = "Top-left quarter of the window"
+                corner.condition = ConditionGroup(mode: .all, items: [
+                    .rule(ConditionRule(field: .pointerXInWindow, op: .lessThan, value: "50")),
+                    .rule(ConditionRule(field: .pointerYInWindow, op: .greaterOrEqual, value: "50")),
+                ])
+                var clipboard = GestureRule(gesture: .shortcut(keyCode: 9, modifiers: 6400), action: .toolbelt(.clipboardHistory))
+                clipboard.notes = "Clipboard history"
+                clipboard.showHUD = true
+                clipboard.moreActions = [MacroAction(kind: .showHUD, value: "Clipboard")]
+                var back = GestureRule(gesture: .touch(.trackpad, .swipeLeft, fingers: 3), action: .system(.back))
+                back.groupID = browsers.id
+                back.notes = "Back in browsers"
+                gestures.store.rules = [
+                    GestureRule(gesture: .touch(.trackpad, .doubleTap, fingers: 4), action: .system(.brightnessUp)),
+                    corner,
+                    clipboard,
+                    GestureRule(gesture: .touch(.trackpad, .scrollRight, fingers: 3), action: .system(.volumeUp)),
+                    back,
+                ]
+                gestures.open()
+                if let state = gestures.triggersWindowController?.state {
+                    switch target {
+                    case "trigger-group": state.scope = .group(browsers.id); state.editingGroup = browsers.id
+                    case "trigger-conditions": state.selected = corner.id; state.editingCondition = true
+                    default: state.selected = corner.id
+                    }
+                }
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()
             case "downloads-100":

@@ -117,6 +117,7 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Gestures | Double taps; scrolls that repeat while sliding; the brightness/volume/sleep set | Tests "Gestures: trackpad, mouse and keys" (made-up touches); **Manual** on a real trackpad |
 | Gestures | Taps in places, TipTaps, Magic Mouse taps and clicks, picker grouped by fingers, several actions per gesture, sensitivity, ignore after typing | Tests "Gestures: trackpad, mouse and keys"; **Manual** on a real trackpad and Magic Mouse |
 | Gestures | Microphone mute, Spotlight, Launchpad/Apps, Siri, keyboard light | Tests (microphone where the test Mac has one); **Manual** for the keyboard light (test Macs have none) |
+| Gestures | Triggers window (4 columns), keyboard-shortcut triggers, notes, on-screen messages, run alongside, recursion protection, activation groups and per-trigger conditions (all/any/none, nested, live true/false) | Tests "Triggers: conditions, activation groups and the Triggers window"; screenshots `triggers`, `trigger-conditions`, `trigger-group` |
 | Automation | Trigger: keyboard shortcut | End-to-end: ⌃⌥⌘M runs a macro in the real app |
 | Automation | Trigger: typed text, gesture | End-to-end: typing ;;m runs a macro (through the Gestures module) |
 | Automation | Trigger: key on another keyboard or device | **Manual** (needs a second keyboard; CI Macs have none) |
