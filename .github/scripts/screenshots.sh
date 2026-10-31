@@ -145,7 +145,13 @@ done
 SITE="$(mktemp -d -t toolbelt-stream-site)"
 cp -R Tests/Fixtures/hls/. "$SITE/"
 cat > "$SITE/serve.py" <<'PY'
-import functools, http.server, sys, time
+import functools, http.server, socketserver, sys, time
+class Server(http.server.ThreadingHTTPServer):
+    # Python normally looks up the computer's network name here, which makes macOS ask whether
+    # Python may find devices on the local network (and the question would cover the screenshot).
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
 class Slow(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.endswith(".ts"):
@@ -154,7 +160,7 @@ class Slow(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 handler = functools.partial(Slow, directory=sys.argv[1])
-http.server.ThreadingHTTPServer(("127.0.0.1", 8771), handler).serve_forever()
+Server(("127.0.0.1", 8771), handler).serve_forever()
 PY
 python3 "$SITE/serve.py" "$SITE" &
 SITE_PID=$!
