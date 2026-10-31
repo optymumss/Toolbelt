@@ -235,6 +235,12 @@ enum Prefs {
         set { store.set(newValue, for: "web.secret") }
     }
 
+    /// Set once queues have moved from the old "3 at a time" default to "No limit".
+    static var downloadsUnlimitedByDefault: Bool {
+        get { store.value("downloads.unlimited", default: false) }
+        set { store.set(newValue, for: "downloads.unlimited") }
+    }
+
     static var downloadChromeSetUp: Bool {
         get { store.value("downloads.chrome", default: false) }
         set { store.set(newValue, for: "downloads.chrome") }

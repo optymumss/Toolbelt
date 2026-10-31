@@ -16,6 +16,16 @@ final class DownloadManager: ObservableObject {
 
     /// Called when a download finishes (for the notification).
     var onFinished: ((DownloadItem) -> Void)?
+    /// Set while downloads wait because the disk is nearly full; they carry on when there's room again.
+    @Published private(set) var waitingForSpace = false
+    /// Called when downloads pause for lack of space (with the space left).
+    var onLowSpace: ((Int64) -> Void)?
+    /// Free space where downloads are kept (the tests pretend the disk is full).
+    var freeSpace: () -> Int64? = { nil }
+    static let minimumFreeSpace: Int64 = 2_000_000_000
+    private var spaceTimer: Timer?
+    private var ticks = 0
+
     /// Called when every download has finished and `whenDone` is set.
     var onAllDone: ((WhenDone) -> Void)?
 
@@ -34,6 +44,8 @@ final class DownloadManager: ObservableObject {
 
     init(throttle: DownloadThrottle = .shared) {
         self.throttle = throttle
+        let partsFolderForSpace = SettingsStore.folder.appendingPathComponent("downloads", isDirectory: true)
+        freeSpace = { Self.freeSpace(at: partsFolderForSpace) }
         file = SettingsStore.folder.appendingPathComponent("downloads.json")
         queuesFile = SettingsStore.folder.appendingPathComponent("download-queues.json")
         partsFolder = SettingsStore.folder.appendingPathComponent("downloads", isDirectory: true)
@@ -43,11 +55,66 @@ final class DownloadManager: ObservableObject {
             items = saved
         }
         if let data = try? Data(contentsOf: queuesFile),
-           let saved = try? JSONDecoder().decode([DownloadQueue].self, from: data), !saved.isEmpty {
+           var saved = try? JSONDecoder().decode([DownloadQueue].self, from: data), !saved.isEmpty {
+            // 0.22: like IDM, everything downloads at once unless you set a limit. Queues still on the
+            // old default of 3 move to "No limit" (once).
+            if !Prefs.downloadsUnlimitedByDefault {
+                for index in saved.indices where saved[index].maxAtOnce == 3 { saved[index].maxAtOnce = 0 }
+                Prefs.downloadsUnlimitedByDefault = true
+            }
             queues = saved
         } else {
             queues = [.main()]
+            Prefs.downloadsUnlimitedByDefault = true
         }
+        Self.raiseOpenFileLimit()
+    }
+
+    static func freeSpace(at folder: URL) -> Int64? {
+        let values = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    /// The disk is nearly full: running downloads wait (keeping what they have), and carry on by
+    /// themselves once there's room again, rather than leaving broken half-written files.
+    func checkSpace() {
+        guard !waitingForSpace, let free = freeSpace(), free < Self.minimumFreeSpace else { return }
+        waitingForSpace = true
+        for item in items where item.state == .downloading {
+            stopWorker(item.id, state: .queued)
+        }
+        save()
+        onLowSpace?(free)
+        spaceTimer?.invalidate()
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recheckSpace() }
+        }
+        timer.tolerance = 10
+        RunLoop.main.add(timer, forMode: .common)
+        spaceTimer = timer
+    }
+
+    /// Carries on once there's half a gigabyte more than the minimum free.
+    func recheckSpace() {
+        guard waitingForSpace, let free = freeSpace(), free >= Self.minimumFreeSpace + 500_000_000 else { return }
+        waitingForSpace = false
+        spaceTimer?.invalidate()
+        spaceTimer = nil
+        schedule()
+    }
+
+    /// macOS lets an app keep about 256 files and connections open at once; a hundred downloads need
+    /// more. Raises Toolbelt's own limit (as far as macOS allows) once, at start.
+    static func raiseOpenFileLimit(to wanted: rlim_t = 8192) {
+        var limit = rlimit()
+        guard getrlimit(RLIMIT_NOFILE, &limit) == 0, limit.rlim_cur < wanted else { return }
+        limit.rlim_cur = min(wanted, limit.rlim_max)
+        setrlimit(RLIMIT_NOFILE, &limit)
+    }
+
+    static var openFileLimit: Int {
+        var limit = rlimit()
+        return getrlimit(RLIMIT_NOFILE, &limit) == 0 ? Int(limit.rlim_cur) : 0
     }
 
     // MARK: Starting and stopping
@@ -88,6 +155,8 @@ final class DownloadManager: ObservableObject {
         scheduleTimer = nil
         capTimer?.invalidate()
         capTimer = nil
+        spaceTimer?.invalidate()
+        spaceTimer = nil
         started = false
         save()
     }
@@ -106,7 +175,7 @@ final class DownloadManager: ObservableObject {
     /// Starts downloading a link. Returns nil if the text isn't a link Toolbelt can download.
     @discardableResult
     func add(_ text: String, name: String? = nil, headers: [String: String] = [:], queue: UUID? = nil,
-             stream: Bool = false, audio: String? = nil) -> DownloadItem? {
+             stream: Bool = false, audio: String? = nil, page: String? = nil) -> DownloadItem? {
         guard let url = Self.downloadableURL(from: text) else { return nil }
         let fromURL = url.lastPathComponent.isEmpty || url.lastPathComponent == "/" ? (url.host ?? "download") : url.lastPathComponent
         let chosen = name.map(Self.safeFileName).flatMap { $0.isEmpty ? nil : $0 }
@@ -114,6 +183,7 @@ final class DownloadManager: ObservableObject {
         item.queueID = queue
         item.headers = headers.isEmpty ? nil : headers
         if chosen != nil { item.nameIsFixed = true }
+        item.pageURL = page.flatMap(Self.downloadableURL)
         if stream {
             item.kind = "hls"
             item.audioURL = audio.flatMap(Self.downloadableURL)
@@ -126,6 +196,13 @@ final class DownloadManager: ObservableObject {
         schedule()
         save()
         return self.item(item.id)
+    }
+
+    /// Connections for a new file download: the usual number, shared out when many run at once
+    /// (the same budget streamed videos share).
+    static func connections(running: Int, preferred: Int? = nil) -> Int {
+        let preferred = preferred ?? Prefs.downloadConnections
+        return max(1, min(preferred, ConnectionBudget.shared.total / max(1, running)))
     }
 
     /// File names can't contain "/" or ":" on a Mac.
@@ -220,11 +297,12 @@ final class DownloadManager: ObservableObject {
 
     /// Starts waiting downloads wherever a running queue has room, oldest first.
     func schedule() {
-        guard started, cappedUntil == nil, !queues.isEmpty else { return }
+        guard started, cappedUntil == nil, !waitingForSpace, !queues.isEmpty else { return }
         for queue in queues where queue.isRunning {
             var running = items.filter { $0.state == .downloading && self.queue(of: $0).id == queue.id }.count
             let waiting = items.filter { $0.state == .queued && self.queue(of: $0).id == queue.id }.sorted { $0.added < $1.added }
-            for item in waiting where running < max(1, queue.maxAtOnce) {
+            let limit = queue.hasNoLimit ? Int.max : queue.maxAtOnce
+            for item in waiting where running < limit {
                 update(item.id) { $0.state = .downloading }
                 run(item.id)
                 running += 1
@@ -339,7 +417,7 @@ final class DownloadManager: ObservableObject {
             worker = ftp
         } else {
             worker = HTTPDownloadJob(url: item.url, tempURL: tempURL(for: id), segments: item.segments, total: item.total,
-                                     acceptsRanges: item.acceptsRanges, connections: Prefs.downloadConnections,
+                                     acceptsRanges: item.acceptsRanges, connections: Self.connections(running: workers.count + 1),
                                      retries: Prefs.downloadRetries, headers: item.headers ?? [:], throttle: throttle)
         }
         worker.onEvent = { [weak self] event in
@@ -411,6 +489,8 @@ final class DownloadManager: ObservableObject {
 
     private func tick() {
         for id in workers.keys { refresh(id) }
+        ticks += 1
+        if ticks % 10 == 0, !workers.isEmpty { checkSpace() } // every 5 seconds while downloading
         applyLimits()
         if cappedUntil == nil, !workers.isEmpty, let wait = throttle.capWait {
             pauseForCap(until: Date().addingTimeInterval(wait))

@@ -97,6 +97,7 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Downloads | Video sizes: the Download button lists every resolution a streamed (HLS) video or a page with several files offers; the one picked downloads quietly | Chrome test (real Chrome, a test site streaming 360p/720p/1080p); Tests "Downloads: streamed videos at a chosen resolution" |
 | Downloads | Streams joined into a playable .mp4 (MPEG-TS, fragmented MP4, AES-128, separate sound), resumable; DRM and YouTube refused | Tests "Downloads: streamed videos at a chosen resolution" (AVFoundation decodes every frame and the sound); Chrome test (DRM) |
 | Downloads | Progress next to the menu bar icon | Tests "Downloads: streamed videos at a chosen resolution" |
+| Downloads | No limit / 1–50 at once; 100 videos at once (shared connections, two joins at a time, open-file limit raised, low memory); pause when the disk is nearly full; retry from the page | Tests "Downloads: 100 videos at once, like IDM" (100 real streams from a test server) |
 | Screenshots | Capture the whole screen, an area | Tests (real captures with macOS's screencapture: whole screen, a given area) |
 | Screenshots | Drag out an area / click a window | **Manual** (needs a person to drag or click; uses macOS's own crosshair) |
 | Screenshots | Editor: arrows, boxes, text, highlight, blur, crop, undo/redo | Tests "Screenshots: capture, mark up and read text" (checks the actual pixels); screenshot `screenshot-editor` |
