@@ -84,6 +84,8 @@ enum TriggerCategory: String, CaseIterable, Identifiable {
 final class TriggersWindowController {
     /// Lets Settings → Gestures open the window.
     static var openFromSettings: (() -> Void)?
+    /// Stops the trackpad reader again if no gesture needs it (after the Live View closes).
+    static var stopLiveView: (() -> Void)?
 
     let window: NSWindow
     let state = TriggersState()
@@ -93,9 +95,11 @@ final class TriggersWindowController {
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Triggers"
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 1080, height: 600)
+        window.contentMinSize = NSSize(width: 980, height: 560)
         window.contentViewController = NSHostingController(rootView: TriggersView(module: module, store: module.store, state: state))
-        window.setContentSize(NSSize(width: 1240, height: 720))
+        // As big as fits: smaller screens get a smaller window rather than one running off the edge.
+        let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        window.setContentSize(NSSize(width: min(1240, screen.width - 40), height: min(720, screen.height - 40)))
         window.center()
         window.setFrameAutosaveName("ToolbeltTriggers")
     }
@@ -113,18 +117,18 @@ struct TriggersView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 200)
+            sidebar.frame(width: 190)
             Divider()
             VStack(spacing: 0) {
                 categoryBar
                 Divider()
                 triggerList
             }
-            .frame(minWidth: 320)
+            .frame(minWidth: 280)
             Divider()
-            actionsColumn.frame(minWidth: 280)
+            actionsColumn.frame(minWidth: 240)
             Divider()
-            settingsColumn.frame(width: 300)
+            settingsColumn.frame(width: 280)
         }
         .sheet(isPresented: Binding(get: { state.editingGroup != nil }, set: { if !$0 { state.editingGroup = nil } })) {
             if let id = state.editingGroup, let index = store.groups.firstIndex(where: { $0.id == id }) {
@@ -240,22 +244,26 @@ struct TriggersView: View {
 
     // MARK: Column 2: the triggers
 
+    @ViewBuilder
     private var categoryBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(TriggerCategory.allCases) { category in
                 Button { state.category = category } label: {
                     Image(systemName: category.symbol)
-                        .frame(width: 30, height: 24)
+                        .frame(width: 28, height: 24)
                         .background(state.category == category ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.borderless)
                 .help(category.title)
             }
-            Spacer()
-            Text(state.category.title).font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.top, 8)
+        Text(state.category.title).font(.caption).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
     }
 
     private var shownRules: [GestureRule] {
@@ -333,6 +341,7 @@ struct TriggersView: View {
                             Label("Add Action", systemImage: "plus.circle")
                         }
                         .buttonStyle(.borderless)
+                        PhaseActionsEditor(rule: rule)
                     }
                     .padding(.horizontal, 12)
                 }
@@ -421,7 +430,14 @@ struct TriggerSettings: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text(rule.gesture.title).font(.headline)
-                GestureEditor(gesture: $rule.gesture, deleteTyped: $rule.deleteTyped, inUse: inUse)
+                if case .shortcut = rule.gesture {
+                    TriggerKeysRecorder(rule: $rule)
+                } else {
+                    GestureEditor(gesture: $rule.gesture, deleteTyped: $rule.deleteTyped, inUse: inUse)
+                }
+                if case let .touch(source, _, _) = rule.gesture, source == .trackpad {
+                    LiveTrackpadView()
+                }
                 Toggle("Trigger is enabled", isOn: $rule.enabled)
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
@@ -458,10 +474,52 @@ struct TriggerSettings: View {
                                                                                set: { rule.preventRecursion = $0 ? nil : false }))
                                 .help("Ignore this trigger for a moment after it runs, so an action pressing its own keys can't set it off again and again.")
                         }
+                        if case .shortcut = rule.gesture {
+                            Toggle("Tell left and right modifier keys apart", isOn: flag(\.distinguishSides))
+                                .help("Right ⌘ + Space and left ⌘ + Space become different shortcuts. Record the shortcut with the side you want.")
+                            Toggle("Follow the keyboard layout", isOn: flag(\.followLayout))
+                                .help("Match the letter typed rather than the key's place, so the shortcut stays on the same letter in another layout.")
+                        }
+                        if repeatable {
+                            Divider()
+                            Toggle(isKeyboardShortcut ? "Repeat while the keys are held" : "Repeat while the fingers stay down", isOn: flag(\.repeatWhileHeld))
+                            if rule.repeatWhileHeld == true {
+                                LabeledContent("Repeats a second") {
+                                    HStack {
+                                        Slider(value: Binding(get: { rule.repeatRate ?? 10 }, set: { rule.repeatRate = $0 }), in: 1...30, step: 1)
+                                        Text("\(Int(rule.repeatRate ?? 10))").monospacedDigit().frame(width: 26)
+                                    }
+                                }
+                                LabeledContent("First repeat after") {
+                                    HStack {
+                                        Slider(value: Binding(get: { rule.repeatDelay ?? 0.4 }, set: { rule.repeatDelay = $0 }), in: 0.1...1.5, step: 0.05)
+                                        Text(String(format: "%.2f s", rule.repeatDelay ?? 0.4)).monospacedDigit().frame(width: 52)
+                                    }
+                                }
+                            }
+                        }
+                        if rule.needsKeyWatching {
+                            Text("Toolbelt watches the keyboard for this shortcut (Input Monitoring and Accessibility).")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
             .padding(14)
+        }
+    }
+
+    private var isKeyboardShortcut: Bool {
+        if case .shortcut = rule.gesture { return true }
+        return false
+    }
+
+    /// Keyboard shortcuts, and trackpad or Magic Mouse gestures that aren't already repeating scrolls.
+    private var repeatable: Bool {
+        switch rule.gesture {
+        case .shortcut: return true
+        case let .touch(_, kind, _): return !kind.isScroll
+        default: return false
         }
     }
 
@@ -598,5 +656,148 @@ struct ConditionRuleRow: View {
             TextField(rule.field.isNumber ? "Number" : "Text", text: $rule.value)
             Button(action: onRemove) { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
         }
+    }
+}
+
+/// Actions for the other moments: when the keys or fingers are let go, a long hold, and so on.
+struct PhaseActionsEditor: View {
+    @Binding var rule: GestureRule
+
+    private var keyboard: Bool {
+        if case .shortcut = rule.gesture { return true }
+        return false
+    }
+
+    private var supported: Bool {
+        switch rule.gesture {
+        case .shortcut: return true
+        case let .touch(_, kind, _): return !kind.isScroll
+        default: return false
+        }
+    }
+
+    var body: some View {
+        if supported {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(TriggerPhase.available(keyboard: keyboard)) { phase in
+                    let list = rule.actions(for: phase)
+                    if !list.isEmpty {
+                        Divider()
+                        Text(phase.title(keyboard: keyboard)).font(.subheadline.bold())
+                        ForEach(Array(list.indices), id: \.self) { position in
+                            HStack(alignment: .top) {
+                                ActionEditor(action: Binding(
+                                    get: { rule.actions(for: phase).indices.contains(position) ? rule.actions(for: phase)[position] : MacroAction(kind: .system) },
+                                    set: { value in
+                                        var changed = rule.actions(for: phase)
+                                        guard changed.indices.contains(position) else { return }
+                                        changed[position] = value
+                                        set(phase, changed)
+                                    }))
+                                Button {
+                                    var changed = rule.actions(for: phase)
+                                    if changed.indices.contains(position) { changed.remove(at: position) }
+                                    set(phase, changed)
+                                } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                            }
+                            .padding(10)
+                            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+                Menu {
+                    ForEach(TriggerPhase.available(keyboard: keyboard)) { phase in
+                        Button(phase.title(keyboard: keyboard)) { set(phase, rule.actions(for: phase) + [MacroAction(kind: .system)]) }
+                    }
+                } label: {
+                    Label("Add Action For Another Moment", systemImage: "plus.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(keyboard ? "Actions on key release, a long hold, a quick release, release after a long hold, or once all modifier keys are let go."
+                               : "Actions for when the fingers lift.")
+            }
+        }
+    }
+
+    private func set(_ phase: TriggerPhase, _ actions: [MacroAction]) {
+        var all = rule.phaseActions ?? [:]
+        all[phase] = actions.isEmpty ? nil : actions
+        rule.phaseActions = all.isEmpty ? nil : all
+    }
+}
+
+/// Records a keyboard shortcut, including which side's modifier keys were used and the letter it types.
+struct TriggerKeysRecorder: View {
+    @Binding var rule: GestureRule
+    @State private var recording = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        HStack {
+            Text("Shortcut")
+            Button(recording ? "Press the keys…" : label) { recording ? stop() : start() }
+                .onDisappear(perform: stop)
+            if rule.distinguishSides == true, let sides = rule.sideFlags, sides & ShortcutMatch.sideMask != 0 {
+                Text(Self.sideNames(sides)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var label: String {
+        if case let .shortcut(key, modifiers) = rule.gesture, key != 0 || modifiers != 0 {
+            return Shortcut(keyCode: key, modifiers: modifiers).display
+        }
+        return "Click to record"
+    }
+
+    static func sideNames(_ sides: Int) -> String {
+        let names: [(Int, String)] = [(ShortcutMatch.leftCommand, "left ⌘"), (ShortcutMatch.rightCommand, "right ⌘"),
+                                      (ShortcutMatch.leftOption, "left ⌥"), (ShortcutMatch.rightOption, "right ⌥"),
+                                      (ShortcutMatch.leftControl, "left ⌃"), (ShortcutMatch.rightControl, "right ⌃"),
+                                      (ShortcutMatch.leftShift, "left ⇧"), (ShortcutMatch.rightShift, "right ⇧")]
+        return names.filter { sides & $0.0 != 0 }.map(\.1).joined(separator: ", ")
+    }
+
+    private func start() {
+        recording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let shortcut = Shortcut(event: event)
+            rule.gesture = .shortcut(keyCode: Int(shortcut.keyCode), modifiers: Int(shortcut.modifiers))
+            rule.sideFlags = Int(event.modifierFlags.rawValue) & ShortcutMatch.sideMask
+            rule.keyCharacter = event.charactersIgnoringModifiers
+            stop()
+            return nil
+        }
+    }
+
+    private func stop() {
+        recording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+/// The fingers on the trackpad right now, drawn as dots: handy for checking a gesture.
+struct LiveTrackpadView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+                Canvas { context, size in
+                    let pad = CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+                    context.stroke(Path(roundedRect: pad, cornerRadius: 10), with: .color(.secondary), lineWidth: 1)
+                    for finger in MultitouchReader.shared.liveTouches() {
+                        let point = CGPoint(x: pad.minX + finger.x * pad.width, y: pad.maxY - finger.y * pad.height)
+                        context.fill(Path(ellipseIn: CGRect(x: point.x - 9, y: point.y - 9, width: 18, height: 18)), with: .color(.accentColor))
+                    }
+                }
+            }
+            .frame(width: 200, height: 130)
+            Text("Live View: your fingers on the trackpad").font(.caption2).foregroundStyle(.secondary)
+        }
+        // The reader runs while this is on screen, even if no trackpad gesture is switched on yet.
+        .onAppear { MultitouchReader.shared.start() }
+        .onDisappear { TriggersWindowController.stopLiveView?() }
     }
 }

@@ -71,6 +71,14 @@ final class GesturesModule: ToolbeltModule {
     private var pendingSingleTap: DispatchWorkItem?
     private var shortcutKeys: [HotKey] = []
     private var lastRun: [UUID: Date] = [:]
+    /// A watched shortcut being held: its timers (long hold, repeat) and whether it's been held long.
+    private var heldKey: (rule: GestureRule, keyCode: Int, long: Bool, timers: [Timer])?
+    /// After a watched shortcut is let go: waiting for every modifier key to be released.
+    private var waitingForModifiers: GestureRule?
+    /// Touch triggers waiting for the fingers to lift (release actions, repeats), per device.
+    private var heldTouch: [TouchSource: (rules: [GestureRule], timer: Timer?)] = [:]
+    /// For tests: every action run, in order.
+    private(set) var actionLog: [MacroAction] = []
     private var triggersWindow: TriggersWindowController?
     /// For tests: what ran, most recent last.
     private(set) var log: [Gesture] = []
@@ -87,7 +95,10 @@ final class GesturesModule: ToolbeltModule {
         tap.onBackspace = { [weak self] in self?.typed.deleteBackward() }
         tap.onClick = { [weak self] in self?.typed.reset() }
         MultitouchReader.shared.onGesture = { [weak self] gesture in _ = self?.handle(gesture) }
+        MultitouchReader.shared.onLift = { [weak self] source in self?.fingersLifted(source) }
+        tap.onKey = { [weak self] press in self?.keyEvent(press) ?? false }
         TriggersWindowController.openFromSettings = { [weak self] in self?.open() }
+        TriggersWindowController.stopLiveView = { [weak self] in self?.updateListening() }
     }
 
     func start() {
@@ -114,16 +125,19 @@ final class GesturesModule: ToolbeltModule {
         var needs = GestureEventTap.Needs()
         var touches = false
         var scrolls = false
+        var holds = false
         for rule in rules {
             switch rule.gesture {
             case let .touch(_, kind, _):
                 touches = true
                 if kind.isScroll { scrolls = true }
+                if kind == .touchStart || kind == .longTouch { holds = true }
+                if kind == .forceClick { needs.forceClick = true }
                 if kind == .click || kind.isCorner || kind == .clickMiddle { needs.clicks = true }
             case .mouseButton(let button): needs.buttons.insert(button)
             case .stroke(let button, _): needs.strokeButtons.insert(button)
             case .modifierTap, .keySequence: needs.keyboard = true
-            case .shortcut: break // registered below, no permission needed
+            case .shortcut: if rule.needsKeyWatching { needs.watchedKeys = true } // others: registered below, no permission needed
             }
         }
         // Keyboard shortcuts, through macOS's own hot keys.
@@ -131,20 +145,26 @@ final class GesturesModule: ToolbeltModule {
         shortcutKeys = []
         var registered = Set<Gesture>()
         for rule in rules {
-            guard case let .shortcut(keyCode, modifiers) = rule.gesture, keyCode != 0 || modifiers != 0,
+            guard case let .shortcut(keyCode, modifiers) = rule.gesture, keyCode != 0 || modifiers != 0, !rule.needsKeyWatching,
                   registered.insert(rule.gesture).inserted else { continue }
             let gesture = rule.gesture
             let key = HotKey(shortcut: Shortcut(keyCode: keyCode, modifiers: modifiers)) { [weak self] in _ = self?.handle(gesture) }
             if key.isRegistered { shortcutKeys.append(key) }
         }
         MultitouchReader.shared.setScrolls(scrolls)
+        MultitouchReader.shared.setHolds(holds)
         MultitouchReader.shared.setSensitivity(Prefs.gestureSensitivity)
         if touches { MultitouchReader.shared.start() } else { MultitouchReader.shared.stop() }
-        let mouse = !needs.buttons.isEmpty || !needs.strokeButtons.isEmpty || needs.clicks
+        let mouse = !needs.buttons.isEmpty || !needs.strokeButtons.isEmpty || needs.clicks || needs.forceClick
         if mouse, !PermissionGate.ensure(.accessibility, to: "use mouse gestures") {
             needs.buttons = []
             needs.strokeButtons = []
             needs.clicks = false
+            needs.forceClick = false
+        }
+        if needs.watchedKeys, !(PermissionGate.ensure(.inputMonitoring, to: "notice keys being held and let go")
+                                && PermissionGate.ensure(.accessibility, to: "keep a shortcut's keys from the app in front")) {
+            needs.watchedKeys = false
         }
         if needs.keyboard, !PermissionGate.ensure(.inputMonitoring, to: "notice key taps and typed sequences") {
             needs.keyboard = false
@@ -201,7 +221,99 @@ final class GesturesModule: ToolbeltModule {
         if rule.showHUD == true {
             HUD.show(rule.hasNotes ? rule.notes ?? "" : rule.gesture.title, detail: rule.summary, symbol: "hand.tap")
         }
-        for action in rule.actions { runner.run(action) }
+        perform(rule.actions)
+        // Touch triggers with release actions or repeats wait for the fingers to lift.
+        if case let .touch(source, kind, _) = gesture, !kind.isScroll,
+           rule.repeatWhileHeld == true || !rule.actions(for: .release).isEmpty {
+            var held = heldTouch[source] ?? ([], nil)
+            held.rules.append(rule)
+            if rule.repeatWhileHeld == true, held.timer == nil {
+                held.timer = repeatTimer(for: rule)
+            }
+            heldTouch[source] = held
+        }
+    }
+
+    private func perform(_ actions: [MacroAction]) {
+        for action in actions {
+            actionLog.append(action)
+            if actionLog.count > 200 { actionLog.removeFirst() }
+            runner.run(action)
+        }
+    }
+
+    /// Runs a trigger's actions again and again (after a short wait) until stopped.
+    private func repeatTimer(for rule: GestureRule) -> Timer {
+        let interval = 1 / max(1, min(60, rule.repeatRate ?? 10))
+        let delay = max(0.05, rule.repeatDelay ?? 0.4)
+        let timer = Timer(fire: Date().addingTimeInterval(delay), interval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.perform(rule.actions) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
+    }
+
+    /// Every finger left the device: stop repeats and run "when the fingers lift" actions.
+    func fingersLifted(_ source: TouchSource) {
+        guard let held = heldTouch.removeValue(forKey: source) else { return }
+        held.timer?.invalidate()
+        for rule in held.rules { perform(rule.actions(for: .release)) }
+    }
+
+    // MARK: Watched keyboard shortcuts (key up, long hold, repeat, sides, layout)
+
+    /// The watched shortcut a key press matches, if any applies right now.
+    private func watchedRule(for press: KeyPress) -> GestureRule? {
+        let candidates = allRules.filter {
+            $0.enabled && $0.needsKeyWatching && ShortcutMatch.matches($0, keyCode: press.keyCode, flags: press.flags, character: press.character)
+        }
+        for rule in candidates {
+            if let chosen = matches(for: rule.gesture).first(where: { $0.id == rule.id }) { return chosen }
+        }
+        return nil
+    }
+
+    /// Handles a key going down or up. Returns true when the key belongs to a watched shortcut (kept from apps).
+    @discardableResult
+    func keyEvent(_ press: KeyPress) -> Bool {
+        switch press.kind {
+        case .down:
+            if let held = heldKey, held.keyCode == press.keyCode { return true } // the key repeating while held
+            guard !press.isRepeat, let rule = watchedRule(for: press) else { return false }
+            run(rule, for: rule.gesture)
+            var timers: [Timer] = []
+            let longHold = Timer(timeInterval: 0.5, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, var held = self.heldKey, held.rule.id == rule.id else { return }
+                    held.long = true
+                    self.heldKey = held
+                    self.perform(rule.actions(for: .longHold))
+                }
+            }
+            RunLoop.main.add(longHold, forMode: .common)
+            timers.append(longHold)
+            if rule.repeatWhileHeld == true { timers.append(repeatTimer(for: rule)) }
+            heldKey = (rule, press.keyCode, false, timers)
+            return true
+        case .up:
+            guard let held = heldKey, held.keyCode == press.keyCode else { return false }
+            heldKey = nil
+            held.timers.forEach { $0.invalidate() }
+            perform(held.rule.actions(for: .release))
+            perform(held.rule.actions(for: held.long ? .releaseAfterLongHold : .quickRelease))
+            if ShortcutMatch.carbonModifiers(press.flags) == 0 {
+                perform(held.rule.actions(for: .modifiersReleased))
+            } else {
+                waitingForModifiers = held.rule
+            }
+            return true
+        case .flags:
+            if let rule = waitingForModifiers, ShortcutMatch.carbonModifiers(press.flags) == 0 {
+                waitingForModifiers = nil
+                perform(rule.actions(for: .modifiersReleased))
+            }
+            return false
+        }
     }
 
     /// Whether a key was pressed within the "ignore the trackpad after typing" time. Asks macOS when the

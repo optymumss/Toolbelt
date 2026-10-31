@@ -42,6 +42,29 @@ final class MultitouchReader: @unchecked Sendable {
         for key in recognizers.keys { recognizers[key]?.tune(value) }
     }
 
+    private var holdsWanted = false
+
+    /// Touch starts and long touches are only reported while a rule uses them.
+    func setHolds(_ on: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        holdsWanted = on
+        for key in recognizers.keys { recognizers[key]?.holds = on }
+    }
+
+    /// The fingers on the first trackpad right now, for the Live View.
+    func liveTouches() -> [TouchPoint] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recognizers.values.first { $0.source == .trackpad }?.current ?? []
+    }
+
+    /// Fingers on the first trackpad now (for Force Click, which macOS reports separately).
+    var trackpadFingers: Int { liveTouches().count }
+
+    /// Called when every finger has left a device (for "on release" actions and repeats).
+    var onLift: ((TouchSource) -> Void)?
+
     /// Scroll steps are only worked out while a rule uses them.
     func setScrolls(_ on: Bool) {
         lock.lock()
@@ -115,6 +138,7 @@ final class MultitouchReader: @unchecked Sendable {
             let source: TouchSource = (id == 112 || id == 113) ? .magicMouse : .trackpad
             var recognizer = TouchRecognizer(source: source)
             recognizer.scrolls = scrollsWanted
+            recognizer.holds = holdsWanted
             recognizer.tune(sensitivity)
             recognizers[device] = recognizer
             register(device, multitouchFrame)
@@ -150,8 +174,13 @@ final class MultitouchReader: @unchecked Sendable {
         }
         lock.lock()
         badFramesInARow = 0
+        let hadFingers = !(recognizers[device]?.current.isEmpty ?? true)
+        let source = recognizers[device]?.source
         let gestures = dataLooksWrong ? [] : recognizers[device]?.feedAll(points, at: time) ?? []
         lock.unlock()
+        if hadFingers, points.isEmpty, let source {
+            DispatchQueue.main.async { [weak self] in self?.onLift?(source) }
+        }
         if !gestures.isEmpty {
             DispatchQueue.main.async { [weak self] in
                 for gesture in gestures { self?.onGesture?(gesture) }
@@ -216,8 +245,12 @@ final class GestureEventTap {
         var strokeButtons: Set<Int> = []
         var clicks = false
         var keyboard = false
+        /// Keyboard shortcuts with key-up, hold, repeat, side or layout options: watched (and kept from apps) here.
+        var watchedKeys = false
+        /// Force Clicks on the trackpad (macOS reports them as pressure events).
+        var forceClick = false
 
-        var isEmpty: Bool { buttons.isEmpty && strokeButtons.isEmpty && !clicks && !keyboard }
+        var isEmpty: Bool { buttons.isEmpty && strokeButtons.isEmpty && !clicks && !keyboard && !watchedKeys && !forceClick }
     }
 
     /// Marks the clicks Toolbelt itself sends, so the tap lets them through.
@@ -231,16 +264,20 @@ final class GestureEventTap {
     var onBackspace: (() -> Void)?
     /// A click: whatever was being typed is finished.
     var onClick: (() -> Void)?
+    /// A key going down or up, or the modifiers changing, for watched shortcuts. Return true to keep it from apps.
+    var onKey: ((KeyPress) -> Bool)?
 
     /// Mouse events go through an active tap (so matching ones can be kept from apps); the keyboard
     /// only through a listen-only tap, so typing is never held up by Toolbelt.
     private var mouseTap: (port: CFMachPort, source: CFRunLoopSource)?
     private var keyTap: (port: CFMachPort, source: CFRunLoopSource)?
+    private var watchTap: (port: CFMachPort, source: CFRunLoopSource)?
+    private var lastStage = 0
     private var modifiers = ModifierTapDetector()
     private var stroke: (button: Int, points: [CGPoint])?
     private var swallowedUp: Set<Int> = []
 
-    var isRunning: Bool { mouseTap != nil || keyTap != nil }
+    var isRunning: Bool { mouseTap != nil || keyTap != nil || watchTap != nil }
 
     /// Starts or stops listening to match `needs`. Returns false if macOS refused (no permission).
     @discardableResult
@@ -254,6 +291,7 @@ final class GestureEventTap {
         if needs.strokeButtons.contains(2) { add(.otherMouseDragged) }
         if needs.strokeButtons.contains(1) { add(.rightMouseDown); add(.rightMouseUp); add(.rightMouseDragged) }
         if needs.clicks { add(.leftMouseDown); add(.leftMouseUp) }
+        if needs.forceClick { mouse |= 1 << 34 } // pressure events
         if mouse != 0, mouseTap == nil {
             mouseTap = makeTap(mouse, options: .defaultTap)
             ok = ok && mouseTap != nil
@@ -266,13 +304,20 @@ final class GestureEventTap {
             keyTap = makeTap(keys, options: .listenOnly)
             ok = ok && keyTap != nil
         }
+        if needs.watchedKeys, watchTap == nil {
+            // An active tap, so the shortcut's own key presses can be kept from the app in front.
+            let keys: UInt64 = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+            watchTap = makeTap(keys, options: .defaultTap, callback: watchedKeyCallback)
+            ok = ok && watchTap != nil
+        }
         return ok
     }
 
-    private func makeTap(_ mask: UInt64, options: CGEventTapOptions) -> (port: CFMachPort, source: CFRunLoopSource)? {
+    private func makeTap(_ mask: UInt64, options: CGEventTapOptions,
+                         callback: CGEventTapCallBack = gestureTapCallback) -> (port: CFMachPort, source: CFRunLoopSource)? {
         let me = Unmanaged.passUnretained(self).toOpaque()
         guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: options,
-                                           eventsOfInterest: CGEventMask(mask), callback: gestureTapCallback, userInfo: me),
+                                           eventsOfInterest: CGEventMask(mask), callback: callback, userInfo: me),
               let source = CFMachPortCreateRunLoopSource(nil, port, 0) else { return nil }
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: port, enable: true)
@@ -280,12 +325,13 @@ final class GestureEventTap {
     }
 
     func stop() {
-        for tap in [mouseTap, keyTap].compactMap({ $0 }) {
+        for tap in [mouseTap, keyTap, watchTap].compactMap({ $0 }) {
             CGEvent.tapEnable(tap: tap.port, enable: false)
             CFRunLoopRemoveSource(CFRunLoopGetMain(), tap.source, .commonModes)
         }
         mouseTap = nil
         keyTap = nil
+        watchTap = nil
         stroke = nil
         swallowedUp = []
     }
@@ -293,7 +339,15 @@ final class GestureEventTap {
     /// Returns false to keep the event from the app underneath (only possible for mouse events).
     fileprivate func process(_ type: CGEventType, _ event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            for tap in [mouseTap, keyTap].compactMap({ $0 }) { CGEvent.tapEnable(tap: tap.port, enable: true) }
+            for tap in [mouseTap, keyTap, watchTap].compactMap({ $0 }) { CGEvent.tapEnable(tap: tap.port, enable: true) }
+            return true
+        }
+        if type.rawValue == 34 { // pressure (Force Touch trackpads)
+            let stage = NSEvent(cgEvent: event)?.stage ?? 0
+            defer { lastStage = stage }
+            if stage >= 2, lastStage < 2 {
+                _ = handle?(.touch(.trackpad, .forceClick, fingers: max(1, MultitouchReader.shared.trackpadFingers)))
+            }
             return true
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.ownEventMarker { return true }
@@ -373,6 +427,26 @@ final class GestureEventTap {
         }
     }
 
+    /// Watched shortcuts: returns false to keep the key from the app in front.
+    fileprivate func processWatched(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let watchTap { CGEvent.tapEnable(tap: watchTap.port, enable: true) }
+            return true
+        }
+        if event.getIntegerValueField(.eventSourceUserData) == Self.ownEventMarker { return true }
+        let kind: KeyPress.Kind
+        switch type {
+        case .keyDown: kind = .down
+        case .keyUp: kind = .up
+        case .flagsChanged: kind = .flags
+        default: return true
+        }
+        let press = KeyPress(kind: kind, keyCode: Int(event.getIntegerValueField(.keyboardEventKeycode)), flags: event.flags.rawValue,
+                             character: kind == .flags ? nil : NSEvent(cgEvent: event)?.charactersIgnoringModifiers,
+                             isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
+        return !(onKey?(press) ?? false)
+    }
+
     private func replayClick(button: Int, at point: CGPoint) {
         let source = CGEventSource(stateID: .hidSystemState)
         let (downType, upType, mouseButton): (CGEventType, CGEventType, CGMouseButton) = button == 1
@@ -393,6 +467,23 @@ final class GestureEventTap {
         let text = String(utf16CodeUnits: buffer, count: length)
         return text.unicodeScalars.allSatisfy({ $0.value >= 32 }) ? text : nil
     }
+}
+
+/// A key press seen by the watched-shortcuts tap.
+struct KeyPress: Equatable {
+    enum Kind { case down, up, flags }
+    var kind: Kind
+    var keyCode: Int
+    var flags: UInt64
+    var character: String?
+    var isRepeat = false
+}
+
+private func watchedKeyCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
+    guard let refcon else { return Unmanaged.passUnretained(event) }
+    let tap = Unmanaged<GestureEventTap>.fromOpaque(refcon).takeUnretainedValue()
+    let pass = MainActor.assumeIsolated { tap.processWatched(type, event) }
+    return pass ? Unmanaged.passUnretained(event) : nil
 }
 
 private func gestureTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {

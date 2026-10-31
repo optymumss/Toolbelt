@@ -173,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Annotation(tool: .text, start: CGPoint(x: w * 0.12, y: h * 0.8), end: .zero, color: .red, text: "Look here"),
                 ]
                 editor.model.crop = CGRect(x: w * 0.02, y: h * 0.01, width: w * 0.96, height: h * 0.95)
-            case "triggers", "trigger-conditions", "trigger-group":
+            case "triggers", "trigger-conditions", "trigger-group", "trigger-keys":
                 // The Triggers window with an example set: a group for browsers, a trigger with its own
                 // conditions and notes, a keyboard shortcut with an on-screen message.
                 guard let gestures = modules.module(.gestures) as? GesturesModule else { break }
@@ -192,6 +192,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 clipboard.notes = "Clipboard history"
                 clipboard.showHUD = true
                 clipboard.moreActions = [MacroAction(kind: .showHUD, value: "Clipboard")]
+                var hold = GestureRule(gesture: .shortcut(keyCode: 0x7E, modifiers: 6400), action: .system(.volumeUp))
+                hold.notes = "Hold for volume up; quick tap shows a message"
+                hold.repeatWhileHeld = true
+                hold.repeatRate = 12
+                hold.distinguishSides = true
+                hold.sideFlags = ShortcutMatch.rightCommand
+                hold.phaseActions = [.quickRelease: [MacroAction(kind: .showHUD, value: "Quick tap")],
+                                     .modifiersReleased: [MacroAction(kind: .showHUD, value: "All keys let go")]]
                 var back = GestureRule(gesture: .touch(.trackpad, .swipeLeft, fingers: 3), action: .system(.back))
                 back.groupID = browsers.id
                 back.notes = "Back in browsers"
@@ -201,12 +209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     clipboard,
                     GestureRule(gesture: .touch(.trackpad, .scrollRight, fingers: 3), action: .system(.volumeUp)),
                     back,
-                ]
+                ] + (target == "trigger-keys" ? [hold] : [])
                 gestures.open()
                 if let state = gestures.triggersWindowController?.state {
                     switch target {
                     case "trigger-group": state.scope = .group(browsers.id); state.editingGroup = browsers.id
                     case "trigger-conditions": state.selected = corner.id; state.editingCondition = true
+                    case "trigger-keys": state.category = .shortcuts; state.selected = hold.id
                     default: state.selected = corner.id
                     }
                 }

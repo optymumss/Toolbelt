@@ -51,6 +51,7 @@ enum ToolbeltTests {
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
         t.group("Triggers: conditions, activation groups and the Triggers window", TriggerTests.run)
+        t.group("Triggers: key up, long hold, repeat, left/right keys and more gestures", MoreTriggerTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -3732,5 +3733,138 @@ enum TriggerTests {
         let across = Double(now.values[.pointerXOnScreen] ?? "-1") ?? -1
         check((0...100).contains(across), "and where the pointer is (\(across)% across the screen)")
         check(now.values[.hour] != nil && now.values[.appName] != nil, "the time and the app in front")
+    }
+}
+
+// MARK: - Key up, long hold, repeat, sides, layout, touch start, long touch
+
+@MainActor
+enum MoreTriggerTests {
+    static func fingers(_ points: [(Double, Double)]) -> [TouchPoint] {
+        points.enumerated().map { TouchPoint(id: $0.offset, x: $0.element.0, y: $0.element.1) }
+    }
+
+    static func say(_ text: String) -> MacroAction { MacroAction(kind: .setClipboard, value: text) }
+
+    static func run() {
+        // More trackpad gestures
+        var pad = TouchRecognizer(source: .trackpad)
+        pad.holds = true
+        let three = [(0.4, 0.5), (0.5, 0.52), (0.6, 0.5)]
+        var seen: [Gesture] = []
+        seen += pad.feedAll(fingers([three[0]]), at: 0)
+        seen += pad.feedAll(fingers(three), at: 0.02)
+        check(seen.contains(.touch(.trackpad, .touchStart, fingers: 3)), "three fingers touching is a three-finger touch start")
+        check(seen.contains(.touch(.trackpad, .touchStart, fingers: 1)), "(and one finger first, for one-finger rules)")
+        var held: [Gesture] = []
+        for step in 1...40 { held += pad.feedAll(fingers(three), at: 0.02 + Double(step) * 0.02) }
+        checkEqual(held, [.touch(.trackpad, .longTouch, fingers: 3)], "holding them still is a long touch, once")
+        _ = pad.feedAll([], at: 1)
+        func tap(_ height: Double, at time: Double) -> [Gesture] {
+            let two = [(0.45, height), (0.55, height)]
+            _ = pad.feedAll(fingers(two), at: time)
+            _ = pad.feedAll(fingers(two), at: time + 0.05)
+            return pad.feedAll([], at: time + 0.1)
+        }
+        check(tap(0.85, at: 5).contains(.touch(.trackpad, .tapTop, fingers: 2)), "a two-finger tap near the top")
+        check(tap(0.15, at: 7).contains(.touch(.trackpad, .tapBottom, fingers: 2)), "and near the bottom")
+        check(!tap(0.5, at: 9).contains { if case .touch(_, let kind, _) = $0 { return kind == .tapTop || kind == .tapBottom }; return false },
+              "a tap in the middle is neither")
+        var quiet = TouchRecognizer(source: .trackpad)
+        var quietSeen: [Gesture] = []
+        for step in 0...40 { quietSeen += quiet.feedAll(fingers(three), at: Double(step) * 0.02) }
+        check(quietSeen.isEmpty, "with no rule needing them, touch starts and long touches aren't worked out")
+        check(!TouchKind.tapTop.isPlaced && GestureRule.match(.touch(.trackpad, .tapTop, fingers: 2), app: nil,
+              in: [GestureRule(gesture: .touch(.trackpad, .tapTop, fingers: 3), action: say("x"))]) == nil,
+              "a three-finger tap-top rule doesn't react to two fingers")
+        check(TouchKind.choices(for: .trackpad).contains { $0.fingers == 3 && $0.kinds.contains(.forceClick) && $0.kinds.contains(.longTouch) },
+              "the gesture picker offers them")
+        _ = MultitouchReader.shared.liveTouches() // the Live View's source: mustn't crash with no trackpad
+        check(true, "the Live View can ask for the fingers at any time")
+
+        // Matching watched shortcuts
+        let cmdOpt = CGEventFlags([.maskCommand, .maskAlternate]).rawValue
+        var shortcut = GestureRule(gesture: .shortcut(keyCode: 9, modifiers: 256 | 2048), action: say("down"))
+        check(ShortcutMatch.matches(shortcut, keyCode: 9, flags: cmdOpt, character: "v"), "⌥⌘V matches ⌥⌘V")
+        check(!ShortcutMatch.matches(shortcut, keyCode: 9, flags: cmdOpt | CGEventFlags.maskShift.rawValue, character: "v"),
+              "but not with ⇧ held too")
+        check(!ShortcutMatch.matches(shortcut, keyCode: 8, flags: cmdOpt, character: "c"), "nor another key")
+        shortcut.distinguishSides = true
+        shortcut.sideFlags = ShortcutMatch.rightCommand | ShortcutMatch.leftOption
+        check(ShortcutMatch.matches(shortcut, keyCode: 9, flags: cmdOpt | UInt64(ShortcutMatch.rightCommand | ShortcutMatch.leftOption), character: "v"),
+              "with sides told apart, right ⌘ + left ⌥ matches")
+        check(!ShortcutMatch.matches(shortcut, keyCode: 9, flags: cmdOpt | UInt64(ShortcutMatch.leftCommand | ShortcutMatch.leftOption), character: "v"),
+              "but left ⌘ doesn't")
+        shortcut.distinguishSides = nil
+        shortcut.followLayout = true
+        shortcut.keyCharacter = "v"
+        check(ShortcutMatch.matches(shortcut, keyCode: 47, flags: cmdOpt, character: "V"), "following the layout, the letter counts, wherever the key is")
+        check(shortcut.needsKeyWatching && !GestureRule(gesture: .shortcut(keyCode: 9, modifiers: 256), action: say("x")).needsKeyWatching,
+              "only shortcuts with these options need the keyboard watched")
+
+        // Key down, release, long hold, quick release, modifiers released
+        let module = GesturesModule(shortcuts: ShortcutCenter())
+        module.store.groups = []
+        var phased = GestureRule(gesture: .shortcut(keyCode: 9, modifiers: 256 | 2048), action: say("down"))
+        phased.preventRecursion = false
+        phased.phaseActions = [.release: [say("release")], .longHold: [say("long")], .quickRelease: [say("quick")],
+                               .releaseAfterLongHold: [say("after long")], .modifiersReleased: [say("modifiers up")]]
+        module.store.rules = [phased]
+        func values() -> [String] { module.actionLog.map(\.value) }
+        let start = module.actionLog.count
+        let down = KeyPress(kind: .down, keyCode: 9, flags: cmdOpt, character: "v")
+        check(module.keyEvent(down), "the shortcut's key is kept from the app in front")
+        check(module.keyEvent(KeyPress(kind: .down, keyCode: 9, flags: cmdOpt, character: "v", isRepeat: true)), "and so is its key repeating")
+        check(!module.keyEvent(KeyPress(kind: .down, keyCode: 0, flags: 0, character: "a")), "other keys pass straight through")
+        check(module.keyEvent(KeyPress(kind: .up, keyCode: 9, flags: cmdOpt, character: "v")), "letting go is handled too")
+        _ = module.keyEvent(KeyPress(kind: .flags, keyCode: 58, flags: 0, character: nil))
+        checkEqual(Array(values().dropFirst(start)), ["down", "release", "quick", "modifiers up"],
+                   "a quick press: key down, release, quick release, then all modifiers released")
+        let second = module.actionLog.count
+        _ = module.keyEvent(down)
+        spin(0.8)
+        _ = module.keyEvent(KeyPress(kind: .up, keyCode: 9, flags: 0, character: "v"))
+        checkEqual(Array(values().dropFirst(second)), ["down", "long", "release", "after long", "modifiers up"],
+                   "a long press: key down, long hold, release, release after a long hold")
+
+        // Repeat while held
+        var repeating = GestureRule(gesture: .shortcut(keyCode: 0x7E, modifiers: 256 | 2048), action: say("step"))
+        repeating.repeatWhileHeld = true
+        repeating.repeatRate = 20
+        repeating.repeatDelay = 0.1
+        repeating.preventRecursion = false
+        module.store.rules = [repeating]
+        let third = module.actionLog.count
+        _ = module.keyEvent(KeyPress(kind: .down, keyCode: 0x7E, flags: cmdOpt, character: nil))
+        spin(0.6)
+        _ = module.keyEvent(KeyPress(kind: .up, keyCode: 0x7E, flags: 0, character: nil))
+        let steps = module.actionLog.count - third
+        check(steps >= 5, "holding the keys repeats the action (\(steps) times in 0.6 s at 20 a second)")
+        spin(0.3)
+        checkEqual(module.actionLog.count - third, steps, "and letting go stops it")
+
+        // Fingers lifting, and repeating while they stay down
+        var lift = GestureRule(gesture: .touch(.trackpad, .tap, fingers: 4), action: say("tapped"))
+        lift.phaseActions = [.release: [say("lifted")]]
+        let fourth = module.actionLog.count
+        module.run(lift, for: lift.gesture)
+        module.fingersLifted(.trackpad)
+        checkEqual(Array(values().dropFirst(fourth)), ["tapped", "lifted"], "touch triggers can run actions when the fingers lift")
+        var holdTouch = GestureRule(gesture: .touch(.trackpad, .longTouch, fingers: 2), action: say("brighter"))
+        holdTouch.repeatWhileHeld = true
+        holdTouch.repeatRate = 20
+        holdTouch.repeatDelay = 0.1
+        let fifth = module.actionLog.count
+        module.run(holdTouch, for: holdTouch.gesture)
+        spin(0.5)
+        module.fingersLifted(.trackpad)
+        let touches = module.actionLog.count - fifth
+        check(touches >= 4, "and repeat while the fingers stay down (\(touches) times)")
+        spin(0.3)
+        checkEqual(module.actionLog.count - fifth, touches, "stopping when they lift")
+
+        let saved = (try? JSONEncoder().encode([phased, repeating, shortcut])).flatMap { try? JSONDecoder().decode([GestureRule].self, from: $0) }
+        checkEqual(saved, [phased, repeating, shortcut], "phase actions, repeats, sides and layout settings are saved")
+        module.store.rules = []
     }
 }
