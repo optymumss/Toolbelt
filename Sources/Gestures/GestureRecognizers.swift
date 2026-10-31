@@ -22,6 +22,9 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
     case tapLeft, tapRight, tapMiddle, clickMiddle
     /// Rest one or more fingers and tap another to their left or right ("fingers" counts them all).
     case tipTapLeft, tipTapRight
+    /// The moment that many fingers touch; holding them still for a while; a tap high or low on the
+    /// trackpad; and a Force Click (pressing harder until the second click).
+    case touchStart, longTouch, tapTop, tapBottom, forceClick
 
     var id: String { rawValue }
 
@@ -58,12 +61,26 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         case .clickMiddle: return "Click in the middle"
         case .tipTapLeft: return "TipTap left"
         case .tipTapRight: return "TipTap right"
+        case .touchStart: return "Touch start"
+        case .longTouch: return "Long touch (hold still)"
+        case .tapTop: return "Tap near the top"
+        case .tapBottom: return "Tap near the bottom"
+        case .forceClick: return "Force Click (experimental)"
         }
     }
 
     var isCorner: Bool { rawValue.hasPrefix("corner") }
     /// Gestures always made with one finger in a particular place: the finger count isn't asked for.
-    var isPlaced: Bool { isCorner || (rawValue.hasPrefix("tap") && self != .tap) || self == .clickMiddle }
+    var isPlaced: Bool {
+        switch self {
+        case .cornerTopLeft, .cornerTopRight, .cornerBottomLeft, .cornerBottomRight,
+             .tapTopLeft, .tapTopMiddle, .tapTopRight, .tapLeftMiddle, .tapRightMiddle, .tapBottomLeft, .tapBottomMiddle, .tapBottomRight,
+             .tapLeft, .tapRight, .tapMiddle, .clickMiddle:
+            return true
+        default:
+            return false
+        }
+    }
     var isTipTap: Bool { self == .tipTapLeft || self == .tipTapRight }
 
     /// What can be done with each number of fingers on a device, for the gesture picker.
@@ -72,17 +89,19 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         let scrolls: [TouchKind] = [.scrollUp, .scrollDown, .scrollLeft, .scrollRight]
         switch source {
         case .trackpad:
+            let held: [TouchKind] = [.touchStart, .longTouch]
             return [
                 (1, [.tap, .doubleTap, .tapTopLeft, .tapTopMiddle, .tapTopRight, .tapLeftMiddle, .tapRightMiddle,
-                     .tapBottomLeft, .tapBottomMiddle, .tapBottomRight, .cornerTopLeft, .cornerTopRight, .cornerBottomLeft, .cornerBottomRight]),
-                (2, [.tap, .doubleTap, .tipTapLeft, .tipTapRight] + swipes + [.pinchIn, .pinchOut]),
-                (3, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut]),
-                (4, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut]),
-                (5, [.tap, .doubleTap, .click] + swipes + scrolls + [.pinchIn, .pinchOut]),
+                     .tapBottomLeft, .tapBottomMiddle, .tapBottomRight, .cornerTopLeft, .cornerTopRight, .cornerBottomLeft, .cornerBottomRight,
+                     .forceClick] + held),
+                (2, [.tap, .doubleTap, .tapTop, .tapBottom, .tipTapLeft, .tipTapRight] + swipes + [.pinchIn, .pinchOut] + held),
+                (3, [.tap, .doubleTap, .tapTop, .tapBottom, .click, .forceClick, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut] + held),
+                (4, [.tap, .doubleTap, .tapTop, .tapBottom, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut] + held),
+                (5, [.tap, .doubleTap, .tapTop, .tapBottom, .click] + swipes + scrolls + [.pinchIn, .pinchOut] + held),
             ]
         case .magicMouse:
             return [
-                (1, [.tap, .doubleTap, .tapLeft, .tapRight, .tapMiddle, .clickMiddle]),
+                (1, [.tap, .doubleTap, .tapLeft, .tapRight, .tapMiddle, .clickMiddle, .longTouch]),
                 (2, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut]),
                 (3, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls),
                 (4, [.tap, .click] + swipes),
@@ -242,6 +261,13 @@ struct TouchRecognizer {
     private var moved = 0.0
     private var fired = false
     private var countStart: (count: Int, centre: (Double, Double), spread: Double)?
+    private var countSince: Double = 0
+    private var previousCount = 0
+    private var longTouched = false
+    /// Fingers held this still for this long are a long touch.
+    var longTouchTime = 0.6
+    /// Whether to report touch starts and long touches (only while a rule uses them).
+    var holds = false
     /// Where the last scroll step was counted from, and whether scrolling goes across (true) or up and down.
     private var scrollAnchor: (Double, Double)?
     private var scrollAcross: Bool?
@@ -286,6 +312,11 @@ struct TouchRecognizer {
             if maxFingers == 1, let finger = firstPositions.values.first, let placed = placedTap(finger) {
                 gestures.append(.touch(source, placed, fingers: 1))
             }
+            if maxFingers >= 2, source == .trackpad {
+                let height = firstPositions.values.reduce(0) { $0 + $1.y } / Double(firstPositions.count)
+                if height > 0.66 { gestures.append(.touch(source, .tapTop, fingers: maxFingers)) }
+                if height < 0.33 { gestures.append(.touch(source, .tapBottom, fingers: maxFingers)) }
+            }
             if let previous = lastTap, previous.fingers == maxFingers, started - previous.ended <= doubleTapGap {
                 gestures.append(.touch(source, .doubleTap, fingers: maxFingers))
                 lastTap = nil
@@ -309,15 +340,29 @@ struct TouchRecognizer {
         let centre = Self.centre(of: touches)
         let spread = Self.spread(of: touches, around: centre)
         guard let start = countStart, start.count == touches.count else {
+            // More fingers than a moment ago: "touch start" for that many.
+            let added = touches.count > previousCount
+            previousCount = touches.count
             countStart = (touches.count, centre, spread)
+            countSince = time
+            longTouched = false
             scrollAnchor = centre
             scrollAcross = nil
-            return tipTap.map { [$0] } ?? []
+            var gestures = tipTap.map { [$0] } ?? []
+            if added, holds { gestures.append(.touch(source, .touchStart, fingers: touches.count)) }
+            return gestures
         }
         let count = touches.count
         var gestures = scrolls ? scrollSteps(at: centre, from: start.centre, fingers: count) : []
         if let tipTap { gestures.insert(tipTap, at: 0) }
         guard !fired else { return gestures }
+        // Held still: a long touch (once), and nothing else for this touch.
+        if holds, !longTouched, time - countSince >= longTouchTime,
+           hypot(centre.0 - start.centre.0, centre.1 - start.centre.1) < tapMovement, moved < tapMovement * 2 {
+            longTouched = true
+            fired = true
+            return gestures + [.touch(source, .longTouch, fingers: count)]
+        }
 
         if count >= 2, start.spread > 0.02 {
             let ratio = spread / start.spread
@@ -431,6 +476,8 @@ struct TouchRecognizer {
         scrolled = false
         firstSeen = [:]
         previous = []
+        previousCount = 0
+        longTouched = false
     }
 
     static func centre(of touches: [TouchPoint]) -> (Double, Double) {
@@ -505,6 +552,58 @@ struct ModifierTapDetector {
 
 // MARK: - Which rule applies
 
+/// The moments a trigger can run actions at, besides when it's first triggered.
+enum TriggerPhase: String, Codable, CaseIterable, Identifiable {
+    case release, longHold, quickRelease, releaseAfterLongHold, modifiersReleased
+
+    var id: String { rawValue }
+
+    func title(keyboard: Bool) -> String {
+        switch self {
+        case .release: return keyboard ? "On key release" : "When the fingers lift"
+        case .longHold: return keyboard ? "On long key hold" : "On long hold"
+        case .quickRelease: return "On quick release"
+        case .releaseAfterLongHold: return "On release after a long hold"
+        case .modifiersReleased: return "After all modifier keys are released"
+        }
+    }
+
+    static func available(keyboard: Bool) -> [TriggerPhase] { keyboard ? allCases : [.release] }
+}
+
+/// Matching a key press against a keyboard-shortcut trigger that watches the keyboard itself.
+enum ShortcutMatch {
+    /// The device-specific bits macOS sets for each side's modifier key.
+    static let leftControl = 0x01, leftShift = 0x02, rightShift = 0x04, leftCommand = 0x08, rightCommand = 0x10
+    static let leftOption = 0x20, rightOption = 0x40, rightControl = 0x2000
+    static let sideMask = 0x207F
+
+    /// ⌘ ⌥ ⌃ ⇧ from event flags, as Carbon modifier bits (what shortcuts are stored with).
+    static func carbonModifiers(_ flags: UInt64) -> Int {
+        var modifiers = 0
+        if flags & CGEventFlags.maskCommand.rawValue != 0 { modifiers |= 256 }
+        if flags & CGEventFlags.maskShift.rawValue != 0 { modifiers |= 512 }
+        if flags & CGEventFlags.maskAlternate.rawValue != 0 { modifiers |= 2048 }
+        if flags & CGEventFlags.maskControl.rawValue != 0 { modifiers |= 4096 }
+        return modifiers
+    }
+
+    static func matches(_ rule: GestureRule, keyCode: Int, flags: UInt64, character: String?) -> Bool {
+        guard case let .shortcut(ruleKey, ruleModifiers) = rule.gesture, ruleKey != 0 || ruleModifiers != 0 else { return false }
+        guard carbonModifiers(flags) == ruleModifiers else { return false }
+        if rule.followLayout == true, let wanted = rule.keyCharacter, !wanted.isEmpty {
+            guard let character, character.lowercased() == wanted.lowercased() else { return false }
+        } else if keyCode != ruleKey {
+            return false
+        }
+        if rule.distinguishSides == true, let sides = rule.sideFlags, sides & sideMask != 0 {
+            // Each side recorded must be the one held now.
+            guard Int(flags) & sides & sideMask == sides & sideMask else { return false }
+        }
+        return true
+    }
+}
+
 /// One gesture and what it does, optionally only in (or except in) certain apps.
 struct GestureRule: Identifiable, Codable, Equatable {
     enum AppScope: String, Codable, CaseIterable, Identifiable {
@@ -545,6 +644,30 @@ struct GestureRule: Identifiable, Codable, Equatable {
     var groupID: UUID? = nil
     /// Its own conditions ("Advanced conditions"), checked when it's triggered.
     var condition: ConditionGroup? = nil
+    /// Actions for other moments: when the keys or fingers are let go, held a while, and so on.
+    var phaseActions: [TriggerPhase: [MacroAction]]? = nil
+    /// Run the actions again and again while the keys are held or the fingers stay down.
+    var repeatWhileHeld: Bool? = nil
+    /// Repeats a second, and the wait before the first repeat (seconds).
+    var repeatRate: Double? = nil
+    var repeatDelay: Double? = nil
+    /// Keyboard shortcuts: tell the left and right modifier keys apart (`sideFlags` are the ones recorded).
+    var distinguishSides: Bool? = nil
+    var sideFlags: Int? = nil
+    /// Keyboard shortcuts: match the character typed rather than the key's place, so the shortcut follows
+    /// a change of keyboard layout (`keyCharacter` is what the key typed when it was recorded).
+    var followLayout: Bool? = nil
+    var keyCharacter: String? = nil
+
+    func actions(for phase: TriggerPhase) -> [MacroAction] { phaseActions?[phase] ?? [] }
+    var hasPhaseActions: Bool { phaseActions?.values.contains { !$0.isEmpty } ?? false }
+
+    /// A keyboard shortcut that needs Toolbelt to watch the keyboard itself (key up, holding, sides,
+    /// layout), rather than macOS's ordinary hot keys.
+    var needsKeyWatching: Bool {
+        guard case .shortcut = gesture else { return false }
+        return hasPhaseActions || repeatWhileHeld == true || distinguishSides == true || followLayout == true
+    }
 
     var hasNotes: Bool { !(notes ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
     var hasCondition: Bool { !(condition?.isEmpty ?? true) }
