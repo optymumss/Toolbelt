@@ -50,6 +50,7 @@ enum ToolbeltTests {
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
+        t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
@@ -1855,6 +1856,105 @@ enum GestureTests {
         checkEqual(Gesture.touch(.trackpad, .tap, fingers: 4).doubleTapVersion, .touch(.trackpad, .doubleTap, fingers: 4),
                    "a single tap knows to wait when its fingers have a double-tap rule")
 
+        // Taps in places, TipTaps, and the Magic Mouse's taps and clicks
+        var placed = TouchRecognizer(source: .trackpad)
+        func oneTap(_ x: Double, _ y: Double, at time: Double, on recognizer: inout TouchRecognizer) -> [Gesture] {
+            _ = recognizer.feedAll(fingers([(x, y)]), at: time)
+            _ = recognizer.feedAll(fingers([(x, y)]), at: time + 0.05)
+            return recognizer.feedAll([], at: time + 0.1)
+        }
+        let places: [(Double, Double, TouchKind)] = [(0.05, 0.95, .tapTopLeft), (0.5, 0.95, .tapTopMiddle), (0.95, 0.95, .tapTopRight),
+                                                    (0.05, 0.5, .tapLeftMiddle), (0.95, 0.5, .tapRightMiddle), (0.05, 0.05, .tapBottomLeft),
+                                                    (0.5, 0.05, .tapBottomMiddle), (0.95, 0.05, .tapBottomRight)]
+        for (index, place) in places.enumerated() {
+            checkEqual(oneTap(place.0, place.1, at: 30 + Double(index), on: &placed).last, .touch(.trackpad, place.2, fingers: 1),
+                       "a one-finger tap at the \(place.2.title.lowercased().replacingOccurrences(of: "tap ", with: "")) is told apart")
+        }
+        checkEqual(oneTap(0.5, 0.5, at: 40, on: &placed), [.touch(.trackpad, .tap, fingers: 1)], "a tap in the middle is just a tap")
+        var mouseTaps = TouchRecognizer(source: .magicMouse)
+        checkEqual(oneTap(0.2, 0.7, at: 1, on: &mouseTaps).last, .touch(.magicMouse, .tapLeft, fingers: 1), "a tap on the left of the Magic Mouse")
+        checkEqual(oneTap(0.8, 0.7, at: 2, on: &mouseTaps).last, .touch(.magicMouse, .tapRight, fingers: 1), "on its right")
+        checkEqual(oneTap(0.5, 0.7, at: 3, on: &mouseTaps).last, .touch(.magicMouse, .tapMiddle, fingers: 1), "and in its middle")
+        _ = mouseTaps.feedAll(fingers([(0.5, 0.6)]), at: 5)
+        checkEqual(mouseTaps.click(), .touch(.magicMouse, .clickMiddle, fingers: 1), "clicking with a finger in the middle of the mouse")
+        _ = mouseTaps.feedAll([], at: 5.5)
+        _ = mouseTaps.feedAll(fingers([(0.2, 0.6)]), at: 6)
+        check(mouseTaps.click() == nil, "an ordinary left click on the mouse is left alone")
+        _ = mouseTaps.feedAll([], at: 6.5)
+        _ = mouseTaps.feedAll(fingers([(0.4, 0.6), (0.6, 0.6)]), at: 7)
+        checkEqual(mouseTaps.click(), .touch(.magicMouse, .click, fingers: 2), "clicking with two fingers on the mouse")
+        _ = mouseTaps.feedAll([], at: 7.5)
+
+        var tip = TouchRecognizer(source: .trackpad)
+        func tipTap(resting: [(Double, Double)], tapAt: (Double, Double), at time: Double) -> [Gesture] {
+            var all: [Gesture] = []
+            let rest = resting.enumerated().map { TouchPoint(id: $0.offset, x: $0.element.0, y: $0.element.1) }
+            all += tip.feedAll(rest, at: time)
+            all += tip.feedAll(rest, at: time + 0.2)
+            let tapper = TouchPoint(id: 9, x: tapAt.0, y: tapAt.1)
+            all += tip.feedAll(rest + [tapper], at: time + 0.3)
+            all += tip.feedAll(rest + [tapper], at: time + 0.35)
+            all += tip.feedAll(rest, at: time + 0.4)
+            all += tip.feedAll(rest, at: time + 0.8)
+            all += tip.feedAll([], at: time + 0.9)
+            return all
+        }
+        checkEqual(tipTap(resting: [(0.5, 0.4)], tapAt: (0.65, 0.42), at: 50), [.touch(.trackpad, .tipTapRight, fingers: 2)],
+                   "resting one finger and tapping another to its right is a TipTap right")
+        checkEqual(tipTap(resting: [(0.5, 0.4)], tapAt: (0.35, 0.42), at: 52), [.touch(.trackpad, .tipTapLeft, fingers: 2)], "and to its left, TipTap left")
+        checkEqual(tipTap(resting: [(0.45, 0.4), (0.55, 0.4)], tapAt: (0.3, 0.42), at: 54), [.touch(.trackpad, .tipTapLeft, fingers: 3)],
+                   "with two fingers resting it's a three-finger TipTap")
+        var quickTwo: [Gesture] = []
+        quickTwo += tip.feedAll(fingers([(0.4, 0.5), (0.6, 0.5)]), at: 60)
+        quickTwo += tip.feedAll(fingers([(0.4, 0.5)]), at: 60.05)
+        quickTwo += tip.feedAll([], at: 60.1)
+        check(!quickTwo.contains { if case .touch(_, let kind, _) = $0 { return kind.isTipTap }; return false },
+              "two fingers lifting a moment apart isn't a TipTap")
+        let trackpadChoices = TouchKind.choices(for: .trackpad)
+        check(trackpadChoices.first?.kinds.contains(.tapTopMiddle) == true && trackpadChoices.contains { $0.fingers == 5 },
+              "the gesture picker groups the trackpad's gestures by fingers, one to five")
+        check(TouchKind.choices(for: .magicMouse).first?.kinds.contains(.clickMiddle) == true, "and the Magic Mouse's, with its middle click")
+        check(GestureRule.match(.touch(.trackpad, .tapTopLeft, fingers: 1), app: nil,
+                                in: [GestureRule(gesture: .touch(.trackpad, .tapTopLeft, fingers: 1), action: .system(.mute))]) != nil, "a tap-in-a-place rule matches")
+        checkEqual(Gesture.touch(.trackpad, .tipTapLeft, fingers: 2).title, "Trackpad: TipTap left (1 resting, tap with one more)", "TipTaps are named clearly")
+
+        // Sensitivity and ignoring the trackpad after typing
+        var hard = TouchRecognizer(source: .trackpad)
+        hard.tune(1.5)
+        var hardFired: [Gesture] = []
+        for step in 0...10 { hardFired += hard.feedAll(fingers(three.map { ($0.0 + 0.016 * Double(step), $0.1) }), at: Double(step) * 0.02) }
+        check(!hardFired.contains(.touch(.trackpad, .swipeRight, fingers: 3)), "harder to trigger: a short swipe doesn't count")
+        var easy = TouchRecognizer(source: .trackpad)
+        easy.tune(0.7)
+        var easyFired: [Gesture] = []
+        for step in 0...10 { easyFired += easy.feedAll(fingers(three.map { ($0.0 + 0.011 * Double(step), $0.1) }), at: Double(step) * 0.02) }
+        check(easyFired.contains(.touch(.trackpad, .swipeRight, fingers: 3)), "easier to trigger: a shorter swipe does")
+        check(!GesturesModule.typedRecently(pause: 0), "with the typing pause off, typing never blocks gestures")
+        check(GesturesModule.typedRecently(pause: .greatestFiniteMagnitude), "with it on, a recent key press blocks trackpad gestures")
+
+        // Several actions on one gesture
+        var several = GestureRule(gesture: .touch(.trackpad, .tap, fingers: 4), action: .system(.mute))
+        several.moreActions = [.system(.playPause), .toolbelt(.openLauncher)]
+        checkEqual(several.actions, [.system(.mute), .system(.playPause), .toolbelt(.openLauncher)], "a gesture can run several actions, in order")
+        checkEqual(several.summary, "Mute / unmute + 2 more", "and the list says so")
+        let old = #"[{"id":"5D3C1E2A-0000-4000-8000-000000000001","gesture":{"mouseButton":{"_0":3}},"action":{"kind":"system","value":"back","keyCode":0,"modifiers":0},"enabled":true,"scope":"everywhere","apps":[],"deleteTyped":true}]"#
+        let oldRules = try? JSONDecoder().decode([GestureRule].self, from: Data(old.utf8))
+        check(oldRules?.first?.actions == [.system(.back)], "gestures saved by older versions still load")
+
+        // New Mac actions
+        for control in [SystemControl.muteMicrophone, .spotlight, .launchpad, .siri, .keyboardBrightnessUp, .keyboardBrightnessDown] {
+            check(!control.title.isEmpty && SystemControl(rawValue: control.rawValue) == control, "“\(control.title)” is an action gestures can run")
+        }
+        if let before = Microphone.isMuted, Microphone.toggleMute() {
+            let middle = Microphone.isMuted
+            Microphone.toggleMute()
+            check(middle == !before && Microphone.isMuted == before, "the microphone mutes and unmutes", "\(before) → \(String(describing: middle)) → \(String(describing: Microphone.isMuted))")
+        } else {
+            check(true, "no microphone that can be muted on this Mac, so muting it is skipped")
+        }
+        _ = KeyboardLight.level // no keyboard light on test Macs: just mustn't crash
+        check(true, "asking about the keyboard light is safe on Macs without one")
+
         // Mouse strokes
         checkEqual(StrokeRecognizer.path(of: (0...10).map { CGPoint(x: 500 - $0 * 15, y: 300) }), "L", "dragging left draws L")
         let downRight = (0...6).map { CGPoint(x: 300, y: 300 + $0 * 15) } + (1...6).map { CGPoint(x: 300 + $0 * 15, y: 390) }
@@ -3288,5 +3388,74 @@ enum VideoStreamTests {
             }
         }
         try? FileManager.default.removeItem(at: work)
+    }
+}
+
+// MARK: - Web server
+
+@MainActor
+enum WebServerTests {
+    static func run() {
+        let request = WebRequest.parse(Data("GET /trigger_named/?trigger_name=Say%20hi&shared_secret=abc HTTP/1.1\r\nHost: x\r\nX-Toolbelt-Secret: h\r\n\r\n".utf8))
+        checkEqual(request?.path, "/trigger_named", "BetterTouchTool-style addresses are read (the trailing / too)")
+        checkEqual(request?.query["trigger_name"], "Say hi", "with their name")
+        checkEqual(request?.secret, "abc", "and the shared secret")
+        check(WebRequest.parse(Data("nonsense".utf8)) == nil, "anything that isn't a web request is refused")
+
+        var ran: [String] = []
+        var actions: [MacroAction] = []
+        let api = WebAPI(secret: "s3cret", macroNames: { ["Say hi", "Backup"] },
+                         runMacro: { name, input in ran.append(name + (input.isEmpty ? "" : ":" + input)) },
+                         runAction: { actions.append($0) })
+        func get(_ target: String) -> WebResponse {
+            api.respond(to: WebRequest.parse(Data("GET \(target) HTTP/1.1\r\n\r\n".utf8))!)
+        }
+        checkEqual(get("/list").status, 401, "without the secret nothing works")
+        checkEqual(get("/list?secret=wrong").status, 401, "nor with the wrong one")
+        check(ran.isEmpty && actions.isEmpty, "and nothing ran")
+        checkEqual(get("/trigger_named/?trigger_name=say%20hi&shared_secret=s3cret").status, 200, "a macro runs by name, with the secret")
+        checkEqual(ran, ["Say hi"], "the right one (ignoring capitals)")
+        _ = get("/run_macro?name=Backup&input=now&secret=s3cret")
+        checkEqual(ran.last, "Backup:now", "and can be given text for %Trigger%")
+        checkEqual(get("/trigger_named?trigger_name=Nope&secret=s3cret").status, 404, "an unknown macro says so")
+        checkEqual(get("/action?do=volumeUp&secret=s3cret").status, 200, "Mac controls run by name")
+        checkEqual(actions.last, .system(.volumeUp), "the right one")
+        _ = get("/action?command=openLauncher&secret=s3cret")
+        checkEqual(actions.last, .toolbelt(.openLauncher), "so do Toolbelt commands")
+        let list = get("/list?secret=s3cret")
+        let listed = (try? JSONSerialization.jsonObject(with: list.body)) as? [String: Any]
+        check((listed?["macros"] as? [String]) == ["Say hi", "Backup"] && ((listed?["actions"] as? [Any])?.count ?? 0) > 20,
+              "/list lists the macros and every action")
+        let page = get("/")
+        check(page.status == 200 && page.contentType.hasPrefix("text/html") && !String(decoding: page.body, as: UTF8.self).contains("s3cret"),
+              "the button page opens without the secret, and doesn't contain it")
+        check(WebAPI.same("abc", "abc") && !WebAPI.same("abc", "abd") && !WebAPI.same("ab", "abc") && !WebAPI.same("", ""),
+              "secrets are compared exactly")
+        let secret = WebAPI.newSecret()
+        check(secret.count == 24 && secret != WebAPI.newSecret(), "new secrets are long and different each time")
+
+        // The real server, on this Mac only
+        let server = WebServer()
+        let port = UInt16.random(in: 40000...50000)
+        server.start(port: port, everyone: false, api: api)
+        check(server.isRunning && server.problem == nil, "the web server starts", server.problem ?? "")
+        func fetch(_ path: String) -> (Int, String)? {
+            final class Box: @unchecked Sendable { var result: (Int, String)?; var done = false }
+            let box = Box()
+            URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:\(port)\(path)")!) { data, response, _ in
+                box.result = (response as? HTTPURLResponse).map { ($0.statusCode, String(decoding: data ?? Data(), as: UTF8.self)) }
+                box.done = true
+            }.resume()
+            _ = DownloadTests.waitFor(10) { box.done }
+            return box.result
+        }
+        let before = ran.count
+        checkEqual(fetch("/trigger_named/?trigger_name=Say%20hi&shared_secret=s3cret")?.0, 200, "a browser can run a macro through it")
+        checkEqual(ran.count, before + 1, "and it ran")
+        checkEqual(fetch("/list")?.0, 401, "without the secret it's refused")
+        for _ in 0..<10 { _ = fetch("/list?secret=guess") }
+        checkEqual(fetch("/list?secret=s3cret")?.0, 429, "after ten wrong secrets in a minute it stops answering for a while")
+        server.stop()
+        check(fetch("/list?secret=s3cret") == nil, "switched off, nothing answers")
     }
 }

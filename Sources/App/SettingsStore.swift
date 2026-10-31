@@ -194,6 +194,47 @@ enum Prefs {
     }
 
     /// Hand downloads from Chrome to Toolbelt (once the extension is set up).
+    /// Trackpad and Magic Mouse gestures: below 1 easier to trigger, above 1 harder.
+    static var gestureSensitivity: Double {
+        get { store.value("gestures.sensitivity", default: 1.0) }
+        set { store.set(newValue, for: "gestures.sensitivity") }
+    }
+
+    /// Seconds after a key press during which trackpad gestures are ignored (0: off).
+    static var gestureTypingPause: Double {
+        get { store.value("gestures.typingPause", default: 0.0) }
+        set { store.set(newValue, for: "gestures.typingPause") }
+    }
+
+    /// The web server (Settings → Automation): off unless switched on.
+    static var webServerOn: Bool {
+        get { store.value("web.on", default: false) }
+        set { store.set(newValue, for: "web.on") }
+    }
+
+    static var webServerPort: Int {
+        get { store.value("web.port", default: 12345) }
+        set { store.set(newValue, for: "web.port") }
+    }
+
+    /// Let other devices on the network reach it (otherwise only this Mac).
+    static var webServerEveryone: Bool {
+        get { store.value("web.everyone", default: false) }
+        set { store.set(newValue, for: "web.everyone") }
+    }
+
+    /// The shared secret every request must carry; made up the first time it's needed.
+    static var webServerSecret: String {
+        get {
+            let saved: String = store.value("web.secret", default: "")
+            if !saved.isEmpty { return saved }
+            let secret = WebAPI.newSecret()
+            store.set(secret, for: "web.secret")
+            return secret
+        }
+        set { store.set(newValue, for: "web.secret") }
+    }
+
     static var downloadChromeSetUp: Bool {
         get { store.value("downloads.chrome", default: false) }
         set { store.set(newValue, for: "downloads.chrome") }

@@ -114,6 +114,8 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Gestures | Listens only while a rule needs it | Tests (tap starts and stops with the rules); battery check |
 | Gestures | Trackpad reader status in Settings; nonsense touch data is ignored, not acted on | Tests "Gestures: trackpad, mouse and keys" |
 | Gestures | Double taps; scrolls that repeat while sliding; the brightness/volume/sleep set | Tests "Gestures: trackpad, mouse and keys" (made-up touches); **Manual** on a real trackpad |
+| Gestures | Taps in places, TipTaps, Magic Mouse taps and clicks, picker grouped by fingers, several actions per gesture, sensitivity, ignore after typing | Tests "Gestures: trackpad, mouse and keys"; **Manual** on a real trackpad and Magic Mouse |
+| Gestures | Microphone mute, Spotlight, Launchpad/Apps, Siri, keyboard light | Tests (microphone where the test Mac has one); **Manual** for the keyboard light (test Macs have none) |
 | Automation | Trigger: keyboard shortcut | End-to-end: ⌃⌥⌘M runs a macro in the real app |
 | Automation | Trigger: typed text, gesture | End-to-end: typing ;;m runs a macro (through the Gestures module) |
 | Automation | Trigger: key on another keyboard or device | **Manual** (needs a second keyboard; CI Macs have none) |
@@ -130,3 +132,4 @@ They're marked **Manual** below and are in the checklist that comes with each re
 | Automation | Notifications, ask for text, pick from a list | Tests (answers filled in, cancelling stops the macro) |
 | Automation | If/otherwise, repeat, repeat while, pause, stop, variables | Tests (a whole macro using each; endless loops are stopped) |
 | Automation | Groups only in certain apps; search | Tests |
+| Automation | Web server: macros and Mac controls by address, shared secret, this-Mac-only by default, lockout after wrong secrets, button page | Tests "Automation: the web server" (a real server on the test Mac) |

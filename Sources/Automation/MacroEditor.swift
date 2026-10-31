@@ -376,6 +376,7 @@ struct ConditionEditor: View {
 
 struct AutomationSettingsTab: View {
     @ObservedObject var store: MacroStore
+    var web: AutomationModule? = nil
     let openEditor: () -> Void
 
     var body: some View {
@@ -410,6 +411,62 @@ struct AutomationSettingsTab: View {
                 Text("Switch a whole group of macros on or off, or let them work only in certain apps.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if let web { WebServerSettings(module: web) }
         }
+    }
+}
+
+/// Settings → Automation → Web server.
+struct WebServerSettings: View {
+    let module: AutomationModule
+    @ObservedObject private var settings = SettingsStore.shared
+    @State private var copied = false
+
+    private var addresses: [String] {
+        let port = Prefs.webServerPort
+        let local = ["http://127.0.0.1:\(port)"]
+        return Prefs.webServerEveryone ? local + WebServer.localAddresses().map { "http://\($0):\(port)" } : local
+    }
+
+    var body: some View {
+        Section {
+            Toggle("Web server", isOn: binding(settings.binding("web.on", default: false)))
+            if Prefs.webServerOn {
+                TextField("Port", value: binding(settings.binding("web.port", default: 12345)), format: .number.grouping(.never))
+                Toggle("Let other devices on my network use it (for your phone)", isOn: binding(settings.binding("web.everyone", default: false)))
+                LabeledContent("Shared secret") {
+                    HStack {
+                        Text(Prefs.webServerSecret).textSelection(.enabled).font(.system(.body, design: .monospaced))
+                        Button(copied ? "Copied" : "Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(Prefs.webServerSecret, forType: .string)
+                            copied = true
+                        }
+                        Button("New Secret") {
+                            Prefs.webServerSecret = WebAPI.newSecret()
+                            module.updateWebServer()
+                        }
+                    }
+                }
+                ForEach(addresses, id: \.self) { address in
+                    LabeledContent("Address") {
+                        Link(address, destination: URL(string: "\(address)/?secret=\(Prefs.webServerSecret)")!)
+                    }
+                }
+                if let problem = module.web.problem {
+                    Text(problem).font(.caption).foregroundStyle(.orange)
+                }
+            }
+        } header: {
+            Text("Web server")
+        } footer: {
+            Text("Run macros and Mac controls from a web address, like BetterTouchTool's web server: /trigger_named/?trigger_name=Macro name, /action?do=volumeUp, or /list for everything; add &shared_secret=… to each. Open the address on your phone for a page of buttons (Share → Add to Home Screen makes it an app). Off, nothing listens.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Saves the setting, then restarts the server to match.
+    private func binding<T>(_ inner: Binding<T>) -> Binding<T> {
+        Binding(get: { inner.wrappedValue }, set: { inner.wrappedValue = $0; module.updateWebServer() })
     }
 }

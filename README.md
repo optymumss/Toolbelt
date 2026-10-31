@@ -1,9 +1,19 @@
-# Toolbelt — v0.20
+# Toolbelt — v0.21
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.21: everything BetterTouchTool does with the trackpad and Magic Mouse
+- **Pick gestures from a list grouped by fingers** (one finger, two fingers… five), like BetterTouchTool. Gestures another rule already uses are marked **in use**.
+- **New trackpad gestures:** one-finger taps at the top-left, top middle, top-right, middle of the left and right sides, bottom-left, bottom middle and bottom-right; **TipTap** left/right (rest one, two or three fingers and tap another beside them); four- and five-finger taps and swipes.
+- **New Magic Mouse gestures:** one-finger taps on the left, right or middle of the mouse; clicking with a finger in the middle; clicking with two or more fingers; TipTap.
+- **Several actions on one gesture:** under a gesture's first action, click **Add Another Action**; they run in order.
+- **More Mac actions:** mute/unmute the microphone, Spotlight, Launchpad (the Apps view on macOS 26), Siri, keyboard light up/down.
+- **Sensitivity** (Settings → Gestures): from *easier* to *harder to trigger*, and **ignore the trackpad for a moment after typing**, so a resting palm doesn't set off gestures.
+- **Web server** (Settings → Automation → Web server), like BetterTouchTool's: run any macro or Mac control from a web address, e.g. `http://127.0.0.1:12345/trigger_named/?trigger_name=My macro&shared_secret=…` or `/action?do=volumeUp&shared_secret=…`; `/list` lists everything. Off until you switch it on; every request needs the shared secret shown there; only this Mac can use it unless you switch on **Let other devices on my network use it**. Opening the address in a browser shows a page of buttons for your macros and Mac controls; on your iPhone, Share → **Add to Home Screen** makes it an app icon.
+  - The first time another device connects, macOS may ask whether Toolbelt may **find devices on your local network** and, if the firewall is on, **accept incoming connections**: allow both.
 
 ## What's new in 0.20: video sizes, brightness and volume gestures
 - **Download a video at the size you want.** On a video site, point at the video and click **⬇ Download**. Toolbelt lists every size the site streams it at (for example 1080p, 720p, 360p) with roughly how big each file will be. Click one and it downloads in the background: the list of downloads stays out of the way, and the menu bar icon shows how far it's got (e.g. **42%**). Menu bar icon → **Show Downloads** opens the list.

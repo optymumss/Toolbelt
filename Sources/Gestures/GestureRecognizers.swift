@@ -16,6 +16,12 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
     case tap, click, swipeLeft, swipeRight, swipeUp, swipeDown, pinchIn, pinchOut
     case cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight
     case doubleTap, scrollLeft, scrollRight, scrollUp, scrollDown
+    /// One-finger taps near an edge or corner of the trackpad.
+    case tapTopLeft, tapTopMiddle, tapTopRight, tapLeftMiddle, tapRightMiddle, tapBottomLeft, tapBottomMiddle, tapBottomRight
+    /// One-finger taps on the left, right or middle of the Magic Mouse, and clicking with a finger in the middle.
+    case tapLeft, tapRight, tapMiddle, clickMiddle
+    /// Rest one or more fingers and tap another to their left or right ("fingers" counts them all).
+    case tipTapLeft, tipTapRight
 
     var id: String { rawValue }
 
@@ -38,10 +44,51 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         case .scrollRight: return "Scroll right (repeats while sliding)"
         case .scrollUp: return "Scroll up (repeats while sliding)"
         case .scrollDown: return "Scroll down (repeats while sliding)"
+        case .tapTopLeft: return "Tap top-left corner"
+        case .tapTopMiddle: return "Tap top middle"
+        case .tapTopRight: return "Tap top-right corner"
+        case .tapLeftMiddle: return "Tap left side, middle"
+        case .tapRightMiddle: return "Tap right side, middle"
+        case .tapBottomLeft: return "Tap bottom-left corner"
+        case .tapBottomMiddle: return "Tap bottom middle"
+        case .tapBottomRight: return "Tap bottom-right corner"
+        case .tapLeft: return "Tap on the left"
+        case .tapRight: return "Tap on the right"
+        case .tapMiddle: return "Tap in the middle"
+        case .clickMiddle: return "Click in the middle"
+        case .tipTapLeft: return "TipTap left"
+        case .tipTapRight: return "TipTap right"
         }
     }
 
     var isCorner: Bool { rawValue.hasPrefix("corner") }
+    /// Gestures always made with one finger in a particular place: the finger count isn't asked for.
+    var isPlaced: Bool { isCorner || (rawValue.hasPrefix("tap") && self != .tap) || self == .clickMiddle }
+    var isTipTap: Bool { self == .tipTapLeft || self == .tipTapRight }
+
+    /// What can be done with each number of fingers on a device, for the gesture picker.
+    static func choices(for source: TouchSource) -> [(fingers: Int, kinds: [TouchKind])] {
+        let swipes: [TouchKind] = [.swipeUp, .swipeDown, .swipeLeft, .swipeRight]
+        let scrolls: [TouchKind] = [.scrollUp, .scrollDown, .scrollLeft, .scrollRight]
+        switch source {
+        case .trackpad:
+            return [
+                (1, [.tap, .doubleTap, .tapTopLeft, .tapTopMiddle, .tapTopRight, .tapLeftMiddle, .tapRightMiddle,
+                     .tapBottomLeft, .tapBottomMiddle, .tapBottomRight, .cornerTopLeft, .cornerTopRight, .cornerBottomLeft, .cornerBottomRight]),
+                (2, [.tap, .doubleTap, .tipTapLeft, .tipTapRight] + swipes + [.pinchIn, .pinchOut]),
+                (3, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut]),
+                (4, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut]),
+                (5, [.tap, .doubleTap, .click] + swipes + scrolls + [.pinchIn, .pinchOut]),
+            ]
+        case .magicMouse:
+            return [
+                (1, [.tap, .doubleTap, .tapLeft, .tapRight, .tapMiddle, .clickMiddle]),
+                (2, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut]),
+                (3, [.tap, .doubleTap, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls),
+                (4, [.tap, .click] + swipes),
+            ]
+        }
+    }
     /// Fires again and again while the fingers keep sliding, rather than once per touch.
     var isScroll: Bool { rawValue.hasPrefix("scroll") }
 }
@@ -122,7 +169,8 @@ enum Gesture: Codable, Hashable {
     var title: String {
         switch self {
         case let .touch(source, kind, fingers):
-            if kind.isCorner { return "\(source.title): \(kind.title)" }
+            if kind.isPlaced { return "\(source.title): \(kind.title)" }
+            if kind.isTipTap { return "\(source.title): \(kind.title) (\(fingers - 1) resting, tap with one more)" }
             return "\(source.title): \(kind.title) with \(fingers) finger\(fingers == 1 ? "" : "s")"
         case .mouseButton(let button): return "Mouse button \(button + 1)"
         case let .stroke(button, path):
@@ -148,7 +196,7 @@ enum Gesture: Codable, Hashable {
         case let (.modifierTap(rule, ruleTaps), .modifierTap(pressed, taps)):
             return ruleTaps == taps && rule.accepts(pressed)
         case let (.touch(source, kind, fingers), .touch(eventSource, eventKind, eventFingers)):
-            return source == eventSource && kind == eventKind && (kind.isCorner || fingers == eventFingers)
+            return source == eventSource && kind == eventKind && (kind.isPlaced || fingers == eventFingers)
         default:
             return self == event
         }
@@ -195,11 +243,25 @@ struct TouchRecognizer {
     private var scrollAcross: Bool?
     private var scrolled = false
     private var lastTap: (fingers: Int, ended: Double)?
+    /// When each finger touched down (for TipTaps), and the fingers of the last frame.
+    private var firstSeen: [Int: Double] = [:]
+    private var previous: [TouchPoint] = []
+    /// A finger rests this long before another one tapping beside it is a TipTap.
+    var tipTapRest = 0.12
     /// The latest touches, for working out clicks with several fingers or in a corner.
     private(set) var current: [TouchPoint] = []
 
     init(source: TouchSource) {
         self.source = source
+    }
+
+    /// Sensitivity: 1 is normal; above 1 needs longer slides and quicker, stiller taps; below 1 the opposite.
+    mutating func tune(_ sensitivity: Double) {
+        let s = min(max(sensitivity, 0.5), 2)
+        swipeDistance = 0.14 * s
+        scrollStep = 0.045 * s
+        tapMovement = 0.035 / s
+        tapTime = 0.3 / s.squareRoot()
     }
 
     /// Feeds one frame of touches; returns a gesture if one was just completed (the first, if several were).
@@ -217,6 +279,9 @@ struct TouchRecognizer {
             let short = time - started <= tapTime
             guard short, moved <= tapMovement else { return [] }
             var gestures: [Gesture] = [.touch(source, .tap, fingers: maxFingers)]
+            if maxFingers == 1, let finger = firstPositions.values.first, let placed = placedTap(finger) {
+                gestures.append(.touch(source, placed, fingers: 1))
+            }
             if let previous = lastTap, previous.fingers == maxFingers, started - previous.ended <= doubleTapGap {
                 gestures.append(.touch(source, .doubleTap, fingers: maxFingers))
                 lastTap = nil
@@ -226,6 +291,7 @@ struct TouchRecognizer {
             return gestures
         }
         if started == nil { started = time }
+        let tipTap = tipTapCheck(touches, at: time)
         maxFingers = max(maxFingers, touches.count)
         for touch in touches {
             if let first = firstPositions[touch.id] {
@@ -242,10 +308,11 @@ struct TouchRecognizer {
             countStart = (touches.count, centre, spread)
             scrollAnchor = centre
             scrollAcross = nil
-            return []
+            return tipTap.map { [$0] } ?? []
         }
         let count = touches.count
         var gestures = scrolls ? scrollSteps(at: centre, from: start.centre, fingers: count) : []
+        if let tipTap { gestures.insert(tipTap, at: 0) }
         guard !fired else { return gestures }
 
         if count >= 2, start.spread > 0.02 {
@@ -261,6 +328,46 @@ struct TouchRecognizer {
         fired = true
         let kind: TouchKind = abs(dx) > abs(dy) ? (dx < 0 ? .swipeLeft : .swipeRight) : (dy > 0 ? .swipeUp : .swipeDown)
         return gestures + [.touch(source, kind, fingers: count)]
+    }
+
+    /// Which place a one-finger tap was in, if it was near an edge (trackpad) or to one side (Magic Mouse).
+    func placedTap(_ finger: TouchPoint) -> TouchKind? {
+        if source == .magicMouse {
+            return finger.x < 0.4 ? .tapLeft : finger.x > 0.6 ? .tapRight : .tapMiddle
+        }
+        let left = finger.x < 0.2, right = finger.x > 0.8, top = finger.y > 0.8, bottom = finger.y < 0.2
+        let across = finger.x > 0.35 && finger.x < 0.65, upDown = finger.y > 0.35 && finger.y < 0.65
+        switch (left, right, top, bottom) {
+        case (true, _, true, _): return .tapTopLeft
+        case (_, true, true, _): return .tapTopRight
+        case (true, _, _, true): return .tapBottomLeft
+        case (_, true, _, true): return .tapBottomRight
+        case (_, _, true, _) where across: return .tapTopMiddle
+        case (_, _, _, true) where across: return .tapBottomMiddle
+        case (true, _, _, _) where upDown: return .tapLeftMiddle
+        case (_, true, _, _) where upDown: return .tapRightMiddle
+        default: return nil
+        }
+    }
+
+    /// A finger that came and went quickly while others rested: a TipTap to their left or right.
+    private mutating func tipTapCheck(_ touches: [TouchPoint], at time: Double) -> Gesture? {
+        defer { previous = touches }
+        for touch in touches where firstSeen[touch.id] == nil { firstSeen[touch.id] = time }
+        let ids = Set(touches.map(\.id))
+        guard !touches.isEmpty, let gone = previous.first(where: { !ids.contains($0.id) }),
+              let landed = firstSeen[gone.id], time - landed <= tapTime else { return nil }
+        firstSeen[gone.id] = nil
+        let start = firstPositions[gone.id] ?? gone
+        guard hypot(gone.x - start.x, gone.y - start.y) <= tapMovement else { return nil }
+        // Every remaining finger was down (and still) well before the tapping one.
+        for finger in touches {
+            guard let since = firstSeen[finger.id], landed - since >= tipTapRest,
+                  let first = firstPositions[finger.id], hypot(finger.x - first.x, finger.y - first.y) <= tapMovement * 2 else { return nil }
+        }
+        fired = true // not also a swipe or a pinch
+        let resting = touches.reduce(0) { $0 + $1.x } / Double(touches.count)
+        return .touch(source, start.x < resting ? .tipTapLeft : .tipTapRight, fingers: touches.count + 1)
     }
 
     private mutating func scrollSteps(at centre: (Double, Double), from start: (Double, Double), fingers: Int) -> [Gesture] {
@@ -288,6 +395,13 @@ struct TouchRecognizer {
     /// The gesture for a physical click right now: several fingers, or one finger in a corner.
     func click() -> Gesture? {
         guard !current.isEmpty else { return nil }
+        if source == .magicMouse {
+            // One finger on the left or right is an ordinary click; in the middle, or with more fingers, it's a gesture.
+            if current.count == 1, let finger = current.first, finger.x > 0.35, finger.x < 0.65 {
+                return .touch(source, .clickMiddle, fingers: 1)
+            }
+            return current.count >= 2 ? .touch(source, .click, fingers: current.count) : nil
+        }
         if current.count == 1, let finger = current.first {
             let left = finger.x < 0.2, right = finger.x > 0.8, top = finger.y > 0.8, bottom = finger.y < 0.2
             switch (left, right, top, bottom) {
@@ -311,6 +425,8 @@ struct TouchRecognizer {
         scrollAnchor = nil
         scrollAcross = nil
         scrolled = false
+        firstSeen = [:]
+        previous = []
     }
 
     static func centre(of touches: [TouchPoint]) -> (Double, Double) {
@@ -409,6 +525,14 @@ struct GestureRule: Identifiable, Codable, Equatable {
     var apps: [String] = []
     /// For typed sequences: delete what was typed before running the action.
     var deleteTyped = true
+    /// Further actions, run after `action` in order. Optional so rules saved before it existed still load.
+    var moreActions: [MacroAction]? = nil
+
+    var actions: [MacroAction] { [action] + (moreActions ?? []) }
+    var summary: String {
+        let more = moreActions?.count ?? 0
+        return action.summary + (more > 0 ? " + \(more) more" : "")
+    }
 
     func applies(in app: String?) -> Bool {
         switch scope {
