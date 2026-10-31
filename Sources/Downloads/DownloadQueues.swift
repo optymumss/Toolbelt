@@ -2,18 +2,21 @@ import AppKit
 
 // MARK: - Queues
 
-/// A named queue of downloads. Only `maxAtOnce` of its downloads run at a time; the rest wait.
+/// A named queue of downloads. Only `maxAtOnce` of its downloads run at a time (0: no limit, like IDM); the rest wait.
 /// A queue can be started and stopped by hand or at set times.
 struct DownloadQueue: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String
-    var maxAtOnce = 3
+    var maxAtOnce = 0
     var isRunning = true
     /// Minutes after midnight to start or stop it each day (nil: not scheduled).
     var startAt: Int? = nil
     var stopAt: Int? = nil
 
     static func main() -> DownloadQueue { DownloadQueue(name: "Main") }
+
+    var hasNoLimit: Bool { maxAtOnce <= 0 }
+    var limitText: String { hasNoLimit ? "No limit" : "\(maxAtOnce) at a time" }
 
     var scheduleText: String? {
         switch (startAt, stopAt) {

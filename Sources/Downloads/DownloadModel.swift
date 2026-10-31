@@ -41,6 +41,8 @@ struct DownloadItem: Identifiable, Codable, Equatable {
     var kind: String? = nil
     /// A streamed video's separate sound playlist, when it has one.
     var audioURL: URL? = nil
+    /// The web page it was started from, to start it again there if its link stops working.
+    var pageURL: URL? = nil
 
     var isStream: Bool { kind == "hls" }
 
@@ -50,7 +52,7 @@ struct DownloadItem: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers, nameIsFixed
-        case kind, audioURL
+        case kind, audioURL, pageURL
     }
 
     var progress: Double? {

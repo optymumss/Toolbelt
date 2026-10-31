@@ -18,12 +18,25 @@ final class DownloadsModule: ToolbeltModule {
     func start() {
         manager.onFinished = { [weak self] item in self?.notifier.finished(item) }
         manager.onAllDone = { [weak self] action in self?.confirm(action) }
+        manager.onLowSpace = { free in
+            DownloadNotifier.post(id: "toolbelt-low-space", title: "Downloads paused: your Mac is nearly full",
+                                  body: "Only \(ByteFormat.size(free)) left. They'll carry on by themselves once you free up some space.", path: nil)
+        }
         notifier.setUp()
         ChromeSetup.refreshIfSetUp()
         inbox.start()
         manager.resumeInterrupted()
         badgeWatcher = manager.$items.sink { items in
             MenuBarBadge.shared.show(active: Self.isActive(items), progress: Self.progress(of: items))
+        }
+    }
+
+    /// Opens a page in Chrome (where the extension can start the download again), or the default browser.
+    static func openInChrome(_ page: URL) {
+        if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
+            NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(page)
         }
     }
 
@@ -49,7 +62,7 @@ final class DownloadsModule: ToolbeltModule {
     /// From the video button the list stays hidden: progress shows next to the menu bar icon instead.
     func received(_ request: DownloadRequest) {
         guard manager.add(request.url, name: request.name, headers: request.headers,
-                          stream: request.kind == "hls", audio: request.audioUrl) != nil else { return }
+                          stream: request.kind == "hls", audio: request.audioUrl, page: request.referrer) != nil else { return }
         if request.quiet == true {
             MenuBarBadge.shared.flash()
             return

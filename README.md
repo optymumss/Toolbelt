@@ -1,9 +1,17 @@
-# Toolbelt — v0.21
+# Toolbelt — v0.22
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.22: download as many videos at once as you like (like IDM)
+- **No more waiting list.** Every video you click starts downloading straight away. Open 100 tabs, click a resolution in each, and all 100 download at the same time.
+- **Your choice:** Settings → Downloads → **Downloads at once**: tick **No limit** (the new default), or untick it and pick any number from 1 to 50 on the slider; then the rest wait their turn. Each queue in the Downloads window has the same control.
+- **Stays smooth with 100 at once:** Toolbelt shares connections out so every download keeps moving without the site blocking you, joins at most two videos into their final file at a time (the heavy part for the processor and SSD), keeps pieces on the SSD rather than in memory, and lets itself keep thousands of connections open (macOS normally allows an app about 256).
+- **Nearly full disk:** with under 2 GB free, downloads pause (keeping what they have) and Toolbelt tells you; they carry on by themselves once there's room.
+- **Retry from the page:** if a video's link stops working, its row in the Downloads list has a 🧭 button that opens its page in Chrome so you can click Download again.
+- Tested: 100 streamed videos started at the same moment on the test Mac all finish, every file plays, and memory stays low.
 
 ## What's new in 0.21: everything BetterTouchTool does with the trackpad and Magic Mouse
 - **Pick gestures from a list grouped by fingers** (one finger, two fingers… five), like BetterTouchTool. Gestures another rule already uses are marked **in use**.

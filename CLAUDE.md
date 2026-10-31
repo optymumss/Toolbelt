@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -43,6 +43,9 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   (AVAssetWriter passthrough into .mp4; fragmented MP4 is concatenated), `HLSDownloadJob` (pieces, AES-128, resume).
   Test streams in `Tests/Fixtures/hls` (made with ffmpeg: 4 s, 360p/720p/1080p, fMP4, AES-128, separate sound).
   The Chrome extension finds playlists with `webRequest` (filtered to `*.m3u8*`) and lists their sizes.
+  Parallel downloads: queues default to no limit (`maxAtOnce` 0); `ConnectionBudget` (160) is shared by all
+  streams (each always gets one), `HLSDownloadJob.joinGate` allows two joins at once, `DownloadManager`
+  raises RLIMIT_NOFILE and pauses everything under 2 GB free (`checkSpace`).
 - All data lives in `~/Library/Application Support/Toolbelt/` (settings in `settings.plist`, not UserDefaults).
 
 ## Building

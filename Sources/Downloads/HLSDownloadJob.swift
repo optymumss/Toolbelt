@@ -30,6 +30,14 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
     private var running = 0
     private var joining = false
 
+    static let joinGate = DispatchSemaphore(value: 2)
+    private static let joinLock = NSLock()
+    private static var joinsNow = 0
+    /// The most videos joined at the same moment (for the tests).
+    static var joinsPeak = 0
+    private static func joinStarted() { joinLock.lock(); joinsNow += 1; joinsPeak = max(joinsPeak, joinsNow); joinLock.unlock() }
+    private static func joinEnded() { joinLock.lock(); joinsNow -= 1; joinLock.unlock() }
+
     init(playlist: URL, audio: URL?, folder: URL, tempURL: URL, headers: [String: String], connections: Int, retries: Int,
          throttle: DownloadThrottle = .shared) {
         playlistURL = playlist
@@ -51,6 +59,7 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
         configuration.httpMaximumConnectionsPerHost = connections + 1
+        configuration.timeoutIntervalForResource = 600
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         if headers["Cookie"] != nil { configuration.httpShouldSetCookies = false }
         session = URLSession(configuration: configuration)
@@ -112,10 +121,16 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
             try fetch(all.filter { !FileManager.default.fileExists(atPath: $0.file.path) }, run)
             guard !run.isCancelled else { return }
 
+            // Joining is the one heavy step for the processor and disk: two videos at a time,
+            // while the others carry on downloading.
+            Self.joinGate.wait()
+            defer { Self.joinGate.signal() }
+            guard !run.isCancelled else { return }
             lock.lock()
             joining = true
             lock.unlock()
-            defer { lock.lock(); joining = false; lock.unlock() }
+            Self.joinStarted()
+            defer { lock.lock(); joining = false; lock.unlock(); Self.joinEnded() }
             try join(video: video, videoPieces: videoPieces, audio: audio, audioPieces: audioPieces, run)
             guard !run.isCancelled else { return }
             try? FileManager.default.removeItem(at: folder)
@@ -169,67 +184,93 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Fetches the pieces, `connections` at a time.
+    /// Fetches the pieces: up to `connections` at a time for this video, within the connections all
+    /// downloads share (`ConnectionBudget`), so a hundred videos at once all keep moving without
+    /// swamping the Mac or the site. Requests run without holding a thread each; only this job's
+    /// own thread waits for the lot.
     private func fetch(_ pieces: [Piece], _ run: RunState) throws {
         guard !pieces.isEmpty else { return }
-        let group = DispatchGroup()
-        let slots = DispatchSemaphore(value: connections)
-        let failure = FailureBox()
+        // Decryption keys first (usually one per video), so pieces never wait on each other for them.
         var keys: [URL: Data] = [:]
-        let keysLock = NSLock()
-        func key(for url: URL) throws -> Data {
-            keysLock.lock()
-            if let known = keys[url] { keysLock.unlock(); return known }
-            keysLock.unlock()
+        for url in Set(pieces.compactMap { $0.source?.key.method == .aes128 ? $0.source?.key.url : nil }) {
             let data = try get(url, range: nil, run)
             guard data.count == 16 else { throw DownloadFailure("The video's decryption key couldn't be read.") }
-            keysLock.lock()
             keys[url] = data
-            keysLock.unlock()
-            return data
         }
 
-        for piece in pieces {
-            slots.wait()
-            if run.isCancelled || failure.error != nil { slots.signal(); break }
-            group.enter()
-            lock.lock(); running += 1; lock.unlock()
-            DispatchQueue.global(qos: .utility).async { [self] in
-                defer {
-                    lock.lock(); running -= 1; lock.unlock()
-                    slots.signal()
-                    group.leave()
+        let state = FetchState()
+        let done = DispatchSemaphore(value: 0)
+        let budget = ConnectionBudget.shared
+
+        func startMore() {
+            while true {
+                state.lock.lock()
+                if run.isCancelled || state.failure != nil || state.next >= pieces.count {
+                    let finished = state.active == 0 && !state.signalled
+                    if finished { state.signalled = true }
+                    state.lock.unlock()
+                    if finished { done.signal() }
+                    return
                 }
+                // Every video may always have one piece on the way, so none is ever starved;
+                // more than that only while the shared budget has room.
+                guard state.active < connections, state.active == 0 || budget.tryTake() else {
+                    let waiting = state.active > 0
+                    state.lock.unlock()
+                    if !waiting { DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { startMore() } }
+                    return
+                }
+                if state.active == 0 { budget.take() }
+                let piece = pieces[state.next]
+                state.next += 1
+                state.active += 1
+                state.lock.unlock()
+                lock.lock(); running += 1; lock.unlock()
+                download(piece) { error in
+                    budget.give()
+                    self.lock.lock(); self.running -= 1; self.lock.unlock()
+                    state.lock.lock()
+                    state.active -= 1
+                    if let error, !run.isCancelled, state.failure == nil { state.failure = error }
+                    state.lock.unlock()
+                    startMore()
+                }
+            }
+        }
+
+        func download(_ piece: Piece, _ finished: @escaping (Error?) -> Void) {
+            let source = piece.map.map { ($0.url, $0.byteRange) } ?? piece.source.map { ($0.url, $0.byteRange) }
+            guard let (url, range) = source else { finished(nil); return }
+            fetchAsync(url, range: range, run, attempt: 0) { [self] result in
                 do {
-                    var data: Data
-                    if let map = piece.map {
-                        data = try get(map.url, range: map.byteRange, run)
-                    } else if let segment = piece.source {
-                        data = try get(segment.url, range: segment.byteRange, run)
-                        if segment.key.method == .aes128, let keyURL = segment.key.url {
-                            let iv = segment.key.iv ?? Self.sequenceIV(segment.sequence)
-                            data = try Self.decrypt(data, key: try key(for: keyURL), iv: iv)
-                        }
-                    } else {
-                        return
+                    var data = try result.get()
+                    if let segment = piece.source, segment.key.method == .aes128, let keyURL = segment.key.url, let key = keys[keyURL] {
+                        data = try Self.decrypt(data, key: key, iv: segment.key.iv ?? Self.sequenceIV(segment.sequence))
                     }
-                    if run.isCancelled { return }
+                    if run.isCancelled { finished(nil); return }
                     // Written under a temporary name, so a half-written piece is never mistaken for a whole one.
                     let partial = piece.file.appendingPathExtension("partial")
                     try data.write(to: partial)
                     try? FileManager.default.removeItem(at: piece.file)
                     try FileManager.default.moveItem(at: partial, to: piece.file)
                     counted(piece.file)
-                    let wait = throttle.take(Int64(data.count))
-                    if wait > 0 { Thread.sleep(forTimeInterval: min(wait, 2)) }
+                    // Over the speed limit: wait before the next piece (without holding a thread).
+                    let wait = min(throttle.take(Int64(data.count)), 2)
+                    if wait > 0 {
+                        DispatchQueue.global().asyncAfter(deadline: .now() + wait) { finished(nil) }
+                    } else {
+                        finished(nil)
+                    }
                 } catch {
-                    if !run.isCancelled { failure.set(error) }
+                    finished(error)
                 }
             }
         }
-        group.wait()
+
+        startMore()
+        done.wait()
         if run.isCancelled { throw CancellationError() }
-        if let error = failure.error { throw error }
+        if let error = state.failure { throw error }
     }
 
     private func join(video: HLSMediaPlaylist, videoPieces: [Piece], audio: HLSMediaPlaylist?, audioPieces: [Piece], _ run: RunState) throws {
@@ -307,6 +348,43 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
         }
     }
 
+    private func request(_ url: URL, range: (offset: Int64, length: Int64)?) -> URLRequest {
+        var request = URLRequest(url: url)
+        for (field, value) in headers where field != "Cookie" || sameSite(url) {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        if let range { request.setValue("bytes=\(range.offset)-\(range.offset + range.length - 1)", forHTTPHeaderField: "Range") }
+        return request
+    }
+
+    /// Fetches a file without waiting on a thread, trying again after short waits if the connection drops.
+    private func fetchAsync(_ url: URL, range: (offset: Int64, length: Int64)?, _ run: RunState, attempt: Int,
+                            _ completion: @escaping (Result<Data, Error>) -> Void) {
+        lock.lock()
+        let session = self.session
+        lock.unlock()
+        guard !run.isCancelled, let session else { completion(.failure(CancellationError())); return }
+        session.dataTask(with: request(url, range: range)) { [self] data, response, error in
+            if run.isCancelled { completion(.failure(CancellationError())); return }
+            let http = response as? HTTPURLResponse
+            if let http, (200..<300).contains(http.statusCode), let data {
+                completion(.success(data))
+                return
+            }
+            if let http, [401, 403, 404, 410].contains(http.statusCode) {
+                completion(.failure(DownloadFailure("The site answered \(http.statusCode) (\(HTTPURLResponse.localizedString(forStatusCode: http.statusCode))). The video link may have expired: start it again from the page.")))
+                return
+            }
+            guard attempt < retries else {
+                completion(.failure(DownloadFailure(error?.localizedDescription ?? "The site kept failing to send a piece of the video.")))
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + min(30, pow(2, Double(attempt)))) {
+                self.fetchAsync(url, range: range, run, attempt: attempt + 1, completion)
+            }
+        }.resume()
+    }
+
     /// Cookies are only sent to the site they came from (the playlist's), not to other servers.
     private func sameSite(_ url: URL) -> Bool {
         url.host == playlistURL.host
@@ -347,6 +425,49 @@ struct DownloadFailure: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Where one video's piece-fetching has got to.
+private final class FetchState: @unchecked Sendable {
+    let lock = NSLock()
+    var next = 0
+    var active = 0
+    var failure: Error?
+    var signalled = false
+}
+
+/// The connections all streamed-video downloads share. Every video always gets one; more only while
+/// there's room, so a hundred at once stay within what macOS and the sites handle comfortably.
+final class ConnectionBudget: @unchecked Sendable {
+    static let shared = ConnectionBudget(total: 160)
+    let total: Int
+    private let lock = NSLock()
+    private var used = 0
+    private(set) var peak = 0
+
+    init(total: Int) { self.total = total }
+
+    var inUse: Int { lock.lock(); defer { lock.unlock() }; return used }
+
+    /// Takes a connection if there's room.
+    func tryTake() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard used < total else { return false }
+        used += 1
+        peak = max(peak, used)
+        return true
+    }
+
+    /// Takes one regardless (a video's first connection).
+    func take() {
+        lock.lock(); used += 1; peak = max(peak, used); lock.unlock()
+    }
+
+    func give() {
+        lock.lock(); used = max(0, used - 1); lock.unlock()
+    }
+
+    func resetPeak() { lock.lock(); peak = used; lock.unlock() }
+}
+
 private final class RunState: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
@@ -354,11 +475,6 @@ private final class RunState: @unchecked Sendable {
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
 }
 
-private final class FailureBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: Error?
-    var error: Error? { lock.lock(); defer { lock.unlock() }; return stored }
-    func set(_ error: Error) { lock.lock(); if stored == nil { stored = error }; lock.unlock() }
 }
 
 private final class ResponseBox: @unchecked Sendable {

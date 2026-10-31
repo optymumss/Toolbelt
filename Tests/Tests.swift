@@ -47,6 +47,7 @@ enum ToolbeltTests {
         t.group("Downloads: queues, schedules, limits and the list", DownloadsNextTests.run)
         t.group("Downloads: the Chrome extension and its bridge", ChromeBridgeTests.run)
         t.group("Downloads: streamed videos at a chosen resolution", VideoStreamTests.run)
+        t.group("Downloads: 100 videos at once, like IDM", HundredDownloadsTests.run)
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
@@ -3092,6 +3093,12 @@ final class FolderServer: @unchecked Sendable {
     private let lock = NSLock()
     private var _requests: [String] = []
     private var _cookies: [String: String] = [:]
+    private var _active = 0
+    private var _peakActive = 0
+
+    /// The most requests being answered at the same moment.
+    var peakActive: Int { lock.lock(); defer { lock.unlock() }; return _peakActive }
+    func resetPeak() { lock.lock(); _peakActive = _active; lock.unlock() }
 
     var requests: [String] { lock.lock(); defer { lock.unlock() }; return _requests }
     /// The Cookie header sent with each path, if any.
@@ -3118,14 +3125,24 @@ final class FolderServer: @unchecked Sendable {
             _requests.append(path)
             if let cookie { _cookies[path] = cookie }
             lock.unlock()
-            let file = folder.appendingPathComponent(String(path.dropFirst()).components(separatedBy: "?")[0])
+            var local = String(path.dropFirst()).components(separatedBy: "?")[0]
+            let slow = local.hasPrefix("slow/")
+            if slow { local = String(local.dropFirst("slow/".count)) }
+            let file = folder.appendingPathComponent(local)
             let response: Data
             if let body = try? Data(contentsOf: file) {
                 response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
             } else {
                 response = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
             }
-            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            lock.lock(); _active += 1; _peakActive = max(_peakActive, _active); lock.unlock()
+            // "/slow/…" answers after a moment, so many requests are open at once (like a real site).
+            DispatchQueue.global().asyncAfter(deadline: .now() + (slow ? 0.3 : 0)) {
+                connection.send(content: response, completion: .contentProcessed { _ in
+                    connection.cancel()
+                    self.lock.lock(); self._active -= 1; self.lock.unlock()
+                })
+            }
         }
     }
 }
@@ -3457,5 +3474,128 @@ enum WebServerTests {
         checkEqual(fetch("/list?secret=s3cret")?.0, 429, "after ten wrong secrets in a minute it stops answering for a while")
         server.stop()
         check(fetch("/list?secret=s3cret") == nil, "switched off, nothing answers")
+    }
+}
+
+// MARK: - 100 downloads at once
+
+@MainActor
+enum HundredDownloadsTests {
+    /// The memory Toolbelt (here: the test program) is using, as Activity Monitor shows it.
+    static func memoryInUse() -> Int64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Int64(info.phys_footprint) : 0
+    }
+
+    static func run() {
+        // Settings: no limit by default, a number when chosen
+        check(DownloadQueue.main().hasNoLimit, "new queues have no limit, like IDM")
+        checkEqual(DownloadQueue.main().limitText, "No limit", "and say so")
+        var limited = DownloadQueue.main()
+        limited.maxAtOnce = 20
+        checkEqual(limited.limitText, "20 at a time", "or the number chosen on the slider")
+        let queuesFile = SettingsStore.folder.appendingPathComponent("download-queues.json")
+        var old = DownloadQueue.main()
+        old.maxAtOnce = 3
+        try? JSONEncoder().encode([old]).write(to: queuesFile)
+        Prefs.downloadsUnlimitedByDefault = false
+        checkEqual(DownloadManager().queues.first?.maxAtOnce, 0, "a queue left on the old default of 3 moves to no limit")
+        var chosen = DownloadQueue.main()
+        chosen.maxAtOnce = 3
+        try? JSONEncoder().encode([chosen]).write(to: queuesFile)
+        checkEqual(DownloadManager().queues.first?.maxAtOnce, 3, "but only once: a limit chosen afterwards stays")
+        try? FileManager.default.removeItem(at: queuesFile)
+
+        checkEqual(DownloadManager.connections(running: 1, preferred: 8), 8, "one download gets every connection it wants")
+        checkEqual(DownloadManager.connections(running: 40, preferred: 8), 4, "with forty at once, connections are shared out")
+        checkEqual(DownloadManager.connections(running: 500, preferred: 8), 1, "and each always keeps at least one")
+        check(DownloadManager.openFileLimit >= 4096, "Toolbelt can keep thousands of files and connections open (macOS starts apps at 256)",
+              "\(DownloadManager.openFileLimit)")
+
+        guard let server = try? FolderServer(folder: VideoStreamTests.fixtures) else {
+            check(false, "the test web server for streams starts")
+            return
+        }
+        _ = DownloadTests.waitFor(5) { server.port != 0 }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-hundred-\(UUID().uuidString)")
+        Prefs.downloadFolder = folder
+        Prefs.downloadSortByType = false
+        Prefs.downloadSpeedLimitKB = 0
+        Prefs.downloadHourlyCapMB = 0
+        let manager = DownloadManager()
+        manager.queues[0].maxAtOnce = 0
+        manager.resumeInterrupted()
+
+        // Retry from the page
+        let withPage = manager.add(server.url("/nothing/index.m3u8"), name: "Gone.mp4", stream: true, page: "https://videos.example/watch/7")
+        checkEqual(withPage?.pageURL?.absoluteString, "https://videos.example/watch/7", "each download remembers the page it came from")
+        _ = DownloadTests.waitFor(20) { manager.item(withPage?.id ?? UUID())?.state == .failed }
+        check(manager.item(withPage?.id ?? UUID())?.state == .failed && manager.item(withPage?.id ?? UUID())?.pageURL != nil,
+              "so a failed one can be started again from its page")
+        if let id = withPage?.id { manager.remove(id) }
+
+        // A hundred videos, one after another as fast as clicks, all at once
+        ConnectionBudget.shared.resetPeak()
+        HLSDownloadJob.joinsPeak = 0
+        server.resetPeak()
+        let memoryBefore = memoryInUse()
+        var memoryPeak = memoryBefore
+        let started = Date()
+        let ids = (1...100).compactMap {
+            manager.add(server.url("/slow/v360/index.m3u8"), name: "Video \($0) (360p).mp4", stream: true, page: "https://videos.example/watch/\($0)")?.id
+        }
+        checkEqual(ids.count, 100, "100 videos are added")
+        checkEqual(ids.filter { manager.item($0)?.state == .downloading }.count, 100, "and all 100 start straight away: none waits in a queue")
+        let finished = DownloadTests.waitFor(300) {
+            memoryPeak = max(memoryPeak, memoryInUse())
+            return ids.allSatisfy { [.completed, .failed].contains(manager.item($0)?.state) }
+        }
+        let seconds = Int(Date().timeIntervalSince(started))
+        let failed = ids.compactMap { manager.item($0) }.filter { $0.state != .completed }
+        check(finished && failed.isEmpty, "all 100 finish (in \(seconds) s)",
+              failed.prefix(3).map { "\($0.name): \($0.state) \($0.error ?? "")" }.joined(separator: "; "))
+        let files = ids.compactMap { manager.item($0)?.finalPath }
+        let goodFiles = files.filter { path in
+            guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+            defer { try? handle.close() }
+            let head = (try? handle.read(upToCount: 8)) ?? Data()
+            return head.count == 8 && head[4..<8] == Data("ftyp".utf8)
+        }
+        checkEqual(goodFiles.count, 100, "100 separate .mp4 files, each a proper video file")
+        checkEqual(Set(files.map { ($0 as NSString).lastPathComponent }).count, 100, "each with its own name")
+        for path in files.shuffled().prefix(3) {
+            let facts = VideoStreamTests.inspect(URL(fileURLWithPath: path))
+            check(facts.videoFrames >= 60 && facts.audioSamples > 150_000, "a random one plays all the way through, with sound", "\(facts)")
+        }
+        check(HLSDownloadJob.joinsPeak <= 2, "no more than two videos are joined at the same moment", "\(HLSDownloadJob.joinsPeak)")
+        check(server.peakActive > 20, "many pieces download at the same time", "\(server.peakActive)")
+        check(server.peakActive <= ConnectionBudget.shared.total + 100, "but never more connections than the shared budget allows",
+              "\(server.peakActive) open at once")
+        let grew = (memoryPeak - memoryBefore) / 1_000_000
+        check(grew < 600, "memory stays modest with 100 at once", "grew by \(grew) MB")
+        check(!FileManager.default.fileExists(atPath: manager.streamFolder(for: ids[0]).path), "pieces are tidied away afterwards")
+        for id in ids { manager.remove(id) }
+
+        // A nearly full disk: downloads wait, then carry on
+        var pretendFree: Int64 = 1_000_000_000
+        manager.freeSpace = { pretendFree }
+        var warned: Int64?
+        manager.onLowSpace = { warned = $0 }
+        let waiting = manager.add(server.url("/slow/v720/index.m3u8"), name: "Big (720p).mp4", stream: true)
+        manager.checkSpace()
+        check(manager.waitingForSpace && manager.item(waiting?.id ?? UUID())?.state == .queued,
+              "with under 2 GB free, downloads pause (keeping what they have)")
+        checkEqual(warned, 1_000_000_000, "and Toolbelt says why")
+        pretendFree = 10_000_000_000
+        manager.recheckSpace()
+        check(!manager.waitingForSpace, "once there's room again they carry on by themselves")
+        _ = DownloadTests.waitFor(60) { manager.item(waiting?.id ?? UUID())?.state == .completed }
+        checkEqual(manager.item(waiting?.id ?? UUID())?.state, .completed, "and finish")
+        manager.stopAll()
+        try? FileManager.default.removeItem(at: folder)
     }
 }

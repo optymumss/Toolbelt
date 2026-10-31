@@ -143,7 +143,7 @@ struct DownloadsView: View {
     }
 
     private func queueStatus(_ queue: DownloadQueue) -> String {
-        var parts = [queue.isRunning ? "Running" : "Stopped", "\(queue.maxAtOnce) at a time"]
+        var parts = [queue.isRunning ? "Running" : "Stopped", queue.limitText]
         if let schedule = queue.scheduleText { parts.append(schedule) }
         return parts.joined(separator: " · ")
     }
@@ -300,6 +300,11 @@ struct DownloadRow: View {
                     Button { manager.pause(item.id) } label: { Image(systemName: "pause.circle") }.help("Pause")
                 case .paused, .failed:
                     Button { manager.resume(item.id) } label: { Image(systemName: "arrow.clockwise.circle") }.help("Resume")
+                    if item.state == .failed, let page = item.pageURL {
+                        // The video's link may have expired: open its page to start it again from there.
+                        Button { DownloadsModule.openInChrome(page) } label: { Image(systemName: "safari") }
+                            .help("Retry from the page (opens it in Chrome)")
+                    }
                 case .completed:
                     EmptyView()
                 }
@@ -341,6 +346,11 @@ struct DownloadsSettingsTab: View {
                         Button("Choose…", action: chooseFolder)
                     }
                 }
+                if !manager.queues.isEmpty {
+                    LabeledContent("Downloads at once") {
+                        AtOnceControl(limit: $manager.queues[0].maxAtOnce)
+                    }
+                }
                 Toggle("Sort into folders by type (Video, Music, Documents, Programs, Archives, Images)",
                        isOn: settings.binding("downloads.sort", default: true))
                 Picker("Connections per download", selection: settings.binding("downloads.connections", default: 8)) {
@@ -353,7 +363,7 @@ struct DownloadsSettingsTab: View {
             } header: {
                 Text("Downloads")
             } footer: {
-                Text("Big files are split into parts that download at the same time; when a part finishes, its connection helps with the biggest part left. Downloads carry on after a lost connection, sleep, a restart or a power cut. FTP links use one connection.")
+                Text("No limit starts every download straight away, like IDM; with a number, the rest wait their turn. With many at once, Toolbelt shares connections out so all keep moving, joins at most two videos at a time, and pauses downloads if your Mac gets nearly full (they carry on once there's room). Big files are split into parts that download at the same time. Downloads carry on after a lost connection, sleep, a restart or a power cut.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -425,6 +435,29 @@ struct DownloadsSettingsTab: View {
     }
 }
 
+/// How many downloads run at once: "No limit" (like IDM), or a number from 1 to 50 on the slider.
+struct AtOnceControl: View {
+    @Binding var limit: Int
+    @State private var lastNumber = 10
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle("No limit", isOn: Binding(get: { limit <= 0 }, set: { limit = $0 ? 0 : lastNumber }))
+                .toggleStyle(.checkbox)
+            Slider(value: Binding(get: { Double(limit <= 0 ? lastNumber : limit) },
+                                  set: { lastNumber = Int($0.rounded()); limit = lastNumber }),
+                   in: 1...50, step: 1)
+                .frame(minWidth: 120, maxWidth: 200)
+                .disabled(limit <= 0)
+            Text(limit <= 0 ? "All at once" : "\(limit) at a time")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 80, alignment: .leading)
+        }
+        .onAppear { if limit > 0 { lastNumber = limit } }
+    }
+}
+
 /// One queue in Settings: name, how many at once, and optional start and stop times.
 struct QueueRow: View {
     @Binding var queue: DownloadQueue
@@ -435,11 +468,7 @@ struct QueueRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 TextField("Name", text: $queue.name).labelsHidden().frame(maxWidth: 160)
-                Picker("At once", selection: $queue.maxAtOnce) {
-                    ForEach([1, 2, 3, 4, 6, 8], id: \.self) { Text("\($0) at a time").tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
+                AtOnceControl(limit: $queue.maxAtOnce)
                 Spacer()
                 if !isFirst {
                     Button(action: onRemove) { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
