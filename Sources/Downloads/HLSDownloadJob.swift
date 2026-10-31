@@ -198,6 +198,7 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
             keys[url] = data
         }
 
+        let keyTable = keys
         let state = FetchState()
         let done = DispatchSemaphore(value: 0)
         let budget = ConnectionBudget.shared
@@ -244,7 +245,7 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
             fetchAsync(url, range: range, run, attempt: 0) { [self] result in
                 do {
                     var data = try result.get()
-                    if let segment = piece.source, segment.key.method == .aes128, let keyURL = segment.key.url, let key = keys[keyURL] {
+                    if let segment = piece.source, segment.key.method == .aes128, let keyURL = segment.key.url, let key = keyTable[keyURL] {
                         data = try Self.decrypt(data, key: key, iv: segment.key.iv ?? Self.sequenceIV(segment.sequence))
                     }
                     if run.isCancelled { finished(nil); return }
@@ -473,8 +474,6 @@ private final class RunState: @unchecked Sendable {
     private var cancelled = false
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
-}
-
 }
 
 private final class ResponseBox: @unchecked Sendable {
