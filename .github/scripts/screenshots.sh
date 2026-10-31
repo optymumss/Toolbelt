@@ -140,6 +140,55 @@ for entry in "${SCREENS[@]}"; do
     sleep 1
 done
 
+# 3. 100 videos at once: a local site streams the 1080p test video slowly (like a real one), and Toolbelt
+#    is handed 100 of them as if clicked in 100 Chrome tabs. One picture part-way, one when all are done.
+SITE="$(mktemp -d -t toolbelt-stream-site)"
+cp -R Tests/Fixtures/hls/. "$SITE/"
+cat > "$SITE/serve.py" <<'PY'
+import functools, http.server, sys, time
+class Slow(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.endswith(".ts"):
+            time.sleep(10)  # each piece takes a while, so the downloads can be seen running
+        super().do_GET()
+    def log_message(self, *args):
+        pass
+handler = functools.partial(Slow, directory=sys.argv[1])
+http.server.ThreadingHTTPServer(("127.0.0.1", 8771), handler).serve_forever()
+PY
+python3 "$SITE/serve.py" "$SITE" &
+SITE_PID=$!
+sleep 1
+rm -f "$DATA_DIR/downloads.json" "$DATA_DIR/download-queues.json"
+find "$HOME/Downloads" -name 'Video * (1080p)*.mp4' -delete 2>/dev/null
+TOOLBELT_SHOW="downloads-100" TOOLBELT_DEMO_STREAM="http://127.0.0.1:8771/v1080/index.m3u8" "$APP_BIN" &
+pid=$!
+sleep 5
+if kill -0 "$pid" 2>/dev/null; then
+    screencapture -x "$OUT/downloads-100-running.png"
+    echo "✓ downloads-100-running"
+else
+    echo "✗ downloads-100: app quit or crashed"
+    failed=1
+fi
+finished=0
+for _ in $(seq 1 90); do
+    finished=$(find "$HOME/Downloads" -name 'Video * (1080p)*.mp4' | wc -l | tr -d ' ')
+    [ "$finished" -ge 100 ] && break
+    sleep 2
+done
+sleep 2
+if kill -0 "$pid" 2>/dev/null; then
+    screencapture -x "$OUT/downloads-100-finished.png"
+    echo "✓ downloads-100-finished ($finished of 100 videos saved)"
+else
+    echo "✗ downloads-100: app quit or crashed while downloading"
+    failed=1
+fi
+[ "$finished" -ge 100 ] || { echo "✗ only $finished of 100 videos finished"; failed=1; }
+kill "$pid" "$SITE_PID" 2>/dev/null; wait "$pid" 2>/dev/null
+rm -rf "$SITE"
+
 # Smaller copies that are quick to look at
 for f in "$OUT"/*.png; do
     sips -Z 1600 "$f" >/dev/null 2>&1 || true

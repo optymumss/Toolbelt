@@ -175,6 +175,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 editor.model.crop = CGRect(x: w * 0.02, y: h * 0.01, width: w * 0.96, height: h * 0.95)
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()
+            case "downloads-100":
+                // 100 streamed videos from the test server the screenshot script starts, as if clicked
+                // one after another in 100 Chrome tabs; the list shows them all downloading at once.
+                guard let downloads = modules.module(.downloads) as? DownloadsModule,
+                      let stream = ProcessInfo.processInfo.environment["TOOLBELT_DEMO_STREAM"] else { break }
+                downloads.manager.queues[0].maxAtOnce = 0
+                for number in 1...100 {
+                    let request = DownloadRequest(url: stream, name: "Video \(number) (1080p).mp4", referrer: "https://videos.example/watch/\(number)",
+                                                  kind: "hls", quiet: true)
+                    downloads.received(request)
+                }
+                downloads.open()
             case "shelf-demo":
                 // A shelf holding one of each kind of item, as if they'd been dropped on it.
                 guard let shelfModule = modules.module(.shelf) as? ShelfModule else { break }
