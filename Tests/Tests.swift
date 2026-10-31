@@ -46,6 +46,7 @@ enum ToolbeltTests {
         t.group("Downloads: queues, schedules, limits and the list", DownloadsNextTests.run)
         t.group("Downloads: the Chrome extension and its bridge", ChromeBridgeTests.run)
         t.group("Screenshots: capture, mark up and read text", ScreenshotTests.run)
+        t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
         t.group("Clipboard: pinboards, named clipboards and auto-delete", ClipboardCollectionsTests.run)
         t.group("Clipboard: text in images", ImageTextTests.run)
@@ -1694,6 +1695,146 @@ enum ScreenshotTests {
     }
 }
 
+// MARK: - Gestures
+
+@MainActor
+enum GestureTests {
+    static func fingers(_ points: [(Double, Double)]) -> [TouchPoint] {
+        points.enumerated().map { TouchPoint(id: $0.offset, x: $0.element.0, y: $0.element.1) }
+    }
+
+    static func run() {
+        // Trackpad: taps, swipes and pinches from made-up touches
+        var pad = TouchRecognizer(source: .trackpad)
+        let three = [(0.4, 0.5), (0.5, 0.52), (0.6, 0.5)]
+        _ = pad.feed(fingers([three[0]]), at: 0)
+        _ = pad.feed(fingers(three), at: 0.03)
+        _ = pad.feed(fingers(three), at: 0.12)
+        checkEqual(pad.feed([], at: 0.18), .touch(.trackpad, .tap, fingers: 3), "a quick three-finger tap is recognised")
+
+        _ = pad.feed(fingers(three), at: 1)
+        check(pad.feed(fingers(three), at: 1.6) == nil && pad.feed([], at: 1.7) == nil, "holding fingers still isn't a tap")
+
+        var fired: [Gesture] = []
+        for step in 0...10 {
+            let dx = -0.025 * Double(step)
+            if let g = pad.feed(fingers(three.map { ($0.0 + dx, $0.1) }), at: 2 + Double(step) * 0.02) { fired.append(g) }
+        }
+        _ = pad.feed([], at: 2.3)
+        checkEqual(fired, [.touch(.trackpad, .swipeLeft, fingers: 3)], "a three-finger swipe left fires once")
+
+        fired = []
+        let four = [(0.3, 0.3), (0.7, 0.3), (0.3, 0.7), (0.7, 0.7)]
+        for step in 0...10 {
+            let f = 1 - 0.07 * Double(step)
+            if let g = pad.feed(fingers(four.map { (0.5 + ($0.0 - 0.5) * f, 0.5 + ($0.1 - 0.5) * f) }), at: 3 + Double(step) * 0.02) { fired.append(g) }
+        }
+        _ = pad.feed([], at: 3.4)
+        checkEqual(fired, [.touch(.trackpad, .pinchIn, fingers: 4)], "four fingers pinching in")
+
+        fired = []
+        for step in 0...10 {
+            if let g = pad.feed(fingers([(0.45, 0.4 + 0.03 * Double(step)), (0.55, 0.4 + 0.03 * Double(step))]), at: 4 + Double(step) * 0.02) { fired.append(g) }
+        }
+        _ = pad.feed([], at: 4.4)
+        checkEqual(fired, [.touch(.trackpad, .swipeUp, fingers: 2)], "two fingers moving up (a scroll) is a two-finger swipe, so only rules for it react")
+
+        _ = pad.feed(fingers(three), at: 5)
+        checkEqual(pad.click(), .touch(.trackpad, .click, fingers: 3), "clicking with three fingers down")
+        _ = pad.feed([], at: 5.5)
+        _ = pad.feed(fingers([(0.92, 0.08)]), at: 6)
+        checkEqual(pad.click(), .touch(.trackpad, .cornerBottomRight, fingers: 1), "clicking in the bottom-right corner")
+        _ = pad.feed(fingers([(0.5, 0.5)]), at: 6.5)
+        check(pad.click() == nil, "an ordinary click is left alone")
+        _ = pad.feed([], at: 7)
+
+        var mouse = TouchRecognizer(source: .magicMouse)
+        var mouseFired: Gesture?
+        for step in 0...8 {
+            if let g = mouse.feed(fingers([(0.4 + 0.03 * Double(step), 0.6), (0.5 + 0.03 * Double(step), 0.6)]), at: Double(step) * 0.02) { mouseFired = g }
+        }
+        checkEqual(mouseFired, .touch(.magicMouse, .swipeRight, fingers: 2), "Magic Mouse swipes are told apart from the trackpad's")
+
+        // Mouse strokes
+        checkEqual(StrokeRecognizer.path(of: (0...10).map { CGPoint(x: 500 - $0 * 15, y: 300) }), "L", "dragging left draws L")
+        let downRight = (0...6).map { CGPoint(x: 300, y: 300 + $0 * 15) } + (1...6).map { CGPoint(x: 300 + $0 * 15, y: 390) }
+        checkEqual(StrokeRecognizer.path(of: downRight), "DR", "down then right draws DR")
+        checkEqual(StrokeRecognizer.path(of: [CGPoint(x: 10, y: 10), CGPoint(x: 14, y: 12)]), "", "a wobble isn't a stroke (it's a right-click)")
+
+        // Tapping modifier keys
+        var keys = ModifierTapDetector()
+        check(keys.modifierChanged(.rightShift, flags: .maskShift, at: 0) == nil, "pressing a modifier does nothing yet")
+        checkEqual(keys.modifierChanged(.rightShift, flags: [], at: 0.1), .modifierTap(.rightShift, taps: 1), "letting go quickly is a tap")
+        _ = keys.modifierChanged(.rightShift, flags: .maskShift, at: 0.25)
+        checkEqual(keys.modifierChanged(.rightShift, flags: [], at: 0.32), .modifierTap(.rightShift, taps: 2), "a second tap straight after is a double tap")
+        _ = keys.modifierChanged(.leftCommand, flags: .maskCommand, at: 2)
+        check(keys.modifierChanged(.leftCommand, flags: [], at: 2.9) == nil, "holding it for a while isn't a tap")
+        _ = keys.modifierChanged(.leftShift, flags: [.maskShift, .maskCommand], at: 3)
+        check(keys.modifierChanged(.leftShift, flags: .maskCommand, at: 3.1) == nil, "nor is pressing it with another modifier (⌘⇧)")
+        _ = keys.modifierChanged(.leftOption, flags: .maskAlternate, at: 4)
+        keys.interrupted() // ⌥ plus a letter
+        check(keys.modifierChanged(.leftOption, flags: [], at: 4.1) == nil, "nor using it as part of a shortcut")
+
+        // Which rule applies
+        let either = GestureRule(gesture: .modifierTap(.shift, taps: 2), action: .toolbelt(.openLauncher))
+        check(GestureRule.match(.modifierTap(.rightShift, taps: 2), app: nil, in: [either]) != nil, "“Shift (either)” matches the right Shift")
+        check(GestureRule.match(.modifierTap(.rightShift, taps: 1), app: nil, in: [either]) == nil, "but a single tap doesn't match a double-tap rule")
+        let safariOnly = GestureRule(gesture: .mouseButton(3), action: .system(.back), scope: .only, apps: ["com.apple.Safari"])
+        let general = GestureRule(gesture: .mouseButton(3), action: .system(.missionControl))
+        checkEqual(GestureRule.match(.mouseButton(3), app: "com.apple.Safari", in: [general, safariOnly])?.action, .system(.back), "an app's own rule wins in that app")
+        checkEqual(GestureRule.match(.mouseButton(3), app: "com.apple.TextEdit", in: [general, safariOnly])?.action, .system(.missionControl), "and the general rule applies elsewhere")
+        let notInTerminal = GestureRule(gesture: .keySequence(";;"), action: .toolbelt(.openLauncher), scope: .except, apps: ["com.apple.Terminal"])
+        check(!notInTerminal.applies(in: "com.apple.Terminal") && notInTerminal.applies(in: "com.apple.Notes"), "“Everywhere except” leaves out the chosen apps")
+        var off = general
+        off.enabled = false
+        check(GestureRule.match(.mouseButton(3), app: nil, in: [off]) == nil, "switched-off rules do nothing")
+        check(GestureRule.match(.touch(.trackpad, .cornerTopLeft, fingers: 1), app: nil,
+                                in: [GestureRule(gesture: .touch(.trackpad, .cornerTopLeft, fingers: 1), action: .toolbelt(.newNote))]) != nil, "corner clicks match")
+
+        // Saving
+        let rules = [safariOnly, either, GestureRule(gesture: .stroke(button: 1, path: "DR"), action: MacroAction(kind: .shell, value: "echo hi"))]
+        let decoded = (try? JSONEncoder().encode(rules)).flatMap { try? JSONDecoder().decode([GestureRule].self, from: $0) }
+        checkEqual(decoded, rules, "gesture rules are saved and read back exactly")
+
+        // Actions
+        let shortcuts = ShortcutCenter()
+        let ran = Box(false)
+        shortcuts.setHandler(for: .newNote) { ran.value = true }
+        let runner = ActionRunner(shortcuts: shortcuts)
+        runner.run(.toolbelt(.newNote))
+        check(ran.value, "a gesture can run any Toolbelt command")
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-action-\(UUID().uuidString)")
+        runner.run(MacroAction(kind: .shell, value: "printf done > '\(marker.path)'"))
+        _ = DownloadTests.waitFor(5) { FileManager.default.fileExists(atPath: marker.path) }
+        checkEqual(try? String(contentsOf: marker, encoding: .utf8), "done", "or a shell script")
+        let output = Box<String?>(nil)
+        ActionRunner.runScript("/usr/bin/osascript", ["-e", "return 6 * 7"]) { output.value = $0 }
+        _ = DownloadTests.waitFor(10) { output.value != nil }
+        checkEqual(output.value, "42", "or an AppleScript")
+        checkEqual(ActionRunner.url(from: "apple.com")?.absoluteString, "https://apple.com", "web addresses without https:// still open")
+        checkEqual(ActionRunner.url(from: "~/Desktop")?.path, FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").path, "and so do file paths")
+        checkEqual(MacroAction(kind: .pressKeys, keyCode: kVK_ANSI_T, modifiers: cmdKey).summary, "Press ⌘T", "actions are described in plain words")
+        try? FileManager.default.removeItem(at: marker)
+
+        // The trackpad reader
+        check(MultitouchReader.shared.isAvailable, "macOS's touch framework loads")
+        MultitouchReader.shared.start()
+        check(MultitouchReader.shared.deviceCount >= 0, "and starts even without a trackpad (as on a Mac mini)")
+        MultitouchReader.shared.stop()
+
+        // The module only listens when a rule needs it
+        let module = GesturesModule(shortcuts: shortcuts)
+        module.store.rules = []
+        module.start()
+        check(!module.tap.isRunning, "with no gestures, nothing listens (no battery used)")
+        module.store.rules = [GestureRule(gesture: .mouseButton(4), action: .toolbelt(.newNote))]
+        check(module.tap.isRunning == AXIsProcessTrusted(), "a mouse-button gesture starts listening to the mouse")
+        module.store.rules = []
+        check(!module.tap.isRunning, "and stops again when it's removed")
+        module.stop()
+    }
+}
+
 // MARK: - End to end
 
 /// Starts the real Toolbelt app and uses it with real key presses, checking the results in
@@ -1759,6 +1900,14 @@ enum EndToEndTests {
         }
         try? #"[{"id":"8E3C1E2A-0000-4000-8000-000000000001","keyword":";ee","name":"E2E","text":"End to end works"},{"id":"8E3C1E2A-0000-4000-8000-000000000002","keyword":";hi","name":"Greeting","text":"Hello {input:Name}!"}]"#
             .write(to: data.appendingPathComponent("snippets.json"), atomically: true, encoding: .utf8)
+        // Gestures that leave a mark when they work, and one that types into TextEdit.
+        let gestureRules = [
+            GestureRule(gesture: .mouseButton(3), action: MacroAction(kind: .shell, value: "touch \"$TOOLBELT_DATA_DIR/button4\"")),
+            GestureRule(gesture: .modifierTap(.rightShift, taps: 2), action: MacroAction(kind: .shell, value: "touch \"$TOOLBELT_DATA_DIR/doubleshift\"")),
+            GestureRule(gesture: .stroke(button: 1, path: "L"), action: MacroAction(kind: .shell, value: "touch \"$TOOLBELT_DATA_DIR/strokeleft\"")),
+            GestureRule(gesture: .keySequence(";;z"), action: MacroAction(kind: .typeText, value: "sequence works")),
+        ]
+        try? JSONEncoder().encode(gestureRules).write(to: data.appendingPathComponent("gestures.json"))
         let app = Process()
         app.executableURL = URL(fileURLWithPath: appPath)
         var environment = ProcessInfo.processInfo.environment
@@ -1981,6 +2130,44 @@ enum EndToEndTests {
         check(NSPerformService("Add to Toolbelt Shelf", selection), "“Add to Toolbelt Shelf” is offered in the Services menu")
         spin(1.5)
         check(windowCount(of: pid) > shelvesBefore, "and choosing it opens a shelf in Toolbelt")
+
+        // 7. Gestures: an extra mouse button, a double-tap of right Shift, a right-button stroke, a typed sequence
+        func mark(_ name: String) -> Bool { FileManager.default.fileExists(atPath: data.appendingPathComponent(name).path) }
+        focusTextEdit()
+        let centre = CGPoint(x: (NSScreen.main?.frame.midX ?? 600), y: (NSScreen.main?.frame.midY ?? 400))
+        let source = CGEventSource(stateID: .hidSystemState)
+        for type in [CGEventType.otherMouseDown, .otherMouseUp] {
+            let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: centre, mouseButton: .center)
+            event?.setIntegerValueField(.mouseEventButtonNumber, value: 3)
+            event?.post(tap: .cghidEventTap)
+            spin(0.05)
+        }
+        spin(1.5)
+        check(mark("button4"), "pressing mouse button 4 runs its gesture")
+        for _ in 0..<2 {
+            let down = CGEvent(keyboardEventSource: source, virtualKey: 60, keyDown: true)
+            down?.flags = .maskShift
+            down?.post(tap: .cghidEventTap)
+            spin(0.06)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: 60, keyDown: false)
+            up?.flags = []
+            up?.post(tap: .cghidEventTap)
+            spin(0.12)
+        }
+        spin(1.5)
+        check(mark("doubleshift"), "tapping right Shift twice runs its gesture")
+        CGEvent(mouseEventSource: source, mouseType: .rightMouseDown, mouseCursorPosition: centre, mouseButton: .right)?.post(tap: .cghidEventTap)
+        for step in 1...10 {
+            spin(0.02)
+            CGEvent(mouseEventSource: source, mouseType: .rightMouseDragged, mouseCursorPosition: CGPoint(x: centre.x - CGFloat(step) * 20, y: centre.y), mouseButton: .right)?.post(tap: .cghidEventTap)
+        }
+        CGEvent(mouseEventSource: source, mouseType: .rightMouseUp, mouseCursorPosition: CGPoint(x: centre.x - 200, y: centre.y), mouseButton: .right)?.post(tap: .cghidEventTap)
+        spin(1.5)
+        check(mark("strokeleft"), "holding the right button and drawing left runs its gesture")
+        clearDocument()
+        type(";;z")
+        spin(2)
+        checkEqual(SnippetTypingTests.text(in: textEdit), "sequence works", "typing ;;z runs its gesture (here: typing text in its place)")
 
         check(app.isRunning, "Toolbelt is still running after all that")
         app.terminate()

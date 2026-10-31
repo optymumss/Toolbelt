@@ -113,6 +113,7 @@ SCREENS=(
     "settings-screenshots=settings-screenshots"
     "screenshot-editor=screenshot-editor"
     "launcher-screenshot=launcher:screenshot"
+    "settings-gestures=settings-gestures"
     "launcher-switcher=launcher-switcher"
     "notes-demo=notes-demo"
 )
@@ -133,6 +134,7 @@ for entry in "${SCREENS[@]}"; do
     [ "$screen" = "notes-demo" ] && rm -f "$DATA_DIR/notes.json"
     [ "$screen" = "snap-areas-editor" ] && rm -f "$DATA_DIR/snapareas.json"
     [ "$screen" = "shelf-demo" ] && rm -f "$DATA_DIR/shelves.json"
+    [ "$screen" = "settings-gestures" ] && rm -f "$DATA_DIR/gestures.json"
     sleep 1
 done
 

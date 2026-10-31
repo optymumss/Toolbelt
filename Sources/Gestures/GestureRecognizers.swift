@@ -1,0 +1,354 @@
+import AppKit
+
+// The gestures Toolbelt recognises, and the pure logic that recognises them. Kept free of any
+// device code so it can be tested with made-up touches, strokes and key presses.
+
+// MARK: - What happened
+
+enum TouchSource: String, Codable, CaseIterable, Identifiable {
+    case trackpad, magicMouse
+
+    var id: String { rawValue }
+    var title: String { self == .trackpad ? "Trackpad" : "Magic Mouse" }
+}
+
+enum TouchKind: String, Codable, CaseIterable, Identifiable {
+    case tap, click, swipeLeft, swipeRight, swipeUp, swipeDown, pinchIn, pinchOut
+    case cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .tap: return "Tap"
+        case .click: return "Click"
+        case .swipeLeft: return "Swipe left"
+        case .swipeRight: return "Swipe right"
+        case .swipeUp: return "Swipe up"
+        case .swipeDown: return "Swipe down"
+        case .pinchIn: return "Pinch in"
+        case .pinchOut: return "Pinch out"
+        case .cornerTopLeft: return "Click top-left corner"
+        case .cornerTopRight: return "Click top-right corner"
+        case .cornerBottomLeft: return "Click bottom-left corner"
+        case .cornerBottomRight: return "Click bottom-right corner"
+        }
+    }
+
+    var isCorner: Bool { rawValue.hasPrefix("corner") }
+}
+
+enum ModifierKey: String, Codable, CaseIterable, Identifiable {
+    case shift, leftShift, rightShift, command, leftCommand, rightCommand
+    case option, leftOption, rightOption, control, leftControl, rightControl, fn
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .shift: return "⇧ Shift (either)"
+        case .leftShift: return "Left ⇧ Shift"
+        case .rightShift: return "Right ⇧ Shift"
+        case .command: return "⌘ Command (either)"
+        case .leftCommand: return "Left ⌘ Command"
+        case .rightCommand: return "Right ⌘ Command"
+        case .option: return "⌥ Option (either)"
+        case .leftOption: return "Left ⌥ Option"
+        case .rightOption: return "Right ⌥ Option"
+        case .control: return "⌃ Control (either)"
+        case .leftControl: return "Left ⌃ Control"
+        case .rightControl: return "Right ⌃ Control"
+        case .fn: return "fn / 🌐"
+        }
+    }
+
+    /// The physical key, from a key code (flagsChanged events).
+    static func side(forKeyCode code: Int) -> ModifierKey? {
+        switch code {
+        case 56: return .leftShift
+        case 60: return .rightShift
+        case 55: return .leftCommand
+        case 54: return .rightCommand
+        case 58: return .leftOption
+        case 61: return .rightOption
+        case 59: return .leftControl
+        case 62: return .rightControl
+        case 63: return .fn
+        default: return nil
+        }
+    }
+
+    /// Whether a rule for this key is met by pressing `pressed` (a specific side).
+    func accepts(_ pressed: ModifierKey) -> Bool {
+        switch self {
+        case .shift: return pressed == .leftShift || pressed == .rightShift
+        case .command: return pressed == .leftCommand || pressed == .rightCommand
+        case .option: return pressed == .leftOption || pressed == .rightOption
+        case .control: return pressed == .leftControl || pressed == .rightControl
+        default: return self == pressed
+        }
+    }
+
+    /// The flag macOS sets while the key is down.
+    var flag: CGEventFlags {
+        switch self {
+        case .shift, .leftShift, .rightShift: return .maskShift
+        case .command, .leftCommand, .rightCommand: return .maskCommand
+        case .option, .leftOption, .rightOption: return .maskAlternate
+        case .control, .leftControl, .rightControl: return .maskControl
+        case .fn: return .maskSecondaryFn
+        }
+    }
+}
+
+/// One gesture that happened (or that a rule waits for).
+enum Gesture: Codable, Hashable {
+    case touch(TouchSource, TouchKind, fingers: Int)
+    /// 2 = middle button, 3 = back, 4 = forward, and so on.
+    case mouseButton(Int)
+    /// Hold a mouse button (1 = right, 2 = middle) and draw, e.g. "L" or "DR" (up, down, left, right).
+    case stroke(button: Int, path: String)
+    case modifierTap(ModifierKey, taps: Int)
+    case keySequence(String)
+
+    var title: String {
+        switch self {
+        case let .touch(source, kind, fingers):
+            if kind.isCorner { return "\(source.title): \(kind.title)" }
+            return "\(source.title): \(kind.title) with \(fingers) finger\(fingers == 1 ? "" : "s")"
+        case .mouseButton(let button): return "Mouse button \(button + 1)"
+        case let .stroke(button, path):
+            let arrows = path.map { ["U": "↑", "D": "↓", "L": "←", "R": "→"][String($0)] ?? "" }.joined()
+            return "Hold \(button == 2 ? "middle" : "right") button and draw \(arrows)"
+        case let .modifierTap(key, taps): return "\(taps == 2 ? "Double-tap" : "Tap") \(key.title)"
+        case .keySequence(let keys): return "Type “\(keys)”"
+        }
+    }
+
+    /// Whether this rule's gesture is met by what happened.
+    func accepts(_ event: Gesture) -> Bool {
+        switch (self, event) {
+        case let (.modifierTap(rule, ruleTaps), .modifierTap(pressed, taps)):
+            return ruleTaps == taps && rule.accepts(pressed)
+        case let (.touch(source, kind, fingers), .touch(eventSource, eventKind, eventFingers)):
+            return source == eventSource && kind == eventKind && (kind.isCorner || fingers == eventFingers)
+        default:
+            return self == event
+        }
+    }
+}
+
+// MARK: - Trackpad and Magic Mouse
+
+/// One finger on the surface, at a position from 0 to 1 (x to the right, y up).
+struct TouchPoint: Equatable {
+    var id: Int
+    var x: Double
+    var y: Double
+}
+
+/// Turns the stream of touches from one trackpad or Magic Mouse into taps, swipes and pinches.
+/// Each gesture fires once per touch: from the first finger down to the last finger up.
+struct TouchRecognizer {
+    let source: TouchSource
+    /// How far (0–1 of the surface) the fingers must move together for a swipe.
+    var swipeDistance = 0.14
+    /// A tap is shorter than this and barely moves.
+    var tapTime = 0.3
+    var tapMovement = 0.035
+
+    private var started: Double?
+    private var maxFingers = 0
+    private var firstPositions: [Int: TouchPoint] = [:]
+    private var moved = 0.0
+    private var fired = false
+    private var countStart: (count: Int, centre: (Double, Double), spread: Double)?
+    /// The latest touches, for working out clicks with several fingers or in a corner.
+    private(set) var current: [TouchPoint] = []
+
+    init(source: TouchSource) {
+        self.source = source
+    }
+
+    /// Feeds one frame of touches; returns a gesture if one was just completed.
+    mutating func feed(_ touches: [TouchPoint], at time: Double) -> Gesture? {
+        current = touches
+        if touches.isEmpty {
+            defer { reset() }
+            guard let started, !fired, maxFingers >= 1 else { return nil }
+            let short = time - started <= tapTime
+            if short, moved <= tapMovement {
+                return .touch(source, .tap, fingers: maxFingers)
+            }
+            return nil
+        }
+        if started == nil { started = time }
+        maxFingers = max(maxFingers, touches.count)
+        for touch in touches {
+            if let first = firstPositions[touch.id] {
+                moved = max(moved, hypot(touch.x - first.x, touch.y - first.y))
+            } else {
+                firstPositions[touch.id] = touch
+            }
+        }
+        guard !fired else { return nil }
+
+        // Measure movement from when the number of fingers last changed.
+        let centre = Self.centre(of: touches)
+        let spread = Self.spread(of: touches, around: centre)
+        guard let start = countStart, start.count == touches.count else {
+            countStart = (touches.count, centre, spread)
+            return nil
+        }
+        let count = touches.count
+        if count >= 2, start.spread > 0.02 {
+            let ratio = spread / start.spread
+            let travel = hypot(centre.0 - start.centre.0, centre.1 - start.centre.1)
+            if travel < swipeDistance * 0.6 {
+                if ratio < 0.6 { fired = true; return .touch(source, .pinchIn, fingers: count) }
+                if ratio > 1.6 { fired = true; return .touch(source, .pinchOut, fingers: count) }
+            }
+        }
+        let dx = centre.0 - start.centre.0, dy = centre.1 - start.centre.1
+        guard max(abs(dx), abs(dy)) >= swipeDistance else { return nil }
+        fired = true
+        let kind: TouchKind = abs(dx) > abs(dy) ? (dx < 0 ? .swipeLeft : .swipeRight) : (dy > 0 ? .swipeUp : .swipeDown)
+        return .touch(source, kind, fingers: count)
+    }
+
+    /// The gesture for a physical click right now: several fingers, or one finger in a corner.
+    func click() -> Gesture? {
+        guard !current.isEmpty else { return nil }
+        if current.count == 1, let finger = current.first {
+            let left = finger.x < 0.2, right = finger.x > 0.8, top = finger.y > 0.8, bottom = finger.y < 0.2
+            switch (left, right, top, bottom) {
+            case (true, _, true, _): return .touch(source, .cornerTopLeft, fingers: 1)
+            case (_, true, true, _): return .touch(source, .cornerTopRight, fingers: 1)
+            case (true, _, _, true): return .touch(source, .cornerBottomLeft, fingers: 1)
+            case (_, true, _, true): return .touch(source, .cornerBottomRight, fingers: 1)
+            default: return nil
+            }
+        }
+        return current.count >= 3 ? .touch(source, .click, fingers: current.count) : nil
+    }
+
+    private mutating func reset() {
+        started = nil
+        maxFingers = 0
+        firstPositions = [:]
+        moved = 0
+        fired = false
+        countStart = nil
+    }
+
+    static func centre(of touches: [TouchPoint]) -> (Double, Double) {
+        let n = Double(touches.count)
+        return (touches.reduce(0) { $0 + $1.x } / n, touches.reduce(0) { $0 + $1.y } / n)
+    }
+
+    static func spread(of touches: [TouchPoint], around centre: (Double, Double)) -> Double {
+        touches.reduce(0) { $0 + hypot($1.x - centre.0, $1.y - centre.1) } / Double(touches.count)
+    }
+}
+
+// MARK: - Mouse strokes
+
+/// Turns the path of the mouse (screen points, y down) into directions like "L" or "DR".
+enum StrokeRecognizer {
+    /// Moves shorter than this don't count as a direction.
+    static let step: CGFloat = 40
+
+    static func path(of points: [CGPoint]) -> String {
+        guard var anchor = points.first else { return "" }
+        var directions = ""
+        for point in points.dropFirst() {
+            let dx = point.x - anchor.x, dy = point.y - anchor.y
+            guard max(abs(dx), abs(dy)) >= step else { continue }
+            let direction: Character = abs(dx) > abs(dy) ? (dx < 0 ? "L" : "R") : (dy < 0 ? "U" : "D")
+            if directions.last != direction { directions.append(direction) }
+            anchor = point
+        }
+        return directions
+    }
+}
+
+// MARK: - Tapping modifier keys
+
+/// Spots a modifier key pressed and let go on its own, quickly, and two such taps in a row.
+struct ModifierTapDetector {
+    var tapTime = 0.35
+    var doubleTapGap = 0.4
+
+    private var down: (key: ModifierKey, time: Double)?
+    private var lastTap: (key: ModifierKey, time: Double)?
+
+    /// A modifier key went down or up (`flags` is every modifier held afterwards).
+    mutating func modifierChanged(_ key: ModifierKey, flags: CGEventFlags, at time: Double) -> Gesture? {
+        let isDown = flags.contains(key.flag)
+        let others: CGEventFlags = [.maskShift, .maskCommand, .maskAlternate, .maskControl, .maskSecondaryFn]
+        let otherHeld = !flags.intersection(others.subtracting(key.flag)).isEmpty
+        if isDown {
+            down = otherHeld ? nil : (key, time)
+            return nil
+        }
+        guard let pressed = down, pressed.key == key, time - pressed.time <= tapTime else {
+            down = nil
+            return nil
+        }
+        down = nil
+        if let previous = lastTap, previous.key == key, time - previous.time <= doubleTapGap {
+            lastTap = nil
+            return .modifierTap(key, taps: 2)
+        }
+        lastTap = (key, time)
+        return .modifierTap(key, taps: 1)
+    }
+
+    /// Any other key or click cancels a tap in progress.
+    mutating func interrupted() {
+        down = nil
+        lastTap = nil
+    }
+}
+
+// MARK: - Which rule applies
+
+/// One gesture and what it does, optionally only in (or except in) certain apps.
+struct GestureRule: Identifiable, Codable, Equatable {
+    enum AppScope: String, Codable, CaseIterable, Identifiable {
+        case everywhere, only, except
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .everywhere: return "In every app"
+            case .only: return "Only in"
+            case .except: return "Everywhere except"
+            }
+        }
+    }
+
+    var id = UUID()
+    var gesture: Gesture
+    var action: MacroAction
+    var enabled = true
+    var scope: AppScope = .everywhere
+    /// Bundle identifiers, such as com.apple.Safari.
+    var apps: [String] = []
+    /// For typed sequences: delete what was typed before running the action.
+    var deleteTyped = true
+
+    func applies(in app: String?) -> Bool {
+        switch scope {
+        case .everywhere: return true
+        case .only: return app.map(apps.contains) ?? false
+        case .except: return !(app.map(apps.contains) ?? false)
+        }
+    }
+
+    /// The first enabled rule for this gesture in this app. App-specific rules win over general ones.
+    static func match(_ event: Gesture, app: String?, in rules: [GestureRule]) -> GestureRule? {
+        let candidates = rules.filter { $0.enabled && $0.gesture.accepts(event) && $0.applies(in: app) }
+        return candidates.first { $0.scope == .only } ?? candidates.first
+    }
+}

@@ -41,8 +41,8 @@ enum Permission: String, CaseIterable, Identifiable {
     /// Which features need it. Features not built yet are marked as coming later.
     var usedBy: String {
         switch self {
-        case .accessibility: return "Clipboard auto-paste · later: window management, snippets, macros"
-        case .inputMonitoring: return "Later: snippets, gestures, macros"
+        case .accessibility: return "Clipboard auto-paste, window management, snippets, mouse gestures, actions that press keys"
+        case .inputMonitoring: return "Snippets, key taps and typed sequences in Gestures · later: macros"
         case .screenRecording: return "Screenshots and copying text from the screen"
         }
     }

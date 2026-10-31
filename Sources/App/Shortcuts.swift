@@ -217,6 +217,11 @@ final class ShortcutCenter: ObservableObject {
         handlers[action] = handler
     }
 
+    /// Does what the shortcut does, without its keys (for gestures and macros).
+    func perform(_ action: ShortcutAction) {
+        handlers[action]?()
+    }
+
     /// Registers the shortcuts of running modules and drops the rest.
     func setActive(_ actions: Set<ShortcutAction>) {
         active = actions
