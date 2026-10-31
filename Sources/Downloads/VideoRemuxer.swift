@@ -20,115 +20,115 @@ enum RemuxError: LocalizedError {
 enum VideoRemuxer {
     /// Joins MPEG-TS pieces into an .mp4. `audioFiles` is a separate sound stream, if the site sends one.
     /// Packed-audio pieces (.aac) are recognised by their content.
+    ///
+    /// The video and the sound are each written to a file of their own (a writer with a single
+    /// track never waits for another one), then copied together into the finished file.
     static func remuxTS(video videoFiles: [URL], audio audioFiles: [URL] = [], discontinuities: Set<Int> = [],
                         to output: URL, isCancelled: () -> Bool = { false }) throws {
-        let main = Feeder(files: videoFiles, discontinuities: discontinuities)
-        let separate = audioFiles.isEmpty ? nil : Feeder(files: audioFiles)
-        let audioFeeder = separate ?? main
+        let soundFiles = audioFiles.isEmpty ? videoFiles : audioFiles
+        let soundJumps = audioFiles.isEmpty ? discontinuities : []
+        // Both tracks start their timeline at the same moment, so they stay in step when combined.
+        let start = min(firstTime(of: videoFiles, video: true) ?? .max, firstTime(of: soundFiles, video: false) ?? .max)
+        guard start != .max else { throw RemuxError.noMedia }
 
-        // Read until the formats are known (usually the first piece).
-        while !main.demuxer.hasVideoFormat, main.refill() {}
-        while audioFeeder.demuxer.aac == nil, audioFeeder.refill() {}
-        let videoFormat = try main.demuxer.hasVideoFormat ? videoDescription(main.demuxer) : nil
-        let audioFormat = try audioFeeder.demuxer.aac.map(audioDescription)
-        guard videoFormat != nil || audioFormat != nil else { throw RemuxError.noMedia }
-
+        let folder = output.deletingLastPathComponent()
+        let videoOnly = folder.appendingPathComponent(output.lastPathComponent + ".video.mp4")
+        let soundOnly = folder.appendingPathComponent(output.lastPathComponent + ".sound.mp4")
+        defer {
+            try? FileManager.default.removeItem(at: videoOnly)
+            try? FileManager.default.removeItem(at: soundOnly)
+        }
+        let hasVideo = try writeTrack(video: true, files: videoFiles, discontinuities: discontinuities, start: start, to: videoOnly, isCancelled: isCancelled)
+        let hasSound = try writeTrack(video: false, files: soundFiles, discontinuities: soundJumps, start: start, to: soundOnly, isCancelled: isCancelled)
         try? FileManager.default.removeItem(at: output)
-        let writer: AVAssetWriter
-        do { writer = try AVAssetWriter(outputURL: output, fileType: .mp4) } catch { throw RemuxError.writer(error.localizedDescription) }
-        writer.shouldOptimizeForNetworkUse = false
-        var videoInput: AVAssetWriterInput?
-        var audioInput: AVAssetWriterInput?
-        if let videoFormat {
-            let input = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: videoFormat)
-            input.expectsMediaDataInRealTime = false
-            guard writer.canAdd(input) else { throw RemuxError.writer("the video track was refused") }
-            writer.add(input)
-            videoInput = input
+        switch (hasVideo, hasSound) {
+        case (true, true): try combine(video: videoOnly, audio: soundOnly, to: output)
+        case (true, false): try FileManager.default.moveItem(at: videoOnly, to: output)
+        case (false, true): try FileManager.default.moveItem(at: soundOnly, to: output)
+        case (false, false): throw RemuxError.noMedia
         }
-        if let audioFormat {
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: audioFormat)
-            input.expectsMediaDataInRealTime = false
-            guard writer.canAdd(input) else { throw RemuxError.writer("the sound track was refused") }
-            writer.add(input)
-            audioInput = input
-        }
-        guard writer.startWriting() else { throw RemuxError.writer(writer.error?.localizedDescription ?? "it wouldn't start") }
+    }
 
-        // Frames in the order they're needed: whichever track is behind goes next.
-        var videoQueue: [MediaFrame] = []
-        var audioQueue: [MediaFrame] = []
+    /// When the first video frame (or sound frame) is shown, from the first pieces.
+    private static func firstTime(of files: [URL], video: Bool) -> Int64? {
+        let feeder = Feeder(files: Array(files.prefix(3)))
+        while feeder.refill() {
+            let frames = video ? feeder.demuxer.takeVideo() : feeder.demuxer.takeAudio()
+            if let first = (video ? frames.first(where: \.isKey) : frames.first) { return first.pts }
+        }
+        return nil
+    }
+
+    /// Writes one track (the video or the sound) of the pieces into its own .mp4. Returns false if there's none.
+    private static func writeTrack(video: Bool, files: [URL], discontinuities: Set<Int>, start: Int64, to output: URL,
+                                   isCancelled: () -> Bool) throws -> Bool {
+        let feeder = Feeder(files: files, discontinuities: discontinuities)
+        var queue: [MediaFrame] = []
         func topUp() {
-            while true {
-                videoQueue += main.demuxer.takeVideo()
-                audioQueue += audioFeeder.demuxer.takeAudio()
-                if separate != nil { _ = main.demuxer.takeAudio() } // a muxed track we don't use
-                // At least two video frames ready (the next one's time gives this one's length).
-                let needVideo = videoInput != nil && videoQueue.count < 2
-                let needAudio = audioInput != nil && audioQueue.isEmpty
-                guard needVideo || needAudio else { return }
-                var progressed = false
-                if needVideo { progressed = main.refill() || progressed }
-                if needAudio, separate != nil {
-                    progressed = audioFeeder.refill() || progressed
-                } else if needAudio, !needVideo {
-                    progressed = main.refill() || progressed
-                }
-                if !progressed {
-                    videoQueue += main.demuxer.takeVideo()
-                    audioQueue += audioFeeder.demuxer.takeAudio()
+            while queue.count < 2 {
+                queue += video ? feeder.demuxer.takeVideo() : feeder.demuxer.takeAudio()
+                _ = video ? feeder.demuxer.takeAudio() : feeder.demuxer.takeVideo() // the other track: not wanted here
+                if queue.count >= 2 || !feeder.refill() {
+                    queue += video ? feeder.demuxer.takeVideo() : feeder.demuxer.takeAudio()
                     return
                 }
             }
         }
         topUp()
-        // Video must start on a key frame.
-        while let first = videoQueue.first, !first.isKey { videoQueue.removeFirst(); if videoQueue.count < 2 { topUp() } }
-        if videoInput != nil, videoQueue.isEmpty { throw RemuxError.noMedia }
+        if video {
+            // Video must start on a key frame.
+            while let first = queue.first, !first.isKey { queue.removeFirst(); topUp() }
+        }
+        guard !queue.isEmpty else { return false }
+        let format: CMFormatDescription
+        if video {
+            guard feeder.demuxer.hasVideoFormat else { return false }
+            format = try videoDescription(feeder.demuxer)
+        } else {
+            guard let config = feeder.demuxer.aac else { return false }
+            format = try audioDescription(config)
+        }
 
-        let start = min(videoQueue.first?.pts ?? .max, audioQueue.first?.pts ?? .max)
+        try? FileManager.default.removeItem(at: output)
+        let writer: AVAssetWriter
+        do { writer = try AVAssetWriter(outputURL: output, fileType: .mp4) } catch { throw RemuxError.writer(error.localizedDescription) }
+        writer.shouldOptimizeForNetworkUse = false
+        let input = AVAssetWriterInput(mediaType: video ? .video : .audio, outputSettings: nil, sourceFormatHint: format)
+        input.expectsMediaDataInRealTime = false
+        guard writer.canAdd(input) else { throw RemuxError.writer("the \(video ? "video" : "sound") track was refused") }
+        writer.add(input)
+        guard writer.startWriting() else { throw RemuxError.writer(writer.error?.localizedDescription ?? "it wouldn't start") }
         writer.startSession(atSourceTime: CMTime(value: start, timescale: 90000))
-        var lastVideoDuration: Int64 = 3000
-        let audioDuration = CMTime(value: 1024, timescale: CMTimeScale(audioFeeder.demuxer.aac?.sampleRate ?? 44100))
 
+        var lastDuration: Int64 = 3000
+        let soundDuration = CMTime(value: 1024, timescale: CMTimeScale(feeder.demuxer.aac?.sampleRate ?? 44100))
         while !isCancelled() {
             topUp()
-            let nextVideo = videoQueue.first, nextAudio = audioQueue.first
-            let useVideo: Bool
-            switch (nextVideo, nextAudio) {
-            case (nil, nil): useVideo = false
-            case (.some, nil): useVideo = true
-            case (nil, .some): useVideo = false
-            case let (.some(v), .some(a)): useVideo = v.dts <= a.dts
-            }
-            if nextVideo == nil && nextAudio == nil { break }
-            if useVideo, let frame = nextVideo, let input = videoInput, let format = videoFormat {
-                videoQueue.removeFirst()
-                if let next = videoQueue.first, next.dts > frame.dts { lastVideoDuration = next.dts - frame.dts }
-                let timing = CMSampleTimingInfo(duration: CMTime(value: lastVideoDuration, timescale: 90000),
-                                                presentationTimeStamp: CMTime(value: frame.pts, timescale: 90000),
-                                                decodeTimeStamp: CMTime(value: frame.dts, timescale: 90000))
-                try append(frame, timing: timing, format: format, to: input, writer: writer, sync: frame.isKey)
-            } else if let frame = nextAudio, let input = audioInput, let format = audioFormat {
-                audioQueue.removeFirst()
-                let timing = CMSampleTimingInfo(duration: audioDuration, presentationTimeStamp: CMTime(value: frame.pts, timescale: 90000),
-                                                decodeTimeStamp: .invalid)
-                try append(frame, timing: timing, format: format, to: input, writer: writer, sync: true)
+            guard !queue.isEmpty else { break }
+            let frame = queue.removeFirst()
+            if frame.pts < start, !video { continue } // sound from before the first picture
+            let timing: CMSampleTimingInfo
+            if video {
+                if let next = queue.first, next.dts > frame.dts { lastDuration = next.dts - frame.dts }
+                timing = CMSampleTimingInfo(duration: CMTime(value: lastDuration, timescale: 90000),
+                                            presentationTimeStamp: CMTime(value: frame.pts, timescale: 90000),
+                                            decodeTimeStamp: CMTime(value: frame.dts, timescale: 90000))
             } else {
-                // A frame for a track we couldn't set up: skip it.
-                if useVideo { videoQueue.removeFirst() } else { audioQueue.removeFirst() }
+                timing = CMSampleTimingInfo(duration: soundDuration, presentationTimeStamp: CMTime(value: frame.pts, timescale: 90000),
+                                            decodeTimeStamp: .invalid)
             }
+            try append(frame, timing: timing, format: format, to: input, writer: writer, sync: !video || frame.isKey)
         }
         if isCancelled() {
             writer.cancelWriting()
             throw CancellationError()
         }
-        videoInput?.markAsFinished()
-        audioInput?.markAsFinished()
+        input.markAsFinished()
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
         done.wait()
         guard writer.status == .completed else { throw RemuxError.writer(writer.error?.localizedDescription ?? "it didn't finish") }
+        return true
     }
 
     /// Fragmented-MP4 streams: the init section followed by every piece is already a playable file.
@@ -213,11 +213,12 @@ enum VideoRemuxer {
             CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
                                  Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
         }
-        // The writer takes frames in step across tracks; wait while it catches up.
+        // Wait while the writer catches up.
         var waited = 0
         while !input.isReadyForMoreMediaData {
             guard writer.status == .writing, waited < 6000 else {
-                throw RemuxError.writer(writer.error?.localizedDescription ?? "it stopped taking frames")
+                throw RemuxError.writer(writer.error?.localizedDescription
+                    ?? "it stopped taking frames (status \(writer.status.rawValue), at \(String(format: "%.2f", timing.presentationTimeStamp.seconds)) s)")
             }
             Thread.sleep(forTimeInterval: 0.005)
             waited += 1
