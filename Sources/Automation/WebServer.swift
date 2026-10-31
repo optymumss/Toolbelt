@@ -87,11 +87,11 @@ struct WebAPI {
             guard let name = request.query["trigger_name"] ?? request.query["name"], !name.isEmpty else {
                 return .error(400, "Say which macro: ?name=Macro name")
             }
-            guard macroNames().contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
+            guard let macro = macroNames().first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
                 return .error(404, "There's no macro called “\(name)”.")
             }
-            runMacro(name, request.query["input"] ?? "")
-            return .json(["ok": true, "ran": name])
+            runMacro(macro, request.query["input"] ?? "")
+            return .json(["ok": true, "ran": macro])
         case "/action":
             if let id = request.query["do"] ?? request.query["action"], let control = SystemControl(rawValue: id) {
                 runAction(.system(control))
