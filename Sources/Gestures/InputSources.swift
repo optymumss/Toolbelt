@@ -172,6 +172,29 @@ final class MultitouchReader: @unchecked Sendable {
             }
             points = read
         }
+        handle(device: device, points: points, time: time)
+    }
+
+    /// Where pretend touches come from in the real-use tests: a device that isn't a real one.
+    private static let pretendDevice = UnsafeMutableRawPointer(bitPattern: 0x7E57)!
+
+    /// The real-use tests (TOOLBELT_E2E) pretend a trackpad sent these frames. They go through the same
+    /// recognizer, rules and "fingers lifted" handling as real touches.
+    func injectForTesting(_ frames: [(time: Double, touches: [TouchPoint])]) {
+        let device = Self.pretendDevice
+        lock.lock()
+        if recognizers[device] == nil {
+            var recognizer = TouchRecognizer(source: .trackpad)
+            recognizer.scrolls = scrollsWanted
+            recognizer.holds = holdsWanted
+            recognizer.tune(sensitivity)
+            recognizers[device] = recognizer
+        }
+        lock.unlock()
+        for frame in frames { handle(device: device, points: frame.touches, time: frame.time) }
+    }
+
+    private func handle(device: UnsafeMutableRawPointer, points: [TouchPoint], time: Double) {
         lock.lock()
         badFramesInARow = 0
         let hadFingers = !(recognizers[device]?.current.isEmpty ?? true)

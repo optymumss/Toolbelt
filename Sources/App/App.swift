@@ -60,7 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.servicesProvider = services
         NSUpdateDynamicServices()
 
-        warnAboutTakenShortcuts()
+        if !RealUseHooks.isOn { warnAboutTakenShortcuts() }
+        RealUseHooks.start()
         showForScreenshot()
     }
 

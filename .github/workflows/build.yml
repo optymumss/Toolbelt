@@ -2,9 +2,11 @@ name: Build
 
 # macOS minutes count ten times against the account's GitHub Actions allowance, so each run does
 # only what it needs to:
-# - pull requests: build, run every test and check the DMG opens (about 5 minutes);
-# - main, after a merge, and "Run workflow" by hand: also the battery check and screenshots
-#   (and the Chrome test, where present), and main attaches Toolbelt.dmg to a release;
+# - pull requests: build, run every test, check the DMG opens and run the real-use tests
+#   (Toolbelt driven by pretend keys, mouse and trackpad; about 10 minutes);
+# - main, after a merge, and "Run workflow" by hand: also the 20-minute stability test, the battery
+#   check, the Chrome test and screenshots, and main attaches Toolbelt.dmg to a release (only
+#   once every test has passed);
 # - changes to documentation only don't start a run, and a newer push to the same branch
 #   stops the older run.
 on:
@@ -31,7 +33,7 @@ jobs:
   build:
     name: Build on macOS
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     env:
       FULL: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
     steps:
@@ -48,6 +50,18 @@ jobs:
         run: bash package.sh
       - name: Open the DMG and start the app from it
         run: bash .github/scripts/dmg.sh
+      - name: Real-use tests (Toolbelt driven by pretend keys, mouse and trackpad)
+        run: bash .github/scripts/real-use.sh real-use
+      - name: Stability test (20 minutes of nonstop use)
+        if: env.FULL == 'true'
+        run: bash .github/scripts/real-use.sh stability 20
+      - name: Keep the real-use results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-use-results
+          path: build/*-results.txt
+          if-no-files-found: ignore
       - name: Attach Toolbelt.dmg to a release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

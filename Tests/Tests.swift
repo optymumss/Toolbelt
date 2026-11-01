@@ -52,6 +52,7 @@ enum ToolbeltTests {
         t.group("Gestures: trackpad, mouse and keys", GestureTests.run)
         t.group("Triggers: conditions, activation groups and the Triggers window", TriggerTests.run)
         t.group("Triggers: key up, long hold, repeat, left/right keys and more gestures", MoreTriggerTests.run)
+        t.group("Real-use test helpers: pretend trackpad touches", RealUseHelperTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -3866,5 +3867,22 @@ enum MoreTriggerTests {
         let saved = (try? JSONEncoder().encode([phased, repeating, shortcut])).flatMap { try? JSONDecoder().decode([GestureRule].self, from: $0) }
         checkEqual(saved, [phased, repeating, shortcut], "phase actions, repeats, sides and layout settings are saved")
         module.store.rules = []
+    }
+}
+
+@MainActor
+enum RealUseHelperTests {
+    static func run() {
+        let frames: [(time: Double, touches: [TouchPoint])] = [
+            (10.0, [TouchPoint(id: 1, x: 0.4, y: 0.5), TouchPoint(id: 2, x: 0.6, y: 0.25)]),
+            (10.5, []),
+        ]
+        let text = RealUseHooks.framesText(frames)
+        let back = RealUseHooks.parseFrames(text)
+        check(back?.count == 2, "pretend touch frames survive being written out and read back")
+        check(back?.first?.touches == frames[0].touches && back?.first?.time == 10.0, "with every finger's place and the time")
+        check(back?.last?.touches.isEmpty == true, "an empty frame means the fingers lifted")
+        check(RealUseHooks.parseFrames("not json") == nil, "anything else is ignored")
+        check(!RealUseHooks.isOn, "the test hooks are off unless TOOLBELT_E2E=1")
     }
 }

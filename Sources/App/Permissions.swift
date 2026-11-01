@@ -94,7 +94,9 @@ enum PermissionGate {
     static func ensure(_ permission: Permission, to feature: String) -> Bool {
         if permission.isGranted { return true }
         // The automated screenshot check can't click dialogs, so it never gets one.
-        guard ProcessInfo.processInfo.environment["TOOLBELT_SHOW"] == nil else { return false }
+        // Nor do the real-use tests (TOOLBELT_E2E): a dialog would stop them.
+        guard ProcessInfo.processInfo.environment["TOOLBELT_SHOW"] == nil,
+              ProcessInfo.processInfo.environment["TOOLBELT_E2E"] == nil else { return false }
         guard !askedThisLaunch.contains(permission) else { return false }
         askedThisLaunch.insert(permission)
 
