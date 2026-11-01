@@ -123,6 +123,7 @@ SCREENS=(
     "large-text=large-text"
     "macro-helper=macro-helper"
     "prompt=prompt"
+    "update=update"
     "settings-automation=settings-automation"
     "launcher-switcher=launcher-switcher"
     "notes-demo=notes-demo"

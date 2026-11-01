@@ -36,7 +36,9 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    form, clicking its button and a link, and reading the page's title and address;
    and (0.32) a macro running another with an input and getting its result, %FrontAppID% and %FrontWindow%,
    the clipboard's picture rotated and its text read (OCR), a macro run on a clipboard-history item, a palette
-   showing only while its app is in front, and another macro running while a question window waits. Each check confirms the action really
+   showing only while its app is in front, and another macro running while a question window waits;
+   and (0.33) an update found in a test release made from this run's DMG, installed into a copy of the app
+   (downloaded, checked, swapped in, nothing left behind, signature intact). Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.

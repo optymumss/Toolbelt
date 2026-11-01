@@ -123,6 +123,22 @@ enum Prefs {
         set { store.set(newValue.rawValue, for: "appearance") }
     }
 
+    /// Updates: check GitHub once a day, a version the person chose to skip, and when it last checked.
+    static var updateAutoCheck: Bool {
+        get { store.value("updates.auto", default: true) }
+        set { store.set(newValue, for: "updates.auto") }
+    }
+
+    static var updateSkipped: String {
+        get { store.value("updates.skipped", default: "") }
+        set { store.set(newValue, for: "updates.skipped") }
+    }
+
+    static var updateLastCheck: Double {
+        get { store.value("updates.lastCheck", default: 0.0) }
+        set { store.set(newValue, for: "updates.lastCheck") }
+    }
+
     static func isEnabled(_ module: ModuleID) -> Bool {
         store.value("module.\(module.rawValue).enabled", default: true)
     }

@@ -671,6 +671,14 @@ final class RealUse: NSObject, NSApplicationDelegate {
         let snippets = [Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt")]
         try JSONEncoder().encode(snippets).write(to: data.appendingPathComponent("snippets.json"), options: .atomic)
 
+        Prefs.updateAutoCheck = false // only the test's own check, never a window popping up mid-test
+        let builtVersion = NSDictionary(contentsOf: toolbeltURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String ?? "0"
+        let release: [String: Any] = [
+            "tag_name": "v\(builtVersion)", "draft": false, "prerelease": false, "body": "## What's new in \(builtVersion): test",
+            "assets": [["name": "Toolbelt.dmg",
+                        "browser_download_url": toolbeltURL.deletingLastPathComponent().appendingPathComponent("Toolbelt.dmg").absoluteString]],
+        ]
+        try JSONSerialization.data(withJSONObject: release).write(to: data.appendingPathComponent("release.json"))
         Prefs.webServerOn = true
         Prefs.webServerPort = Self.webPort
         Prefs.webServerSecret = Self.webSecret
@@ -683,7 +691,10 @@ final class RealUse: NSObject, NSApplicationDelegate {
 
     func startToolbelt() async -> Bool {
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.environment = ["TOOLBELT_DATA_DIR": data.path, "TOOLBELT_E2E": "1"]
+        // 0.33: updates come from a test "release" (this run's own DMG), and Toolbelt pretends to be old.
+        configuration.environment = ["TOOLBELT_DATA_DIR": data.path, "TOOLBELT_E2E": "1",
+                                     "TOOLBELT_UPDATE_URL": data.appendingPathComponent("release.json").absoluteString,
+                                     "TOOLBELT_PRETEND_VERSION": "0.1"]
         configuration.activates = false
         configuration.createsNewApplicationInstance = true
         do {
@@ -746,6 +757,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await conditionTests()
             await kmActionTests()
             await kmExtraTests()
+            await updateTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -1432,6 +1444,30 @@ final class RealUse: NSObject, NSApplicationDelegate {
         await press(CGKeyCode(kVK_Return), [])
         check("… and answering it carries on", await waitUntil(5) { self.count("waited-ok") == 1 }, "markers: \(markers().filter { $0.hasPrefix("waited") })")
         await focus()
+    }
+
+    func updateTests() async {
+        say("— 0.33: updating Toolbelt from a release")
+        func update() -> String { toolbeltStatus()["update"] as? String ?? "" }
+        let built = NSDictionary(contentsOf: toolbeltURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String ?? "?"
+        command("update-check")
+        check("a newer release is found (this copy pretends to be 0.1)", await waitUntil(15) { update() == "available \(built)" }, "update: \(update())")
+
+        // Installed into a copy, so the running Toolbelt isn't replaced in the middle of the tests.
+        let folder = data.appendingPathComponent("Install")
+        let copy = folder.appendingPathComponent("Toolbelt.app")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        _ = run("/usr/bin/ditto", [toolbeltURL.path, copy.path])
+        let marker = copy.appendingPathComponent("Contents/old-copy-marker")
+        FileManager.default.createFile(atPath: marker.path, contents: Data("old".utf8))
+        command("update-install-to:\(copy.path)")
+        let installed = await waitUntil(60) { update() == "up to date" }
+        let leftovers = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0 != "Toolbelt.app" }
+        let version = NSDictionary(contentsOf: copy.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
+        check("the release's DMG is downloaded, checked and swapped in", installed && !FileManager.default.fileExists(atPath: marker.path) && version == built,
+              "update: \(update()), old copy still there: \(FileManager.default.fileExists(atPath: marker.path)), version \(version ?? "none")")
+        check("… leaving nothing behind", leftovers.isEmpty, "left: \(leftovers)")
+        check("… and the new copy is signed and intact", run("/usr/bin/codesign", ["--verify", "--deep", "--strict", copy.path]), "codesign says no")
     }
 
     func macEventTests() async {

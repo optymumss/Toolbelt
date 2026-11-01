@@ -68,11 +68,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist)"
+          # The README's "What's new in <version>" section, which Toolbelt's update window shows.
+          awk -v v="$VERSION" 'index($0, "## What'"'"'s new in " v) == 1 { on = 1 } on && /^## / && index($0, "## What'"'"'s new in " v) != 1 { exit } on { print }' README.md > build/notes.md
+          printf '\nDownload Toolbelt.dmg below, open it and drag Toolbelt onto Applications (or use Check for Updates in Toolbelt).\n' >> build/notes.md
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             gh release upload "v$VERSION" build/Toolbelt.dmg --clobber
+            gh release edit "v$VERSION" --notes-file build/notes.md
           else
-            gh release create "v$VERSION" build/Toolbelt.dmg --target "$GITHUB_SHA" --title "Toolbelt $VERSION" \
-              --notes "Download Toolbelt.dmg below, open it and drag Toolbelt onto Applications. See the README for the one-time \"Open Anyway\" step."
+            gh release create "v$VERSION" build/Toolbelt.dmg --target "$GITHUB_SHA" --title "Toolbelt $VERSION" --notes-file build/notes.md
           fi
       - name: Test the Chrome extension in Chrome
         if: env.FULL == 'true'

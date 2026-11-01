@@ -54,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         modules.refresh()
+        Updater.shared.registerTestHooks()
+        Updater.shared.start()
 
         // Right-click and Services menu entries (see NSServices in Info.plist).
         services = ServicesProvider(modules: modules)
@@ -126,6 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-screenshots": settings.show(tab: .module(.screenshots))
             case "settings-automation": settings.show(tab: .module(.automation))
+            case "update":
+                // The window offering a new version.
+                Updater.shared.showExample()
             case "macro-helper":
                 // The New Macro helper, over the Macros window.
                 guard let automation = modules.module(.automation) as? AutomationModule else { break }
