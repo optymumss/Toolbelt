@@ -72,6 +72,14 @@ final class AutomationModule: ToolbeltModule {
         panels.start(runner: runner)
         RealUseHooks.commands["record-start"] = { [weak self] name in self?.startTestRecording(into: name) }
         RealUseHooks.commands["record-stop"] = { [weak self] _ in self?.recorder.stop() }
+        // "clipboard-filter:Macro name|text", as if chosen from the clipboard history's menu.
+        RealUseHooks.commands["clipboard-filter"] = { [weak self] argument in
+            let parts = argument.split(separator: "|", maxSplits: 1).map(String.init)
+            if parts.count == 2 { self?.runClipboardFilter(parts[0], text: parts[1]) }
+        }
+        RealUseHooks.extraStatus["waitingPrompts"] = { PromptPanel.waitingMessages }
+        ClipboardFilterHooks.names = { [weak self] in self?.clipboardFilterNames ?? [] }
+        ClipboardFilterHooks.run = { [weak self] name, text in self?.runClipboardFilter(name, text: text) }
         RealUseHooks.extraStatus["recorded"] = { [weak self] in
             self?.store.macro(named: "Recorded")?.steps.map(\.summary) ?? []
         }
@@ -102,6 +110,8 @@ final class AutomationModule: ToolbeltModule {
 
     /// A macro to show when the Macros window opens (used for the screenshots).
     var selectOnOpen: UUID?
+    /// Open the New Macro helper as the window opens (for the screenshots).
+    var helperOnOpen = false
 
     func open() {
         if editor == nil {
@@ -122,7 +132,7 @@ final class AutomationModule: ToolbeltModule {
 
     /// Runs one step on its own (the ⋯ → Try This Step button).
     func tryStep(_ step: MacroStep) {
-        let run = MacroRun(runner: runner)
+        let run = makeRun(trigger: "")
         Task { await run.run([step]) }
     }
 
@@ -152,12 +162,41 @@ final class AutomationModule: ToolbeltModule {
     func run(_ macro: Macro, trigger: String = "", done: (() -> Void)? = nil) {
         history.append(macro.name)
         if history.count > 50 { history.removeFirst() }
-        let run = MacroRun(runner: runner, trigger: trigger)
+        let run = makeRun(trigger: trigger)
         lastRun = run
         Task {
             await run.run(macro.steps)
             done?()
         }
+    }
+
+    /// A run that can run other macros (the "Run another macro and wait for it" step).
+    func makeRun(trigger: String, depth: Int = 0) -> MacroRun {
+        let run = MacroRun(runner: runner, trigger: trigger)
+        run.depth = depth
+        run.runMacro = { [weak self] name, inputs, depth in await self?.runSubMacro(name, inputs: inputs, depth: depth) }
+        return run
+    }
+
+    /// Runs a macro with these variables set, waits for it, and gives back its %Result%.
+    func runSubMacro(_ name: String, inputs: [String: String], depth: Int) async -> String? {
+        guard let macro = store.macro(named: name) else { return nil }
+        history.append(macro.name)
+        if history.count > 50 { history.removeFirst() }
+        let run = makeRun(trigger: inputs["Trigger"] ?? "", depth: depth)
+        for (name, value) in inputs where name.lowercased() != "clipboard" { run.set(name, value) }
+        await run.run(macro.steps)
+        return run.value(of: "Result")
+    }
+
+    /// Macros offered for a clipboard-history item, and running one on an item's text (put on the clipboard first).
+    var clipboardFilterNames: [String] { triggers([.clipboardFilter]).map(\.0.name) }
+
+    func runClipboardFilter(_ name: String, text: String) {
+        guard let macro = triggers([.clipboardFilter]).map(\.0).first(where: { $0.name == name }) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        fire(macro, value: text)
     }
 
     /// A trigger happened: run the macro if it (and its group) apply in the app in front.

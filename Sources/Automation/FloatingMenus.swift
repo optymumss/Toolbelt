@@ -30,6 +30,18 @@ struct FloatingMenu: Identifiable, Codable, Equatable {
     var atPointer = false
     /// Show it whenever Toolbelt starts.
     var showAtStart = false
+    /// A palette for some apps: shown only while one of these (names or bundle IDs) is in front. Empty: any time.
+    var apps: [String]? = nil
+
+    var forApps: [String] { (apps ?? []).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
+
+    /// Whether a palette for some apps should show with this app in front.
+    func showsFor(app bundleID: String?, name: String?) -> Bool {
+        guard !forApps.isEmpty else { return false }
+        return forApps.contains { wanted in
+            [bundleID, name].compactMap { $0 }.contains { MacroCondition.sameApp($0, wanted.trimmingCharacters(in: .whitespaces)) }
+        }
+    }
 }
 
 struct MenuBarItem: Identifiable, Codable, Equatable {
@@ -86,14 +98,38 @@ final class PanelController {
     private var timers: [UUID: Timer] = [:]
     private var titles: [UUID: String] = [:]
 
+    private var appObserver: NSObjectProtocol?
+
     func start(runner: ActionRunner) {
         self.runner = runner
         store.onMenuBarChange = { [weak self] in self?.updateMenuBar() }
         updateMenuBar()
-        for menu in store.menus where menu.showAtStart { show(menu) }
+        for menu in store.menus where menu.showAtStart && menu.forApps.isEmpty { show(menu) }
+        // Palettes for some apps come and go with the app in front.
+        appObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                                        object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePalettes() }
+        }
+        updatePalettes()
+    }
+
+    /// Shows the palettes for the app in front and hides the others.
+    func updatePalettes() {
+        guard runner != nil else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        // Toolbelt itself coming to the front (its windows, a question) leaves palettes as they are.
+        if front?.bundleIdentifier == Bundle.main.bundleIdentifier { return }
+        for menu in store.menus where !menu.forApps.isEmpty {
+            let wanted = menu.showsFor(app: front?.bundleIdentifier, name: front?.localizedName)
+            let showing = panels[menu.id]?.isVisible == true
+            if wanted, !showing { show(menu) }
+            if !wanted, showing { hide(menu.id) }
+        }
     }
 
     func stop() {
+        if let appObserver { NSWorkspace.shared.notificationCenter.removeObserver(appObserver) }
+        appObserver = nil
         for panel in panels.values { panel.orderOut(nil) }
         panels = [:]
         for item in statusItems.values { NSStatusBar.system.removeStatusItem(item) }
@@ -289,6 +325,12 @@ struct PanelSettings: View {
                             Toggle("At the pointer", isOn: $menu.atPointer)
                             Toggle("Show when Toolbelt starts", isOn: $menu.showAtStart)
                         }
+                        TextField("Only while these apps are in front (names, separated by commas; empty: any time)", text: Binding(
+                            get: { (menu.apps ?? []).joined(separator: ", ") },
+                            set: { text in
+                                let names = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                                menu.apps = names.isEmpty ? nil : names
+                            }))
                         if !menu.atPointer {
                             HStack {
                                 TextField("Left", value: $menu.x, format: .number).frame(width: 70)

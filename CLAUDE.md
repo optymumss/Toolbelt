@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -40,6 +40,12 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   and treats false as a failure), `BrowserScript` (AppleScript + JS, pure), `FileActions`, `WindowFrame`,
   `KeyboardLayouts` (TIS), `SystemSounds`, `LargeText`, `AppHistory` (previous app), `Downloader`, `BrowserPart`.
   Steps `.readFile`, `.browserGet`, `.alert`, `.askFolder`/`.askFile`, `.askSeveral` (closures on `MacroRun` for tests).
+  `Automation/MacroExtras.swift` (0.32): `MacroCalculator` (own parser, never NSExpression), `MacroInputs`, `PictureFilter`
+  (CG transforms, `contentBox` trim, OCR via `ImageText`), `ClipboardFilterHooks` (clipboard history's "Run Macro on
+  It"), `PromptPanel` (non-modal NSPanel + continuation; all question closures on `MacroRun` are async).
+  Steps `.calculate`, `.pictureFilter` (`MacroStep.picture`), `.runMacro` (`MacroRun.runMacro` closure + `depth`,
+  limit 10; `AutomationModule.runSubMacro` returns %Result%). `Macro.modified` stamped by `MacroStore.stamped`;
+  `MacroListFilter`, `SelectionHistory`, `NewMacroHelper`. `FloatingMenu.apps` = palette (`PanelController.updatePalettes`).
 - `Sources/Automation/` — macros: `MacroModel` (macros, groups, triggers, steps), `MacroEngine` (`MacroRun`:
   variables, conditions, loops), `SystemHelpers` (menu items by name, resolution, sound output, other
   keyboards, Wi-Fi), `AutomationModule` (watches only the triggers macros use), `MacroEditor` (the Macros window).

@@ -59,6 +59,7 @@ enum ToolbeltTests {
         t.group("Macro editor: recording, switched-off steps, time limits, failures, copy/paste, undo, export", MacroEditorTests.run)
         t.group("Macro triggers and conditions: clipboard, start, windows, pause until, keys, colours, pictures", MacroConditionTests.run)
         t.group("Macro actions: apps, windows, files, browser, download, speech, sounds, volume, layouts, prompts", KMActionTests.run)
+        t.group("Calculations, picture filters, sub-macros, palettes and the Macros window's lists", MacroExtraTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4476,5 +4477,167 @@ enum KMActionTests {
         let saved = try? JSONDecoder().decode(MacroStep.self, from: JSONEncoder().encode(several))
         checkEqual(saved, several, "the new steps are saved and read back")
         checkEqual(several.summary, "Ask %Meeting_time%, %Place%", "in plain words")
+    }
+}
+
+@MainActor
+enum MacroExtraTests {
+    /// A small picture: each pixel a different colour (rows from the top).
+    static func picture(_ width: Int, _ height: Int) -> CGImage? {
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        for y in 0..<height {
+            for x in 0..<width {
+                context.setFillColor(CGColor(red: CGFloat(x) / CGFloat(max(1, width - 1)), green: CGFloat(y) / CGFloat(max(1, height - 1)), blue: 0.5, alpha: 1))
+                context.fill(CGRect(x: x, y: height - 1 - y, width: 1, height: 1)) // CG counts rows from the bottom
+            }
+        }
+        return context.makeImage()
+    }
+
+    static func run() {
+        let runner = ActionRunner(shortcuts: ShortcutCenter())
+
+        // Calculations
+        checkEqual(MacroCalculator.evaluate("12.5 * (3 + 1) / 2"), 25, "a sum with brackets")
+        checkEqual(MacroCalculator.evaluate("2 ^ 3 ^ 2"), 512, "powers work right to left")
+        checkEqual(MacroCalculator.evaluate("17 % 5"), 2, "remainder")
+        checkEqual(MacroCalculator.evaluate("-3 + 5"), 2, "a minus sign at the start")
+        checkEqual(MacroCalculator.evaluate("1,200 × 2"), 2400, "thousands commas and × are understood")
+        check(MacroCalculator.evaluate("2 +") == nil && MacroCalculator.evaluate("4 / 0") == nil && MacroCalculator.evaluate("abc") == nil
+              && MacroCalculator.evaluate("system(\"rm\")") == nil, "anything that isn't a sum is refused (nothing else is ever run)")
+        checkEqual(MacroCalculator.format(42), "42", "whole numbers without .0")
+        checkEqual(MacroCalculator.format(0.1 + 0.2), "0.3", "no long tails")
+        let engine = MacroRun(runner: runner)
+        var calc = MacroStep(kind: .calculate)
+        calc.text = "%Price% * 1.2"
+        calc.name = "Total"
+        AutomationTests.runSteps(engine, [MacroEditorTests.step("Price", "50"), calc])
+        checkEqual(engine.value(of: "Total"), "60", "a Calculate step fills in variables first")
+        var bad = calc
+        bad.text = "%Nothing% * "
+        bad.onFailure = .stop
+        let failing = MacroRun(runner: runner)
+        AutomationTests.runSteps(failing, [bad, MacroEditorTests.step("After", "yes")])
+        check(failing.value(of: "After").isEmpty && failing.failures.first?.contains("isn't a sum") == true, "a sum that doesn't work out is a failure")
+        check(Int(engine.value(of: "PointerX")) != nil && engine.value(of: "Pointer").contains(","), "%PointerX% and %Pointer% are where the pointer is")
+        check(!engine.value(of: "FrontAppID").isEmpty || NSWorkspace.shared.frontmostApplication == nil, "%FrontAppID% is the app in front")
+
+        // Sub-macros
+        let pairs = MacroInputs.parse("Name = Sam\nAmount=12=13\n\nbroken")
+        check(pairs.count == 2 && pairs[0].name == "Name" && pairs[0].value == "Sam" && pairs[1].name == "Amount" && pairs[1].value == "12=13", "inputs are Name=value lines", "\(pairs)")
+        let parent = MacroRun(runner: runner)
+        var received: [String: String] = [:]
+        parent.runMacro = { name, inputs, depth in
+            received = inputs
+            return name == "Double" ? String((Int(inputs["X"] ?? "") ?? 0) * 2) : nil
+        }
+        var sub = MacroStep(kind: .runMacro)
+        sub.text = "Double"
+        sub.text2 = "X=%Start%"
+        sub.name = "Got"
+        AutomationTests.runSteps(parent, [MacroEditorTests.step("Start", "21"), sub])
+        checkEqual(received["X"], "21", "the other macro gets its inputs (variables filled in)")
+        checkEqual(parent.value(of: "Got"), "42", "and its %Result% comes back")
+        let deep = MacroRun(runner: runner)
+        deep.depth = MacroRun.depthLimit
+        deep.runMacro = { _, _, _ in "never" }
+        var tooDeep = sub
+        tooDeep.onFailure = .stop
+        AutomationTests.runSteps(deep, [tooDeep])
+        check(deep.value(of: "Got").isEmpty && deep.failures.first?.contains("deep") == true, "macros running each other stop after 10 deep")
+
+        // Picture filters
+        if let image = picture(4, 2) {
+            let flipped = PictureFilter.flipHorizontal.apply(image)
+            check(flipped.map { ScreenshotTests.pixel($0, 0, 0).r > 200 } == true, "flip left to right: the right edge comes first")
+            let rotated = PictureFilter.rotateRight.apply(image)
+            check(rotated?.width == 2 && rotated?.height == 4, "rotating swaps width and height", "\(rotated?.width ?? 0)×\(rotated?.height ?? 0)")
+            // Turning right, the top-left pixel ends up at the top right.
+            check(rotated.map { ScreenshotTests.pixel($0, 1, 0).r < 50 && ScreenshotTests.pixel($0, 1, 0).g < 50 } == true, "rotate right: the top-left corner goes to the top right")
+            let left = PictureFilter.rotateLeft.apply(image)
+            check(left.map { ScreenshotTests.pixel($0, 0, 3).r < 50 && ScreenshotTests.pixel($0, 0, 3).g < 50 } == true, "rotate left: it goes to the bottom left")
+            checkEqual(PictureFilter.halfSize.apply(image)?.width, 2, "half the size")
+        }
+        if let context = CGContext(data: nil, width: 20, height: 10, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 20, height: 10))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+            context.fill(CGRect(x: 5, y: 2, width: 6, height: 3)) // from the bottom: rows 5–7 from the top
+            if let framed = context.makeImage() {
+                checkEqual(PictureFilter.contentBox(framed), CGRect(x: 5, y: 5, width: 6, height: 3), "trim finds what isn't the plain edge colour")
+                let trimmed = PictureFilter.trim.apply(framed)
+                check(trimmed?.width == 6 && trimmed?.height == 3, "and cuts the plain edges off")
+            }
+        }
+        if let image = picture(30, 12) {
+            PictureFilter.setClipboard(image)
+            var turn = MacroStep(kind: .pictureFilter)
+            turn.picture = .rotateLeft
+            let pictures = MacroRun(runner: runner)
+            AutomationTests.runSteps(pictures, [turn])
+            let after = PictureFilter.clipboardImage()
+            check(after?.width == 12 && after?.height == 30, "a step changes the clipboard's picture", "\(after?.width ?? 0)×\(after?.height ?? 0)")
+        }
+        let words = NSImage(size: NSSize(width: 360, height: 80), flipped: false) { rect in
+            NSColor.white.setFill(); rect.fill()
+            ("TOOLBELT 42" as NSString).draw(at: NSPoint(x: 20, y: 20), withAttributes: [.font: NSFont.boldSystemFont(ofSize: 40), .foregroundColor: NSColor.black])
+            return true
+        }
+        var wordsRect = CGRect(origin: .zero, size: words.size)
+        if let cg = words.cgImage(forProposedRect: &wordsRect, context: nil, hints: nil) {
+            PictureFilter.setClipboard(cg)
+            var read = MacroStep(kind: .pictureFilter)
+            read.picture = .readText
+            read.name = "Seen"
+            let ocr = MacroRun(runner: runner)
+            AutomationTests.runSteps(ocr, [read], timeout: 30)
+            check(ocr.value(of: "Seen").contains("42"), "reading the text in the clipboard's picture", "read “\(ocr.value(of: "Seen"))”")
+        }
+        NSPasteboard.general.clearContents()
+        var none = MacroStep(kind: .pictureFilter)
+        none.onFailure = .stop
+        let empty = MacroRun(runner: runner)
+        AutomationTests.runSteps(empty, [none, MacroEditorTests.step("After", "yes")])
+        check(empty.value(of: "After").isEmpty, "no picture on the clipboard is a failure")
+
+        // The Macros window: recently changed, filters, back and forward, the helper
+        let one = Macro(name: "One"), two = Macro(name: "Two", enabled: false)
+        let now = Date(timeIntervalSince1970: 5_000)
+        var renamed = one
+        renamed.name = "One!"
+        let stamped = MacroStore.stamped([renamed, two], comparedWith: [one, two], now: now)
+        check(stamped[0].modified == now && stamped[1].modified == nil, "a changed macro is stamped; an unchanged one isn't")
+        var again = stamped
+        again[0].modified = Date(timeIntervalSince1970: 1)
+        check(MacroStore.stamped(again, comparedWith: stamped, now: now)[0].modified == Date(timeIntervalSince1970: 1),
+              "only the stamp changing doesn't count as a change")
+        var history = SelectionHistory()
+        let a = UUID(), b = UUID(), c = UUID()
+        history.visit(a); history.visit(b); history.visit(c)
+        checkEqual(history.back(), b, "back")
+        checkEqual(history.back(), a, "back again")
+        checkEqual(history.forward(), b, "forward")
+        history.visit(a)
+        check(!history.canGoForward, "going somewhere new forgets forward")
+        history.remove(b)
+        checkEqual(history.back(), a, "a deleted macro is skipped")
+        let made = NewMacroHelper.make(name: "  Hello ", trigger: .batteryBelow, step: .askInput, group: nil)
+        check(made.name == "Hello" && made.triggers.first?.number == 20 && made.steps.first?.kind == .askInput && made.steps.first?.name == "Answer",
+              "the helper makes a macro with a trigger and a first step, with sensible starting values")
+        check(NewMacroHelper.make(name: "x", trigger: nil, step: .notify, group: nil).triggers.isEmpty, "or with no trigger yet")
+
+        // Palettes for some apps, and the clipboard-history trigger
+        var palette = FloatingMenu(name: "Mail tools")
+        check(!palette.showsFor(app: "com.apple.mail", name: "Mail"), "a floating menu for no app isn't a palette")
+        palette.apps = ["Mail", " "]
+        check(palette.showsFor(app: "com.apple.mail", name: "Mail") && palette.showsFor(app: nil, name: "mail"), "a palette shows for its app (by name)")
+        palette.apps = ["com.apple.Safari"]
+        check(palette.showsFor(app: "com.apple.Safari", name: nil) && !palette.showsFor(app: "com.apple.mail", name: "Mail"), "by bundle ID, and not for other apps")
+        let oldMenu = #"{"id":"6C4C0F64-8D38-4DE7-8E7B-1A9A3E1B2C3D","name":"Old","buttons":[],"x":1,"y":2,"columns":3,"closeAfterClick":false,"atPointer":false,"showAtStart":false}"#
+        check((try? JSONDecoder().decode(FloatingMenu.self, from: Data(oldMenu.utf8)))?.apps == nil, "floating menus saved before still load")
+        check(!MacroTrigger.Kind.clipboardFilter.title.isEmpty && [MacroStep.Kind.calculate, .pictureFilter, .runMacro].allSatisfy { !$0.title.isEmpty },
+              "the new trigger and steps have names")
     }
 }

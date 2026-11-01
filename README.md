@@ -1,9 +1,25 @@
-# Toolbelt — v0.31
+# Toolbelt — v0.32
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.32: calculations, picture filters, sub-macros, palettes and a friendlier Macros window
+- **Calculate** step: sums like `%Price% * 1.2` or `(3 + 4) / 2` (+ − × ÷, % remainder, ^ power, brackets).
+- **New tokens:** %FrontWindow% (the front window's title), %FrontAppID%, %Pointer%, %PointerX%, %PointerY%.
+- **Change the clipboard's picture:** flip, rotate left or right, half size, trim the plain edges, or read the
+  text in it (OCR) into a variable.
+- **Run another macro and wait for it**, giving it inputs (Name=value lines) and getting its %Result% back —
+  build small macros once and reuse them. A macro running itself stops after 10 levels.
+- **Palettes:** a floating menu can be limited to some apps (Settings → Automation → Edit), so it appears
+  only while one of them is in front.
+- **Clipboard history filters:** give a macro the trigger "Clipboard history: run on an item", then right-click
+  an item in the clipboard history → Run Macro on It.
+- **Macros window:** All / Switched on / Recently changed lists, Back and Forward (⌘[ ⌘]), and a New Macro
+  helper that asks what starts the macro and what it does first.
+- **Questions don't hold things up:** while a macro's question or alert waits for you, other macros and
+  shortcuts keep working.
 
 ## What's new in 0.31: many more actions (like Keyboard Maestro's)
 - **Apps:** switch back to the app used before, quit or hide an app, hide every other app, show all.
