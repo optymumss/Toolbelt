@@ -321,7 +321,7 @@ final class MacroRun {
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
         let boxes = fields.map { _ in NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24)) }
-        let grid = NSGridView(views: zip(fields, boxes).map { [NSTextField(labelWithString: $0 + ":"), $1] })
+        let grid = NSGridView(views: zip(fields, boxes).map { [NSTextField(labelWithString: $0 + ":"), $1] as [NSView] })
         grid.rowSpacing = 8
         grid.column(at: 0).xPlacement = .trailing
         grid.frame.size = grid.fittingSize

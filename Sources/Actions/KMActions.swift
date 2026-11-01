@@ -332,7 +332,7 @@ enum KeyboardLayouts {
     static func select(_ wanted: String) -> Bool {
         let all = sources()
         guard let match = best(wanted, in: all.map(name)), let source = all.first(where: { name($0) == match }) else { return false }
-        return TISSelectInputSource(source) == noErr
+        return TISSelectInputSource(source) == 0
     }
 }
 
