@@ -118,10 +118,10 @@ final class Updater: ObservableObject {
     /// For the real-use tests: "update-check", and "update-install-to:/path/Toolbelt.app" (installs there, doesn't quit).
     func registerTestHooks() {
         RealUseHooks.extraStatus["update"] = { Updater.shared.statusText }
-        RealUseHooks.commands["update-check"] = { _ in Task { await Updater.shared.check(userAsked: false) } }
+        RealUseHooks.commands["update-check"] = { _ in Task { @MainActor in await Updater.shared.check(userAsked: false) } }
         RealUseHooks.commands["update-install-to"] = { path in
             guard case .available(let release) = Updater.shared.state else { return }
-            Task { await Updater.shared.install(release, into: URL(fileURLWithPath: path), relaunch: false) }
+            Task { @MainActor in await Updater.shared.install(release, into: URL(fileURLWithPath: path), relaunch: false) }
         }
     }
 
