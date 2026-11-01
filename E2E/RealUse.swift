@@ -464,8 +464,12 @@ final class RealUse: NSObject, NSApplicationDelegate {
         Prefs.activePreset = nil
         let menu = FloatingMenu(name: "Test menu", buttons: [FloatingButton(title: "Press me", actions: [mark("floatbutton")])],
                                 x: 300, y: 250, columns: 1, closeAfterClick: true)
+        // 0.32: a palette that's only there while this test app is in front.
+        var palette = FloatingMenu(name: "Test palette", buttons: [FloatingButton(title: "Hi", actions: [mark("palette")])],
+                                   x: 40, y: 600, columns: 1)
+        palette.apps = ["local.toolbelt.e2e"]
         let item = MenuBarItem(title: "E2E", script: "echo E2E-$((6*7))", every: 5, actions: [mark("menubar")])
-        try JSONEncoder().encode(PanelStore.Saved(menus: [menu], menuBarItems: [item]))
+        try JSONEncoder().encode(PanelStore.Saved(menus: [menu, palette], menuBarItems: [item]))
             .write(to: data.appendingPathComponent("panels.json"), options: .atomic)
         try JSONEncoder().encode(rules).write(to: data.appendingPathComponent("gestures.json"), options: .atomic)
         try JSONEncoder().encode([frontGroup, neverGroup]).write(to: data.appendingPathComponent("trigger-groups.json"), options: .atomic)
@@ -633,7 +637,35 @@ final class RealUse: NSObject, NSApplicationDelegate {
                 pageAddress, shellMark("address-%Address%"),
             ]),
         ]
-        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros + newMacros + actionMacros, groups: []))
+        // 0.32: calculations, sub-macros, tokens, picture filters, clipboard-history filters, questions that don't block.
+        var double = MacroStep(kind: .calculate)
+        double.text = "%X% * 2"
+        double.name = "Result"
+        var callDouble = MacroStep(kind: .runMacro)
+        callDouble.text = "Test double"
+        callDouble.text2 = "X=21"
+        callDouble.name = "Got"
+        var rotate = MacroStep(kind: .pictureFilter)
+        rotate.picture = .rotateRight
+        var readPicture = MacroStep(kind: .pictureFilter)
+        readPicture.picture = .readText
+        readPicture.name = "Seen"
+        var shout = MacroStep(kind: .textFilter)
+        shout.name = "Clipboard"
+        shout.filter = .uppercase
+        var waiting = MacroStep(kind: .askInput)
+        waiting.text = "E2E waiting question"
+        waiting.name = "Reply"
+        let extraMacros = [
+            Macro(name: "Test double", triggers: [MacroTrigger(kind: .calledByMacro)], steps: [double]),
+            Macro(name: "Test sub", steps: [callDouble, shellMark("sub-%Got%")]),
+            Macro(name: "Test tokens", steps: [shellMark("app-%FrontAppID%"), shellMark("win-%FrontWindow%")]),
+            Macro(name: "Test rotate picture", steps: [rotate, shellMark("rotated")]),
+            Macro(name: "Test read picture", steps: [readPicture, shellMark("ocr-%Seen%")]),
+            Macro(name: "Test filter", triggers: [MacroTrigger(kind: .clipboardFilter)], steps: [shout, shellMark("filtered")]),
+            Macro(name: "Test waiting", steps: [waiting, shellMark("waited-%Reply%")]),
+        ]
+        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros + newMacros + actionMacros + extraMacros, groups: []))
             .write(to: data.appendingPathComponent("macros.json"), options: .atomic)
 
         let snippets = [Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt")]
@@ -713,6 +745,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await editorTests()
             await conditionTests()
             await kmActionTests()
+            await kmExtraTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -1323,6 +1356,77 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("browser: click a link, read the address", await waitUntil(10) { self.markers().contains { $0.hasPrefix("address-") && $0.hasSuffix("#next") } },
               "markers: \(markers().filter { $0.hasPrefix("address") })")
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome") { app.terminate() }
+    }
+
+    func clipboardSize() -> CGSize? {
+        guard let image = NSImage(pasteboard: .general) else { return nil }
+        var rect = CGRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil).map { CGSize(width: $0.width, height: $0.height) }
+    }
+
+    func putPictureOnClipboard(_ size: NSSize, _ draw: @escaping (NSRect) -> Void) {
+        let image = NSImage(size: size, flipped: false) { rect in draw(rect); return true }
+        var rect = CGRect(origin: .zero, size: size)
+        guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
+              let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(png, forType: .png)
+    }
+
+    func kmExtraTests() async {
+        say("— 0.32: calculations, sub-macros, tokens, pictures, clipboard filters, palettes, questions that don't block")
+        _ = await runMacro("Test sub")
+        check("a macro runs another with an input and gets its result (21 × 2)", await waitUntil(5) { self.count("sub-42") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("sub") })")
+
+        await focus()
+        _ = await runMacro("Test tokens")
+        check("%FrontAppID% and %FrontWindow%", await waitUntil(5) {
+            self.count("app-local.toolbelt.e2e") == 1 && self.count("win-Toolbelt real-use test") == 1
+        }, "markers: \(markers().filter { $0.hasPrefix("app-") || $0.hasPrefix("win-") })")
+
+        putPictureOnClipboard(NSSize(width: 40, height: 20)) { rect in NSColor.systemOrange.setFill(); rect.fill() }
+        _ = await runMacro("Test rotate picture")
+        let turned = await waitUntil(5) { self.count("rotated") == 1 }
+        check("the clipboard's picture rotated (40×20 → 20×40)", turned && clipboardSize() == CGSize(width: 20, height: 40),
+              "marker \(count("rotated")), size \(clipboardSize().map { "\($0)" } ?? "none")")
+        putPictureOnClipboard(NSSize(width: 420, height: 90)) { rect in
+            NSColor.white.setFill(); rect.fill()
+            ("TOOLBELT 42" as NSString).draw(at: NSPoint(x: 20, y: 20), withAttributes: [.font: NSFont.boldSystemFont(ofSize: 44), .foregroundColor: NSColor.black])
+        }
+        _ = await runMacro("Test read picture")
+        check("the text in the clipboard's picture is read (OCR)", await waitUntil(20) { self.markers().contains { $0.hasPrefix("ocr-") && $0.contains("42") } },
+              "markers: \(markers().filter { $0.hasPrefix("ocr") })")
+
+        command("clipboard-filter:Test filter|hello filter")
+        check("a macro run on a clipboard-history item works on it", await waitUntil(5) {
+            self.count("filtered") == 1 && NSPasteboard.general.string(forType: .string) == "HELLO FILTER"
+        }, "marker \(count("filtered")), clipboard “\(NSPasteboard.general.string(forType: .string) ?? "")”")
+
+        // A palette for this app: shown while it's in front, hidden for another app.
+        await focus()
+        func palette() -> [Double]? { (toolbeltStatus()["floatingMenus"] as? [String: [Double]])?["Test palette"] }
+        check("a palette shows while its app is in front", await waitUntil(5) { palette() != nil }, "menus: \(toolbeltStatus()["floatingMenus"] ?? "none")")
+        _ = run("/usr/bin/open", ["-a", "Finder"])
+        _ = await waitUntil(5) { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" }
+        check("… and goes away when another app is in front", await waitUntil(5) { palette() == nil }, "menus: \(toolbeltStatus()["floatingMenus"] ?? "none")")
+        await focus()
+        check("… and comes back", await waitUntil(5) { palette() != nil }, "menus: \(toolbeltStatus()["floatingMenus"] ?? "none")")
+
+        // A question waiting for an answer doesn't hold other macros up.
+        let webBefore = count("web")
+        _ = await runMacro("Test waiting")
+        let asking = await waitUntil(5) { (self.toolbeltStatus()["waitingPrompts"] as? [String])?.contains("E2E waiting question") == true }
+        check("a question window opens", asking, "status: \(toolbeltStatus()["waitingPrompts"] ?? "none")")
+        _ = await runMacro("Test web")
+        check("… and another macro runs while it waits", await waitUntil(5) { self.count("web") == webBefore + 1 }, "web ran \(count("web") - webBefore) times")
+        toolbelt?.activate()
+        await pause(1.5)
+        await type("ok")
+        await pause(0.3)
+        await press(CGKeyCode(kVK_Return), [])
+        check("… and answering it carries on", await waitUntil(5) { self.count("waited-ok") == 1 }, "markers: \(markers().filter { $0.hasPrefix("waited") })")
+        await focus()
     }
 
     func macEventTests() async {

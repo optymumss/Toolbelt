@@ -23,6 +23,59 @@ struct Macro: Identifiable, Codable, Equatable {
     var groupID: UUID?
     var triggers: [MacroTrigger] = []
     var steps: [MacroStep] = []
+    /// When it was last changed (for "Recently changed" in the Macros window).
+    var modified: Date? = nil
+}
+
+/// Which macros the Macros window lists.
+enum MacroListFilter: String, CaseIterable, Identifiable {
+    case all, on, recent
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .on: return "Switched on"
+        case .recent: return "Recently changed"
+        }
+    }
+}
+
+/// Back and forward through the macros you've looked at, like a web browser.
+struct SelectionHistory: Equatable {
+    private(set) var items: [UUID] = []
+    private(set) var index = -1
+
+    var canGoBack: Bool { index > 0 }
+    var canGoForward: Bool { index < items.count - 1 }
+
+    /// Looking at a macro: going forward from here is forgotten.
+    mutating func visit(_ id: UUID) {
+        guard items.indices.contains(index) ? items[index] != id : true else { return }
+        items = Array(items.prefix(index + 1)) + [id]
+        if items.count > 100 { items.removeFirst() }
+        index = items.count - 1
+    }
+
+    mutating func back() -> UUID? {
+        guard canGoBack else { return nil }
+        index -= 1
+        return items[index]
+    }
+
+    mutating func forward() -> UUID? {
+        guard canGoForward else { return nil }
+        index += 1
+        return items[index]
+    }
+
+    /// A macro that was deleted is taken out.
+    mutating func remove(_ id: UUID) {
+        let before = items.prefix(max(0, index + 1)).filter { $0 == id }.count
+        items.removeAll { $0 == id }
+        index = min(items.count - 1, index - before)
+    }
 }
 
 /// What starts a macro.
@@ -38,6 +91,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case usbConnected, usbDisconnected, bluetoothConnected, bluetoothDisconnected, diskMounted, diskUnmounted
         case idle, activeAgain
         case clipboardChanged, toolbeltStarts, atLogin, windowChanged, windowTitleChanged, calledByMacro
+        case clipboardFilter
 
         var id: String { rawValue }
 
@@ -82,6 +136,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             case .windowChanged: return "Front window changes"
             case .windowTitleChanged: return "Front window's title changes"
             case .calledByMacro: return "Run by another macro"
+            case .clipboardFilter: return "Clipboard history: run on an item"
             }
         }
     }
@@ -101,6 +156,14 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
     var weekdays: [Int] = []
     /// deviceKey: try to keep the device's keys from other apps.
     var exclusive = false
+
+    /// A new trigger of this kind with sensible starting values.
+    static func starting(_ kind: Kind) -> MacroTrigger {
+        var trigger = MacroTrigger(kind: kind, gesture: kind == .gesture ? .touch(.trackpad, .tap, fingers: 3) : nil)
+        if kind == .batteryBelow { trigger.number = 20 }
+        if kind == .idle || kind == .activeAgain { trigger.number = 5 }
+        return trigger
+    }
 
     var summary: String {
         switch kind {
@@ -162,6 +225,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case ifThen, repeatTimes, repeatWhile, stop
         case pauseUntil
         case readFile, browserGet, alert, askFolder, askFile, askSeveral
+        case calculate, pictureFilter, runMacro
 
         var id: String { rawValue }
 
@@ -186,7 +250,15 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .alert: return "Show an alert with buttons"
             case .askFolder: return "Ask me to choose a folder"
             case .askFile: return "Ask me to choose a file"
-            case .askSeveral: return "Ask me several things at once"
+            case .calculate: return "%\(name.isEmpty ? "Result" : name)% = \(text)"
+        case .pictureFilter:
+            let filter = picture ?? .flipHorizontal
+            return filter == .readText ? "Read the clipboard picture's text → %\(name.isEmpty ? "Text" : name)%" : "Clipboard picture: \(filter.title)"
+        case .runMacro: return "Run macro “\(text)”" + (name.isEmpty ? "" : " → %\(name)%")
+        case .askSeveral: return "Ask me several things at once"
+            case .calculate: return "Calculate"
+            case .pictureFilter: return "Change the clipboard's picture"
+            case .runMacro: return "Run another macro and wait for it"
             }
         }
 
@@ -216,6 +288,8 @@ struct MacroStep: Identifiable, Codable, Equatable {
     var timeout: Double? = nil
     /// What happens when the step fails (a script ending with an error, or running out of time).
     var onFailure: FailureMode? = nil
+    /// Change the clipboard's picture: which change.
+    var picture: PictureFilter? = nil
 
     var isOn: Bool { disabled != true }
 
@@ -445,7 +519,47 @@ struct MacroCondition: Codable, Equatable {
 
 @MainActor
 final class MacroStore: ObservableObject {
-    @Published var macros: [Macro] = [] { didSet { if macros != oldValue { save(); onChange?() } } }
+    @Published var macros: [Macro] = [] {
+        didSet {
+            guard macros != oldValue else { return }
+            if !stamping {
+                let stamped = Self.stamped(macros, comparedWith: oldValue, now: Date())
+                if stamped != macros {
+                    stamping = true
+                    macros = stamped
+                    stamping = false
+                    return // the assignment above saved
+                }
+            }
+            save()
+            onChange?()
+        }
+    }
+    private var stamping = false
+
+    /// `macros` with `modified` set to now on each one that's new or changed since `old`.
+    nonisolated static func stamped(_ macros: [Macro], comparedWith old: [Macro], now: Date) -> [Macro] {
+        let before = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return macros.map { macro in
+            var current = macro, previous = before[macro.id]
+            current.modified = nil
+            previous?.modified = nil
+            var result = macro
+            if previous != current { result.modified = now }
+            return result
+        }
+    }
+
+    /// The macros a list shows: all, the ones switched on (and in a switched-on group), or the 20 changed last.
+    func listed(_ filter: MacroListFilter, matching text: String) -> [Macro] {
+        let found = search(text)
+        switch filter {
+        case .all: return found
+        case .on: return found.filter { $0.enabled && (group(of: $0)?.enabled ?? true) }
+        case .recent:
+            return Array(found.filter { $0.modified != nil }.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }.prefix(20))
+        }
+    }
     @Published var groups: [MacroGroup] = [] { didSet { if groups != oldValue { save(); onChange?() } } }
     var onChange: (() -> Void)?
     private let file = SettingsStore.folder.appendingPathComponent("macros.json")

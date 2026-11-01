@@ -144,6 +144,13 @@ struct HistoryView: View {
             Button("Edit Before Pasting…") { model.beginEditing(item) }
         }
         Button(model.stackPosition(of: item) == nil ? "Add to Paste Stack" : "Remove from Paste Stack") { model.toggleStack(item) }
+        if let text = item.text, !ClipboardFilterHooks.names().isEmpty {
+            Menu("Run Macro on It") {
+                ForEach(ClipboardFilterHooks.names(), id: \.self) { name in
+                    Button(name) { ClipboardFilterHooks.run(name, text) }
+                }
+            }
+        }
         Divider()
         Button(item.pinned ? "Unpin" : "Pin") { model.togglePin(item) }
         Menu("Pinboards") {

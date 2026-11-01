@@ -12,12 +12,20 @@ struct MacrosView: View {
     @State private var applyingHistory = false
     @State private var showUsed = false
     @State private var recording = false
+    @State private var listFilter: MacroListFilter = .all
+    @State private var visited = SelectionHistory()
+    @State private var goingBackOrForward = false
+    @State private var showHelper = false
 
     var body: some View {
         content.onAppear {
             if let wanted = module.selectOnOpen {
                 selection = wanted
                 module.selectOnOpen = nil
+            }
+            if module.helperOnOpen {
+                module.helperOnOpen = false
+                showHelper = true
             }
         }
     }
@@ -41,17 +49,35 @@ struct MacrosView: View {
                 }
             }
             .searchable(text: $search, placement: .sidebar, prompt: "Search macros")
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+            .safeAreaInset(edge: .top) {
+                Picker("Show", selection: $listFilter) {
+                    ForEach(MacroListFilter.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 280)
             .toolbar {
                 ToolbarItem {
-                    Button { newMacro() } label: { Label("New Macro", systemImage: "plus") }
-                        .help("New macro")
+                    Menu {
+                        Button("New Empty Macro", action: newMacro)
+                        Button("New Macro Helper…") { showHelper = true }
+                    } label: { Label("New Macro", systemImage: "plus") } primaryAction: { showHelper = true }
+                    .help("New macro: click for the helper, or hold for an empty one")
                 }
             }
         } detail: {
             detail
         }
         .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button { go(visited.back()) } label: { Label("Back", systemImage: "chevron.left") }
+                    .disabled(!visited.canGoBack).keyboardShortcut("[", modifiers: .command).help("The macro you looked at before (⌘[)")
+                Button { go(visited.forward()) } label: { Label("Forward", systemImage: "chevron.right") }
+                    .disabled(!visited.canGoForward).keyboardShortcut("]", modifiers: .command).help("Forward again (⌘])")
+            }
             ToolbarItemGroup {
                 Button { undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
                     .disabled(!history.canUndo).keyboardShortcut("z", modifiers: .command).help("Undo the last change (⌘Z)")
@@ -75,6 +101,18 @@ struct MacrosView: View {
             if applyingHistory { applyingHistory = false } else { history.record(old) }
         }
         .sheet(isPresented: $showUsed) { UsedShortcutsView(entries: module.usedShortcuts()) { showUsed = false } }
+        .sheet(isPresented: $showHelper) {
+            NewMacroHelper(groups: store.groups) { macro in
+                showHelper = false
+                guard let macro else { return }
+                store.macros.append(macro)
+                selection = macro.id
+                search = ""
+            }
+        }
+        .onChange(of: selection) { _, id in
+            if goingBackOrForward { goingBackOrForward = false } else if let id { visited.visit(id) }
+        }
     }
 
     @ViewBuilder
@@ -160,8 +198,15 @@ struct MacrosView: View {
         let macros: [Macro]
     }
 
+    private func go(_ id: UUID?) {
+        guard let id, store.macros.contains(where: { $0.id == id }) else { return }
+        goingBackOrForward = true
+        selection = id
+    }
+
     private var sections: [MacroSection] {
-        let found = store.search(search)
+        let found = store.listed(listFilter, matching: search)
+        if listFilter == .recent { return found.isEmpty ? [] : [MacroSection(title: "Recently changed", macros: found)] }
         var result: [MacroSection] = []
         let loose = found.filter { store.group(of: $0) == nil }
         if !loose.isEmpty { result.append(MacroSection(title: "Macros", macros: loose)) }
@@ -248,12 +293,7 @@ struct MacroDetail: View {
                 }
                 Menu("Add Trigger") {
                     ForEach(MacroTrigger.Kind.allCases) { kind in
-                        Button(kind.title) {
-                            var trigger = MacroTrigger(kind: kind, gesture: kind == .gesture ? .touch(.trackpad, .tap, fingers: 3) : nil)
-                            if kind == .batteryBelow { trigger.number = 20 }
-                            if kind == .idle || kind == .activeAgain { trigger.number = 5 }
-                            macro.triggers.append(trigger)
-                        }
+                        Button(kind.title) { macro.triggers.append(.starting(kind)) }
                     }
                 }
                 .fixedSize()
@@ -376,6 +416,9 @@ struct TriggerEditor: View {
             Text("Each time Toolbelt opens, including at login if it opens then.").font(.caption).foregroundStyle(.secondary)
         case .atLogin:
             Text("When Toolbelt opens within three minutes of logging in (turn on “Open Toolbelt when you log in” in General).").font(.caption).foregroundStyle(.secondary)
+        case .clipboardFilter:
+            Text("Offered in the clipboard history's menu (right-click an item → Run Macro on It). The item is put on the clipboard and is in %Trigger%.")
+                .font(.caption).foregroundStyle(.secondary)
         case .calledByMacro:
             Text("Marks a macro meant to be run by others: use a “Do something → Run a macro” step.").font(.caption).foregroundStyle(.secondary)
         }
@@ -438,6 +481,9 @@ struct StepListEditor: View {
         case .askFolder: step.text = "Save where?"; step.name = "Folder"
         case .askFile: step.text = "Which file?"; step.name = "File"
         case .askSeveral: step.text = "Meeting"; step.text2 = "Name\nTime\nPlace"
+        case .calculate: step.text = "%Price% * 1.2"; step.name = "Total"
+        case .pictureFilter: step.picture = .rotateRight
+        case .runMacro: step.text2 = "Name=%Name%"; step.name = "Answer"
         default: break
         }
         return step
@@ -589,6 +635,21 @@ struct StepEditor: View {
         case .repeatWhile:
             ConditionEditor(condition: $step.condition)
             AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
+        case .calculate:
+            TextField("Sum, e.g. %Price% * 1.2 or (3 + 4) / 2", text: $step.text)
+            TextField("Keep the answer in variable", text: $step.name)
+            Text("+ − × ÷, % (remainder), ^ (power) and brackets.").font(.caption).foregroundStyle(.secondary)
+        case .pictureFilter:
+            Picker("Change", selection: Binding(get: { step.picture ?? .flipHorizontal }, set: { step.picture = $0 })) {
+                ForEach(PictureFilter.allCases) { Text($0.title).tag($0) }
+            }
+            if step.picture == .readText { TextField("Keep the text in variable", text: $step.name) }
+            Text("Works on the picture on the clipboard; the changed picture goes back on the clipboard.").font(.caption).foregroundStyle(.secondary)
+        case .runMacro:
+            TextField("Macro name", text: $step.text)
+            TextEditor(text: $step.text2).frame(minHeight: 36, maxHeight: 70)
+            Text("Inputs, one per line: Name=value (variables work). The other macro's %Result% comes back.").font(.caption).foregroundStyle(.secondary)
+            TextField("Keep its result in variable", text: $step.name)
         case .readFile:
             TextField("File, e.g. ~/Desktop/notes.txt or %Trigger%", text: $step.text)
             TextField("Keep the text in variable", text: $step.name)
@@ -753,5 +814,50 @@ struct WebServerSettings: View {
     /// Saves the setting, then restarts the server to match.
     private func binding<T>(_ inner: Binding<T>) -> Binding<T> {
         Binding(get: { inner.wrappedValue }, set: { inner.wrappedValue = $0; module.updateWebServer() })
+    }
+}
+
+/// "New Macro Helper…": asks what should start the macro and what it should do first.
+struct NewMacroHelper: View {
+    let groups: [MacroGroup]
+    let done: (Macro?) -> Void
+    @State private var name = "My Macro"
+    @State private var trigger: MacroTrigger.Kind? = .hotKey
+    @State private var step: MacroStep.Kind = .action
+    @State private var group: UUID?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New Macro").font(.title2.weight(.semibold))
+            Form {
+                TextField("Name", text: $name)
+                Picker("Starts when", selection: $trigger) {
+                    Text("Nothing yet (run it from the list)").tag(MacroTrigger.Kind?.none)
+                    ForEach(MacroTrigger.Kind.allCases) { Text($0.title).tag(MacroTrigger.Kind?.some($0)) }
+                }
+                Picker("First step", selection: $step) {
+                    ForEach(MacroStep.Kind.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Group", selection: $group) {
+                    Text("None").tag(UUID?.none)
+                    ForEach(groups) { Text($0.name).tag(UUID?.some($0.id)) }
+                }
+            }
+            Text("You can change everything afterwards, and add more triggers and steps.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { done(nil) }.keyboardShortcut(.cancelAction)
+                Button("Create") { done(Self.make(name: name, trigger: trigger, step: step, group: group)) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    static func make(name: String, trigger: MacroTrigger.Kind?, step: MacroStep.Kind, group: UUID?) -> Macro {
+        Macro(name: name.trimmingCharacters(in: .whitespaces), groupID: group,
+              triggers: trigger.map { [MacroTrigger.starting($0)] } ?? [], steps: [StepListEditor.newStep(step)])
     }
 }

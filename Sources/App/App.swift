@@ -126,6 +126,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-screenshots": settings.show(tab: .module(.screenshots))
             case "settings-automation": settings.show(tab: .module(.automation))
+            case "macro-helper":
+                // The New Macro helper, over the Macros window.
+                guard let automation = modules.module(.automation) as? AutomationModule else { break }
+                automation.helperOnOpen = true
+                automation.open()
+            case "prompt":
+                // "Ask me several things at once", as a macro shows it.
+                Task { _ = await PromptPanel.ask("Meeting invitation", fields: ["Name", "Time", "Place"]) }
             case "large-text":
                 // "Show text large", as a macro shows it.
                 LargeText.show("Back in 10 minutes")

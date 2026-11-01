@@ -8,14 +8,19 @@ final class MacroRun {
     private(set) var variables: [String: String] = [:]
     let runner: ActionRunner
     /// Asks for text or a choice; the tests answer instead of a person.
-    var ask: (_ prompt: String, _ options: [String]?) -> String? = MacroRun.askPerson
+    var ask: (_ prompt: String, _ options: [String]?) async -> String? = MacroRun.askPerson
     var notify: (_ title: String, _ message: String) -> Void = MacroRun.postNotification
     /// An alert with buttons: gives back the button clicked.
-    var alert: (_ message: String, _ buttons: [String]) -> String = MacroRun.showAlert
+    var alert: (_ message: String, _ buttons: [String]) async -> String = MacroRun.showAlert
     /// Choosing a folder (true) or a file: its path, or nil if cancelled.
-    var choosePath: (_ prompt: String, _ folder: Bool) -> String? = MacroRun.askForPath
+    var choosePath: (_ prompt: String, _ folder: Bool) async -> String? = MacroRun.askForPath
     /// Several questions in one window: the answers in order, or nil if cancelled.
-    var askMany: (_ prompt: String, _ fields: [String]) -> [String]? = MacroRun.askSeveral
+    var askMany: (_ prompt: String, _ fields: [String]) async -> [String]? = MacroRun.askSeveral
+    /// Runs another macro by name with these variables and gives back its %Result% (nil: no such macro).
+    var runMacro: (_ name: String, _ inputs: [String: String], _ depth: Int) async -> String? = { _, _, _ in nil }
+    /// How many macros deep this run is (a macro running itself stops at 10).
+    var depth = 0
+    static let depthLimit = 10
     /// What conditions ask about the Mac; the tests give their own answers.
     var world: ConditionWorld = .live
     /// How often "Pause until" looks again (screen tests look less often: each look takes a screenshot).
@@ -40,6 +45,11 @@ final class MacroRun {
         case "frontapp": return NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
         case "date": return Date().formatted(date: .abbreviated, time: .omitted)
         case "time": return Date().formatted(date: .omitted, time: .shortened)
+        case "frontappid": return NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        case "frontwindow": return FrontWindow.title() ?? ""
+        case "pointer": return "\(Int(MouseDriver.pointer.x)),\(Int(MouseDriver.pointer.y))"
+        case "pointerx": return String(Int(MouseDriver.pointer.x))
+        case "pointery": return String(Int(MouseDriver.pointer.y))
         default: return variables[name] ?? ""
         }
     }
@@ -144,11 +154,11 @@ final class MacroRun {
                 set(name, result)
             }
         case .askInput:
-            guard let answer = ask(expand(step.text), nil) else { stopped = true; return }
+            guard let answer = await ask(expand(step.text), nil) else { stopped = true; return }
             set(step.name, answer)
         case .pickFromList:
             let options = expand(step.text2).components(separatedBy: .newlines).filter { !$0.isEmpty }
-            guard let choice = ask(expand(step.text), options) else { stopped = true; return }
+            guard let choice = await ask(expand(step.text), options) else { stopped = true; return }
             set(step.name, choice)
         case .notify:
             notify(expand(step.text2.isEmpty ? "Toolbelt" : step.text2), expand(step.text))
@@ -187,14 +197,46 @@ final class MacroRun {
             if result.status != 0 { failed(step, "the browser didn't answer (is “Allow JavaScript from Apple Events” on?)") }
         case .alert:
             let buttons = Self.fields(expand(step.text2))
-            set(step.name, alert(expand(step.text), buttons.isEmpty ? ["OK"] : buttons))
+            set(step.name, await alert(expand(step.text), buttons.isEmpty ? ["OK"] : buttons))
         case .askFolder, .askFile:
-            guard let path = choosePath(expand(step.text), step.kind == .askFolder) else { stopped = true; return }
+            guard let path = await choosePath(expand(step.text), step.kind == .askFolder) else { stopped = true; return }
             set(step.name, path)
         case .askSeveral:
             let fields = Self.fields(step.text2)
-            guard let answers = askMany(expand(step.text), fields) else { stopped = true; return }
+            guard let answers = await askMany(expand(step.text), fields) else { stopped = true; return }
             for (field, answer) in zip(fields, answers) { set(Self.variableName(for: field), answer) }
+        case .calculate:
+            let sum = expand(step.text)
+            guard let value = Calculator.evaluate(sum) else {
+                failed(step, "“\(sum)” isn't a sum Toolbelt can work out")
+                return
+            }
+            set(step.name.isEmpty ? "Result" : step.name, Calculator.format(value))
+        case .pictureFilter:
+            guard let image = PictureFilter.clipboardImage() else {
+                failed(step, "there's no picture on the clipboard")
+                return
+            }
+            let filter = step.picture ?? .flipHorizontal
+            if filter == .readText {
+                set(step.name.isEmpty ? "Text" : step.name, await PictureFilter.readText(image))
+            } else if let changed = filter.apply(image) {
+                PictureFilter.setClipboard(changed)
+            } else {
+                failed(step, "the picture couldn't be changed")
+            }
+        case .runMacro:
+            guard depth < Self.depthLimit else {
+                failed(step, "macros ran each other more than \(Self.depthLimit) deep")
+                return
+            }
+            var inputs: [String: String] = [:]
+            for (name, value) in MacroInputs.parse(step.text2) { inputs[name] = expand(value) }
+            guard let result = await runMacro(expand(step.text), inputs, depth + 1) else {
+                failed(step, "there's no macro called “\(expand(step.text))”")
+                return
+            }
+            if !step.name.isEmpty { set(step.name, result) }
         case .pauseUntil:
             let limit = step.timeout ?? 60
             let start = Date()
@@ -277,86 +319,30 @@ final class MacroRun {
     // MARK: Asking and telling
 
     /// A small window asking for text, or offering a list to pick from. nil if cancelled (which stops the macro).
-    static func askPerson(_ prompt: String, _ options: [String]?) -> String? {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = prompt.isEmpty ? "Toolbelt" : prompt
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        if let options {
-            let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26))
-            popup.addItems(withTitles: options)
-            alert.accessoryView = popup
-            return alert.runModal() == .alertFirstButtonReturn ? popup.titleOfSelectedItem : nil
-        }
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        return Self.run(alert, focusing: field) == .alertFirstButtonReturn ? field.stringValue : nil
+    /// These windows don't hold other macros up while they wait.
+    static func askPerson(_ prompt: String, _ options: [String]?) async -> String? {
+        guard let answer = await PromptPanel.ask(prompt, fields: options == nil ? [""] : [], options: options) else { return nil }
+        return options == nil ? answer.texts.first : answer.choice
     }
 
-    static func showAlert(_ message: String, _ buttons: [String]) -> String {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = message.isEmpty ? "Toolbelt" : message
-        for button in buttons { alert.addButton(withTitle: button) }
-        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        return buttons.indices.contains(index) ? buttons[index] : (buttons.first ?? "OK")
+    static func showAlert(_ message: String, _ buttons: [String]) async -> String {
+        await PromptPanel.ask(message, buttons: buttons)?.button ?? ""
     }
 
-    /// Runs an alert with the cursor in `field`: the alert chooses its own first responder whenever its window
-    /// becomes key (as it opens, and again when you switch to it), so it's put back each time.
-    private static func run(_ alert: NSAlert, focusing field: NSTextField) -> NSApplication.ModalResponse {
-        // Laid out first, so the box is in the window and can be its starting point.
-        alert.layout()
-        let window = alert.window
-        window.initialFirstResponder = field
-        // Moved there a moment after AppKit's own changes (as it opens, and whenever it becomes key again).
-        let focusSoon = {
-            let timer = Timer(timeInterval: 0.1, repeats: false) { _ in
-                MainActor.assumeIsolated { _ = window.makeFirstResponder(field) }
-            }
-            RunLoop.current.add(timer, forMode: .modalPanel)
-        }
-        let observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: nil) { _ in
-            focusSoon()
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        focusSoon()
-        return alert.runModal()
-    }
-
-    static func askForPath(_ prompt: String, _ folder: Bool) -> String? {
+    static func askForPath(_ prompt: String, _ folder: Bool) async -> String? {
         NSApp.activate()
         let panel = NSOpenPanel()
         panel.message = prompt
         panel.canChooseDirectories = folder
         panel.canChooseFiles = !folder
         panel.canCreateDirectories = folder
-        return panel.runModal() == .OK ? panel.url?.path : nil
+        // begin, not runModal: other macros keep working while it's open.
+        let response = await withCheckedContinuation { continuation in panel.begin { continuation.resume(returning: $0) } }
+        return response == .OK ? panel.url?.path : nil
     }
 
-    static func askSeveral(_ prompt: String, _ fields: [String]) -> [String]? {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = prompt.isEmpty ? "Toolbelt" : prompt
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let boxes = fields.map { _ in NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24)) }
-        let grid = NSGridView(views: zip(fields, boxes).map { [NSTextField(labelWithString: $0 + ":"), $1] as [NSView] })
-        grid.rowSpacing = 8
-        grid.column(at: 0).xPlacement = .trailing
-        grid.frame.size = grid.fittingSize
-        alert.accessoryView = grid
-        // Tab and ⇧Tab go from box to box (the alert's own key order doesn't follow the boxes).
-        let order = TabOrder(boxes)
-        boxes.forEach { $0.delegate = order }
-        alert.window.initialFirstResponder = boxes.first
-        // The alert picks its own first responder as it opens: put the cursor in the first box once it's showing.
-        guard let first = boxes.first else { return alert.runModal() == .alertFirstButtonReturn ? [] : nil }
-        let answered = Self.run(alert, focusing: first) == .alertFirstButtonReturn
-        withExtendedLifetime(order) {}
-        return answered ? boxes.map(\.stringValue) : nil
+    static func askSeveral(_ prompt: String, _ fields: [String]) async -> [String]? {
+        await PromptPanel.ask(prompt, fields: fields)?.texts
     }
 
     static func postNotification(_ title: String, _ message: String) {
@@ -366,23 +352,5 @@ final class MacroRun {
             return
         }
         DownloadNotifier.post(id: UUID().uuidString, title: title, body: message, path: nil)
-    }
-}
-
-/// Moves between the boxes of "Ask me several things at once" with Tab and ⇧Tab.
-final class TabOrder: NSObject, NSTextFieldDelegate {
-    let boxes: [NSTextField]
-
-    init(_ boxes: [NSTextField]) {
-        self.boxes = boxes
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard selector == #selector(NSResponder.insertTab(_:)) || selector == #selector(NSResponder.insertBacktab(_:)),
-              let index = boxes.firstIndex(where: { $0 === control }), !boxes.isEmpty else { return false }
-        let step = selector == #selector(NSResponder.insertTab(_:)) ? 1 : -1
-        let next = boxes[(index + step + boxes.count) % boxes.count]
-        control.window?.makeFirstResponder(next)
-        return true
     }
 }
