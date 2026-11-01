@@ -161,6 +161,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case action, script, pause, setVariable, setClipboard, textFilter, askInput, pickFromList, notify
         case ifThen, repeatTimes, repeatWhile, stop
         case pauseUntil
+        case readFile, browserGet, alert, askFolder, askFile, askSeveral
 
         var id: String { rawValue }
 
@@ -180,6 +181,12 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .repeatWhile: return "Repeat while…"
             case .stop: return "Stop the macro"
             case .pauseUntil: return "Pause until…"
+            case .readFile: return "Read a text file"
+            case .browserGet: return "Get the page's address, title or text (Safari / Chrome)"
+            case .alert: return "Show an alert with buttons"
+            case .askFolder: return "Ask me to choose a folder"
+            case .askFile: return "Ask me to choose a file"
+            case .askSeveral: return "Ask me several things at once"
             }
         }
 
@@ -229,6 +236,12 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case .repeatWhile: return "Repeat while \(condition.summary)"
         case .stop: return "Stop"
         case .pauseUntil: return "Pause until \(condition.summary)"
+        case .readFile: return "Read \((text as NSString).lastPathComponent) → %\(name)%"
+        case .browserGet: return "Get the page's \(BrowserPart(rawValue: text2)?.title ?? "address") → %\(name)%"
+        case .alert: return "Alert “\(text.prefix(30))” → %\(name)%"
+        case .askFolder: return "Choose a folder → %\(name)%"
+        case .askFile: return "Choose a file → %\(name)%"
+        case .askSeveral: return "Ask \(MacroRun.fields(text2).map { "%\(MacroRun.variableName(for: $0))%" }.joined(separator: ", "))"
         }
     }
 }

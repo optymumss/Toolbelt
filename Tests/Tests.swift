@@ -58,6 +58,7 @@ enum ToolbeltTests {
         t.group("Presets, floating menus and menu-bar items", PresetAndMenuTests.run)
         t.group("Macro editor: recording, switched-off steps, time limits, failures, copy/paste, undo, export", MacroEditorTests.run)
         t.group("Macro triggers and conditions: clipboard, start, windows, pause until, keys, colours, pictures", MacroConditionTests.run)
+        t.group("Macro actions: apps, windows, files, browser, download, speech, sounds, volume, layouts, prompts", KMActionTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4348,5 +4349,132 @@ enum MacroConditionTests {
         check(triggers.allSatisfy { !$0.title.isEmpty } && MacroCondition.Test.allCases.allSatisfy { !$0.title.isEmpty }, "everything has a name")
         let old = #"{"left":"%Clipboard%","test":"contains","right":"x"}"#
         checkEqual((try? JSONDecoder().decode(MacroCondition.self, from: Data(old.utf8)))?.test, .contains, "conditions saved by 0.29 still load")
+    }
+}
+
+@MainActor
+enum KMActionTests {
+    static func run() {
+        let runner = ActionRunner(shortcuts: ShortcutCenter())
+
+        // The browser
+        checkEqual(BrowserScript.browser(named: "Google Chrome", front: "Safari", running: []), "Google Chrome", "the browser named is used")
+        checkEqual(BrowserScript.browser(named: nil, front: "Brave Browser", running: ["Safari"]), "Brave Browser", "else the browser in front")
+        checkEqual(BrowserScript.browser(named: "", front: "Mail", running: ["Notes", "Google Chrome"]), "Google Chrome", "else one that's open")
+        checkEqual(BrowserScript.browser(named: nil, front: "Mail", running: []), "Safari", "else Safari")
+        checkEqual(BrowserScript.quoted("say \"hi\" \\ bye"), "\"say \\\"hi\\\" \\\\ bye\"", "quotes and backslashes are escaped for AppleScript")
+        checkEqual(BrowserScript.jsQuoted("it's \"x\""), "\"it's \\\"x\\\"\"", "and for JavaScript")
+        check(BrowserScript.run(js: "1", in: "Google Chrome").contains("execute active tab of front window javascript"), "Chrome runs JavaScript in the active tab")
+        check(BrowserScript.run(js: "1", in: "Safari").contains("do JavaScript"), "Safari too, its own way")
+        check(BrowserScript.openTab("https://example.com", in: "Safari").contains("make new tab with properties {URL:\"https://example.com\"}"), "opening a tab")
+        let fill = BrowserScript.javaScript(.fillField, "email=me@example.com") ?? ""
+        check(fill.contains("\"email\"") && fill.contains("\"me@example.com\"") && fill.contains("dispatchEvent"), "filling a field finds it by name and tells the page", fill)
+        check(BrowserScript.javaScript(.clickLink, "Sign In")?.contains("\"sign in\"") == true, "links are found by their text, ignoring capitals")
+        check(BrowserScript.javaScript(.openTab, "x") == nil, "opening a tab isn't JavaScript")
+        checkEqual(BrowserPart.title.javaScript(""), "document.title", "reading the page's title")
+
+        // Windows, sounds, layouts, volume
+        checkEqual(WindowFrame.parse("0, 25, 960, 1000"), CGRect(x: 0, y: 25, width: 960, height: 1000), "a window frame written x,y,w,h")
+        check(WindowFrame.parse("1,2,3") == nil && WindowFrame.parse("0,0,0,10") == nil, "anything else isn't a frame")
+        checkEqual(SystemSounds.url(for: "Glass")?.path, "/System/Library/Sounds/Glass.aiff", "a sound by its name")
+        check(SystemSounds.names.contains("Glass"), "macOS's sounds are listed")
+        checkEqual(KeyboardLayouts.best("abc", in: ["U.S.", "ABC", "ABC – Extended"]), "ABC", "a layout by its exact name first")
+        checkEqual(KeyboardLayouts.best("extended", in: ["U.S.", "ABC – Extended"]), "ABC – Extended", "else one containing it")
+        check(KeyboardLayouts.best("", in: ["U.S."]) == nil, "no name, no layout")
+        check(!KeyboardLayouts.names.isEmpty, "this Mac's layouts are listed", "none")
+        checkEqual(MoreMacroActions.volume("40%"), 40, "volume as 40%")
+        checkEqual(MoreMacroActions.volume("150"), 100, "at most 100")
+        check(MoreMacroActions.volume("loud") == nil, "words aren't a volume")
+        check(MoreMacroActions.loginWindowScript(.restart)?.contains("aevtrrst") == true
+              && MoreMacroActions.loginWindowScript(.shutDown)?.contains("aevtrsdn") == true
+              && MoreMacroActions.loginWindowScript(.logOut)?.contains("aevtlogo") == true, "restart, shut down and log out ask first (macOS's own window)")
+        check([SystemControl.restart, .volumeUpSmall, .brightnessDownSmall].allSatisfy { !$0.title.isEmpty }, "the new Mac controls have names")
+
+        // The mouse, from the front window or a picture
+        let fromWindow = MouseCommand(text: "click window 30,40")
+        check(fromWindow.origin == .window && fromWindow.at == CGPoint(x: 30, y: 40), "a click counted from the front window")
+        checkEqual(MouseCommand(text: fromWindow.text), fromWindow, "and saved the same way")
+        let onPicture = MouseCommand(text: "doubleClick image /Users/me/My Pictures/OK button.png")
+        check(onPicture.origin == .image && onPicture.image == "/Users/me/My Pictures/OK button.png" && onPicture.kind == .doubleClick,
+              "a click on a picture (its path can have spaces)", "\(onPicture)")
+        checkEqual(MouseCommand(text: onPicture.text), onPicture, "and saved the same way")
+        check(onPicture.summary.contains("OK button.png"), "in plain words", onPicture.summary)
+        checkEqual(MouseCommand(text: "rightClick 5,6").origin, .screen, "older mouse actions still count from the screen")
+
+        // Files
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("tb-files-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let report = folder.appendingPathComponent("report.txt").path
+        check(FileActions.perform(.write, path: report, second: "one"), "write text to a file")
+        check(FileActions.perform(.append, path: report, second: " two"), "add to its end")
+        checkEqual(try? String(contentsOfFile: report, encoding: .utf8), "one two", "the file has both")
+        let into = folder.appendingPathComponent("Copies").path
+        check(FileActions.perform(.copy, path: report, second: into) && FileActions.perform(.copy, path: report, second: into), "copy it into a folder, twice")
+        check(FileManager.default.fileExists(atPath: into + "/report.txt") && FileManager.default.fileExists(atPath: into + "/report 2.txt"),
+              "the second copy gets a free name (report 2.txt)")
+        check(FileActions.perform(.rename, path: report, second: "final.txt") && FileManager.default.fileExists(atPath: folder.path + "/final.txt"), "rename it")
+        check(!FileActions.perform(.rename, path: folder.path + "/final.txt", second: "a/b"), "a name with / isn't allowed")
+        check(FileActions.perform(.move, path: folder.path + "/final.txt", second: folder.path + "/Moved")
+              && FileManager.default.fileExists(atPath: folder.path + "/Moved/final.txt"), "move it into a folder")
+        check(FileActions.perform(.trash, path: folder.path + "/Moved/final.txt") && !FileManager.default.fileExists(atPath: folder.path + "/Moved/final.txt"),
+              "move it to the Trash")
+        check(!FileActions.perform(.copy, path: folder.path + "/missing.txt", second: into), "a file that isn't there can't be copied")
+        checkEqual(FileActions.freeURL(for: "a.pdf", in: URL(fileURLWithPath: "/x"), exists: { $0 != "/x/a 3.pdf" }).path, "/x/a 3.pdf", "free names count up")
+
+        // Saving
+        var action = MacroAction(kind: .file, value: "~/a.txt")
+        action.option = FileCommand.move.rawValue
+        action.value2 = "~/Archive"
+        checkEqual(try? JSONDecoder().decode(MacroAction.self, from: JSONEncoder().encode(action)), action, "new actions are saved and read back")
+        checkEqual((try? JSONDecoder().decode(MacroAction.self, from: Data(#"{"kind":"shell","value":"ls","keyCode":0,"modifiers":0}"#.utf8)))?.value, "ls",
+                   "actions saved by earlier versions still load")
+        checkEqual(action.summary, "Move a.txt into ~/Archive", "in plain words")
+        check(MoreMacroActions.kinds.allSatisfy { !$0.title.isEmpty && !MacroAction(kind: $0).summary.isEmpty }, "every new action has a name and a summary")
+
+        // Macro steps: they wait for actions, read files, alerts and questions
+        let engine = MacroRun(runner: runner)
+        engine.alert = { message, buttons in buttons.last ?? "" }
+        engine.choosePath = { prompt, folder in folder ? "/Users/me/Projects" : nil }
+        engine.askMany = { _, fields in fields.map { "answer to " + $0 } }
+        var write = MacroStep(kind: .action)
+        write.action = MacroAction(kind: .file, value: folder.path + "/%Name%.txt", option: FileCommand.write.rawValue, value2: "Hello %Name%")
+        var read = MacroStep(kind: .readFile)
+        read.text = folder.path + "/%Name%.txt"
+        read.name = "Read"
+        var alert = MacroStep(kind: .alert)
+        alert.text = "Go?"
+        alert.text2 = "Yes\nNo"
+        alert.name = "Button"
+        var several = MacroStep(kind: .askSeveral)
+        several.text2 = "Meeting time\nPlace"
+        var chooseFolder = MacroStep(kind: .askFolder)
+        chooseFolder.name = "Where"
+        AutomationTests.runSteps(engine, [MacroEditorTests.step("Name", "notes"), write, read, alert, several, chooseFolder])
+        checkEqual(engine.value(of: "Read"), "Hello notes", "a file written by one step is read by the next (actions are waited for)")
+        checkEqual(engine.value(of: "Button"), "No", "the alert's button goes into a variable")
+        checkEqual(engine.value(of: "Meeting_time"), "answer to Meeting time", "several questions: each answer in its own variable")
+        checkEqual(engine.value(of: "Place"), "answer to Place", "… every one")
+        checkEqual(engine.value(of: "Where"), "/Users/me/Projects", "a chosen folder")
+        checkEqual(MacroRun.variableName(for: " Meeting time! "), "Meeting_time", "question names become variable names")
+
+        let cancelled = MacroRun(runner: runner)
+        cancelled.choosePath = { _, _ in nil }
+        var chooseFile = MacroStep(kind: .askFile)
+        chooseFile.name = "File"
+        AutomationTests.runSteps(cancelled, [chooseFile, MacroEditorTests.step("After", "yes")])
+        checkEqual(cancelled.value(of: "After"), "", "cancelling the choice stops the macro")
+
+        let failing = MacroRun(runner: runner)
+        var missing = MacroStep(kind: .action)
+        missing.action = MacroAction(kind: .file, value: folder.path + "/nothing.txt", option: FileCommand.trash.rawValue)
+        missing.onFailure = .stop
+        AutomationTests.runSteps(failing, [missing, MacroEditorTests.step("After", "yes")])
+        checkEqual(failing.value(of: "After"), "", "an action that doesn't work is a failure (here: stop)")
+        check(failing.failures.first?.contains("didn't work") == true, "and says so", "\(failing.failures)")
+
+        let saved = try? JSONDecoder().decode(MacroStep.self, from: JSONEncoder().encode(several))
+        checkEqual(saved, several, "the new steps are saved and read back")
+        checkEqual(several.summary, "Ask %Meeting_time%, %Place%", "in plain words")
     }
 }

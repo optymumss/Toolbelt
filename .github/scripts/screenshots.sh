@@ -120,6 +120,7 @@ SCREENS=(
     "trigger-keys=trigger-keys"
     "floating-menu=floating-menu"
     "macros=macros"
+    "large-text=large-text"
     "settings-automation=settings-automation"
     "launcher-switcher=launcher-switcher"
     "notes-demo=notes-demo"

@@ -11,6 +11,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case setClipboard, pasteNamed, macro, shell, appleScript, javaScript, showHUD
         case mouse, webSearch, runShortcut
         case floatingMenu, switchPreset
+        case app, window, file, browser, download, speak, playSound, largeText, setVolume, desktopPicture, keyboardLayout
 
         var id: String { rawValue }
 
@@ -37,6 +38,17 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .runShortcut: return "Run a shortcut from the Shortcuts app"
             case .floatingMenu: return "Show / hide a floating menu"
             case .switchPreset: return "Switch to a preset of triggers"
+            case .app: return "Apps: switch back, quit, hide…"
+            case .window: return "Front window: move, resize, minimise, close all"
+            case .file: return "Files: copy, move, rename, trash, write"
+            case .browser: return "Safari / Chrome: open, click, fill in, JavaScript"
+            case .download: return "Download a file"
+            case .speak: return "Say text out loud"
+            case .playSound: return "Play a sound"
+            case .largeText: return "Show text large"
+            case .setVolume: return "Set the volume"
+            case .desktopPicture: return "Change the desktop picture"
+            case .keyboardLayout: return "Switch keyboard layout"
             }
         }
     }
@@ -47,6 +59,10 @@ struct MacroAction: Codable, Equatable, Hashable {
     /// For pressKeys.
     var keyCode: Int = 0
     var modifiers: Int = 0
+    /// What to do, for actions with several (an AppCommand, WindowCommand, FileCommand or BrowserCommand).
+    var option: String? = nil
+    /// A second text: a destination folder, a new name, text to write, the browser, a voice.
+    var value2: String? = nil
 
     static func toolbelt(_ action: ShortcutAction) -> MacroAction { MacroAction(kind: .toolbelt, value: action.rawValue) }
     static func system(_ command: SystemControl) -> MacroAction { MacroAction(kind: .system, value: command.rawValue) }
@@ -75,6 +91,44 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .runShortcut: return "Run shortcut “\(value)”"
         case .floatingMenu: return "Show / hide floating menu “\(value)”"
         case .switchPreset: return value.isEmpty ? "Switch to the next preset" : "Switch to preset “\(value)”"
+        case .app:
+            let command = AppCommand(rawValue: option ?? "") ?? .activateLast
+            switch command {
+            case .quit: return value.isEmpty ? "Quit the app in front" : "Quit \(value)"
+            case .hide: return value.isEmpty ? "Hide the app in front" : "Hide \(value)"
+            default: return command.title
+            }
+        case .window:
+            let command = WindowCommand(rawValue: option ?? "") ?? .setFrame
+            return command == .setFrame ? "Front window to \(value)" : command.title
+        case .file:
+            let command = FileCommand(rawValue: option ?? "") ?? .copy
+            let name = (value as NSString).lastPathComponent
+            switch command {
+            case .copy: return "Copy \(name) into \(value2 ?? "")"
+            case .move: return "Move \(name) into \(value2 ?? "")"
+            case .rename: return "Rename \(name) to \(value2 ?? "")"
+            case .trash: return "Trash \(name)"
+            case .write: return "Write to \(name)"
+            case .append: return "Add to the end of \(name)"
+            }
+        case .browser:
+            let command = BrowserCommand(rawValue: option ?? "") ?? .openTab
+            let place = value2.map { " in \($0)" } ?? ""
+            switch command {
+            case .openTab: return "Open \(value) in a new tab\(place)"
+            case .clickLink: return "Click the link “\(value)”\(place)"
+            case .clickButton: return "Click the button “\(value)”\(place)"
+            case .fillField: return "Fill in \(value)\(place)"
+            case .runJS: return "Run JavaScript\(place)"
+            }
+        case .download: return "Download \(value)"
+        case .speak: return "Say “\(value.prefix(30))”"
+        case .playSound: return "Play the sound \(value)"
+        case .largeText: return "Show “\(value.prefix(30))” large"
+        case .setVolume: return "Volume \(MoreMacroActions.volume(value) ?? 50)%"
+        case .desktopPicture: return "Desktop picture \((value as NSString).lastPathComponent)"
+        case .keyboardLayout: return "Keyboard layout \(value)"
         }
     }
 }
@@ -97,6 +151,7 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
     case closeWindow, quitApp, hideApp, fullScreen, newTab, closeTab, back, forward
     case muteMicrophone, spotlight, launchpad, siri, keyboardBrightnessUp, keyboardBrightnessDown
     case toggleBluetooth, toggleWiFi, toggleDockHiding, emptyTrash, ejectDisks, screenSaver, emojiPicker
+    case volumeUpSmall, volumeDownSmall, brightnessUpSmall, brightnessDownSmall, restart, shutDown, logOut
 
     var id: String { rawValue }
 
@@ -139,6 +194,13 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
         case .ejectDisks: return "Eject all disks"
         case .screenSaver: return "Start the screen saver"
         case .emojiPicker: return "Emoji & symbols"
+        case .volumeUpSmall: return "Volume up a little"
+        case .volumeDownSmall: return "Volume down a little"
+        case .brightnessUpSmall: return "Brightness up a little"
+        case .brightnessDownSmall: return "Brightness down a little"
+        case .restart: return "Restart (asks first)"
+        case .shutDown: return "Shut down (asks first)"
+        case .logOut: return "Log out (asks first)"
         }
     }
 }
@@ -155,6 +217,7 @@ final class ActionRunner {
 
     init(shortcuts: ShortcutCenter) {
         self.shortcuts = shortcuts
+        AppHistory.shared.start()
     }
 
     func run(_ action: MacroAction) {
@@ -196,13 +259,20 @@ final class ActionRunner {
             HUD.show(Placeholders.render(action.value).text)
         case .mouse:
             guard PermissionGate.ensure(.accessibility, to: "click and scroll for you") else { return }
-            MouseDriver.perform(MouseCommand(text: action.value), flags: Self.flags(fromCarbon: action.modifiers))
+            let command = MouseCommand(text: action.value), flags = Self.flags(fromCarbon: action.modifiers)
+            if command.origin == .screen {
+                MouseDriver.perform(command, flags: flags)
+            } else {
+                Task { _ = await MouseDriver.run(command, flags: flags) }
+            }
         case .webSearch:
             guard PermissionGate.ensure(.accessibility, to: "copy the selected text") else { return }
             WebSearch.searchSelection(template: action.value)
         case .runShortcut:
             guard !action.value.isEmpty else { return }
             Self.runScript("/usr/bin/shortcuts", ["run", action.value])
+        case .app, .window, .file, .browser, .download, .speak, .playSound, .largeText, .setVolume, .desktopPicture, .keyboardLayout:
+            Task { _ = await MoreMacroActions.perform(action) }
         case .floatingMenu:
             Self.toggleFloatingMenu?(action.value)
         case .switchPreset:
@@ -263,6 +333,12 @@ final class ActionRunner {
         case .playPause: MediaKeys.press(MediaKeys.play)
         case .nextTrack: MediaKeys.press(MediaKeys.next)
         case .previousTrack: MediaKeys.press(MediaKeys.previous)
+        case .volumeUpSmall: MediaKeys.press(MediaKeys.soundUp, small: true)
+        case .volumeDownSmall: MediaKeys.press(MediaKeys.soundDown, small: true)
+        case .brightnessUpSmall: MediaKeys.press(MediaKeys.brightnessUp, small: true)
+        case .brightnessDownSmall: MediaKeys.press(MediaKeys.brightnessDown, small: true)
+        case .restart, .shutDown, .logOut:
+            if let script = MoreMacroActions.loginWindowScript(control) { Self.runScript("/usr/bin/osascript", ["-e", script]) }
         case .volumeUp: MediaKeys.press(MediaKeys.soundUp)
         case .volumeDown: MediaKeys.press(MediaKeys.soundDown)
         case .mute: MediaKeys.press(MediaKeys.mute)
@@ -419,9 +495,11 @@ enum MediaKeys {
     static let mute: Int32 = 7, play: Int32 = 16, next: Int32 = 17, previous: Int32 = 18
     static let illuminationUp: Int32 = 21, illuminationDown: Int32 = 22
 
-    static func press(_ key: Int32) {
+    /// `small`: with ⌥⇧ held, macOS changes the volume or brightness by a quarter step.
+    static func press(_ key: Int32, small: Bool = false) {
         for down in [true, false] {
-            let flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
+            var flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
+            if small { flags.formUnion([.option, .shift]) }
             let data1 = Int((key << 16) | ((down ? 0xA : 0xB) << 8))
             let event = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: flags, timestamp: 0,
                                            windowNumber: 0, context: nil, subtype: 8, data1: data1, data2: -1)
@@ -501,6 +579,8 @@ struct ActionEditor: View {
                 TextField("Shortcut name, as in the Shortcuts app", text: $action.value)
                 Text("For example a shortcut that turns a Focus (like Do Not Disturb) on or off: make it once in the Shortcuts app.")
                     .font(.caption).foregroundStyle(.secondary)
+            case .app, .window, .file, .browser, .download, .speak, .playSound, .largeText, .setVolume, .desktopPicture, .keyboardLayout:
+                MoreActionFields(action: $action)
             case .shell, .appleScript, .javaScript:
                 TextEditor(text: $action.value)
                     .font(.system(.caption, design: .monospaced))

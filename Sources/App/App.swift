@@ -126,6 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-screenshots": settings.show(tab: .module(.screenshots))
             case "settings-automation": settings.show(tab: .module(.automation))
+            case "large-text":
+                // "Show text large", as a macro shows it.
+                LargeText.show("Back in 10 minutes")
             case "floating-menu":
                 // An example floating menu and menu-bar item.
                 if let automation = modules.module(.automation) as? AutomationModule {

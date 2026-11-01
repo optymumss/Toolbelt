@@ -2,6 +2,7 @@ import AppKit
 import Carbon
 import CoreWLAN
 import SwiftUI
+import UniformTypeIdentifiers
 
 // More actions, like BetterTouchTool's: using the mouse, searching the web for the selected text,
 // and controls for Bluetooth, Wi-Fi, the Dock, the Trash, disks, the screen saver and emoji.
@@ -35,7 +36,14 @@ struct MouseCommand: Equatable {
         var isScroll: Bool { rawValue.hasPrefix("scroll") }
     }
 
+    /// Where `at` counts from: the main screen's top left, the front window's top left, or a picture
+    /// found on screen (its middle, moved by `at` if given).
+    enum Origin: String { case screen, window, image }
+
     var kind: Kind = .click
+    var origin: Origin = .screen
+    /// For `.image`: the picture's file.
+    var image: String?
     /// Where to do it; nil is where the pointer is.
     var at: CGPoint?
     /// Drag: where to let go.
@@ -51,7 +59,15 @@ struct MouseCommand: Equatable {
     }
 
     init(text: String) {
+        var text = text
+        // "click image /path/with spaces.png": the rest of the text is the picture's path.
+        if let range = text.range(of: " image ") {
+            image = String(text[range.upperBound...])
+            origin = .image
+            text = String(text[..<range.lowerBound])
+        }
         let parts = text.split(separator: " ").map(String.init)
+        if parts.contains("window") { origin = .window }
         kind = parts.first.flatMap(Kind.init(rawValue:)) ?? .click
         var points: [CGPoint] = []
         for part in parts.dropFirst() {
@@ -69,15 +85,21 @@ struct MouseCommand: Equatable {
     var text: String {
         func place(_ point: CGPoint) -> String { "\(Int(point.x.rounded())),\(Int(point.y.rounded()))" }
         var parts = [kind.rawValue]
+        if origin == .window { parts.append("window") }
         if let at { parts.append(place(at)) }
         if kind == .drag, let to { parts.append(place(to)) }
         if kind.isScroll { parts.append(String(lines)) }
+        if origin == .image, let image { parts.append("image " + image) }
         return parts.joined(separator: " ")
     }
 
     var summary: String {
         func place(_ point: CGPoint) -> String { "\(Int(point.x)), \(Int(point.y))" }
-        let whereText = at.map { " at \(place($0))" } ?? (kind == .moveTo ? "" : " where the pointer is")
+        if origin == .image {
+            return kind.title + " on the picture \(((image ?? "") as NSString).lastPathComponent)"
+        }
+        let corner = origin == .window ? " from the front window's corner" : ""
+        let whereText = at.map { " at \(place($0))\(corner)" } ?? (kind == .moveTo ? "" : " where the pointer is")
         switch kind {
         case .drag: return "Drag" + (at.map { " from \(place($0))" } ?? "") + (to.map { " to \(place($0))" } ?? "")
         case .moveTo: return "Move the pointer" + (at.map { " to \(place($0))" } ?? "")
@@ -89,6 +111,36 @@ struct MouseCommand: Equatable {
 
 /// Sends mouse events, marked as Toolbelt's own so its gestures ignore them.
 enum MouseDriver {
+    /// Turns places counted from the front window or a found picture into screen places; nil if the
+    /// window or picture isn't there.
+    @MainActor static func resolved(_ command: MouseCommand) async -> MouseCommand? {
+        var result = command
+        let base: CGPoint
+        switch command.origin {
+        case .screen: return command
+        case .window:
+            guard PermissionGate.ensure(.accessibility, to: "click in the front window"),
+                  let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                  let window = FrontWindow.focusedWindow(of: pid), let corner = WindowFrame.position(of: window) else { return nil }
+            base = corner
+        case .image:
+            guard let path = command.image, let middle = await ScreenReader.find((path as NSString).expandingTildeInPath) else { return nil }
+            base = middle
+        }
+        let offset = command.at ?? .zero
+        result.at = CGPoint(x: base.x + offset.x, y: base.y + offset.y)
+        if let to = command.to { result.to = CGPoint(x: base.x + to.x, y: base.y + to.y) }
+        result.origin = .screen
+        return result
+    }
+
+    /// Does it, working out the place first; false if the window or picture wasn't found.
+    @MainActor static func run(_ command: MouseCommand, flags: CGEventFlags) async -> Bool {
+        guard let place = await resolved(command) else { return false }
+        perform(place, flags: flags)
+        return true
+    }
+
     /// Where the pointer is now (top-left based, like mouse events).
     static var pointer: CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
@@ -156,6 +208,36 @@ struct MouseActionEditor: View {
             Picker("Mouse", selection: command.kind) {
                 ForEach(MouseCommand.Kind.allCases) { Text($0.title).tag($0) }
             }
+            Picker("Counted from", selection: command.origin) {
+                Text("The screen's top left").tag(MouseCommand.Origin.screen)
+                Text("The front window's top left").tag(MouseCommand.Origin.window)
+                Text("A picture on screen (its middle)").tag(MouseCommand.Origin.image)
+            }
+            if command.wrappedValue.origin == .image {
+                HStack {
+                    TextField("Picture file (PNG)", text: Binding(get: { command.wrappedValue.image ?? "" }, set: { command.wrappedValue.image = $0 }))
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.png, .jpeg, .tiff]
+                        NSApp.activate()
+                        if panel.runModal() == .OK, let url = panel.url { command.wrappedValue.image = url.path }
+                    }
+                }
+                Text("Needs Screen Recording. Take the picture with Toolbelt's screenshot (area).").font(.caption).foregroundStyle(.secondary)
+            }
+            if command.wrappedValue.origin != .screen {
+                TextField("Move by x,y from there (empty: exactly there)", text: Binding(
+                    get: { command.wrappedValue.at.map { "\(Int($0.x)),\(Int($0.y))" } ?? "" },
+                    set: { command.wrappedValue.at = ScreenPoint.parse($0) }))
+            }
+            HStack {
+                Text("Holding").foregroundStyle(.secondary)
+                ForEach(Self.modifierKeys, id: \.bit) { key in
+                    Toggle(key.symbol, isOn: Binding(get: { action.modifiers & key.bit != 0 },
+                                                     set: { action.modifiers = $0 ? action.modifiers | key.bit : action.modifiers & ~key.bit }))
+                        .toggleStyle(.button)
+                }
+            }
             HStack {
                 Picker(command.wrappedValue.kind == .drag ? "From" : "Where", selection: Binding(
                     get: { command.wrappedValue.at == nil ? 0 : 1 },
@@ -183,6 +265,9 @@ struct MouseActionEditor: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
+
+    /// Carbon modifier bits, as saved in MacroAction.modifiers.
+    static let modifierKeys: [(symbol: String, bit: Int)] = [("⌃", 0x1000), ("⌥", 0x0800), ("⇧", 0x0200), ("⌘", 0x0100)]
 
     /// Waits three seconds, then takes wherever the pointer is.
     private func pick(_ which: String) {

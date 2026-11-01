@@ -565,7 +565,75 @@ final class RealUse: NSObject, NSApplicationDelegate {
             ]),
             Macro(name: "Test held", steps: [when(.modifiersHeld, right: "⇧", yes: "cond-held", no: "cond-not-held")]),
         ]
-        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros + newMacros, groups: []))
+        // 0.31: actions like Keyboard Maestro's.
+        func act(_ kind: MacroAction.Kind, _ value: String = "", option: String? = nil, _ second: String? = nil) -> MacroStep {
+            var step = MacroStep(kind: .action)
+            step.action = MacroAction(kind: kind, value: value, option: option, value2: second)
+            step.onFailure = .stop // so a marker after it shows it worked
+            return step
+        }
+        func shellMark(_ text: String) -> MacroStep {
+            var step = MacroStep(kind: .action)
+            step.action = MacroAction(kind: .shell, value: "echo '\(text)' >> '\(markersURL.path)'")
+            return step
+        }
+        let km = data.appendingPathComponent("km").path
+        var readBack = MacroStep(kind: .readFile)
+        readBack.text = km + "/b.txt"
+        readBack.name = "Text"
+        var alertStep = MacroStep(kind: .alert)
+        alertStep.text = "E2E alert"
+        alertStep.text2 = "First\nSecond"
+        alertStep.name = "Button"
+        var severalStep = MacroStep(kind: .askSeveral)
+        severalStep.text = "E2E questions"
+        severalStep.text2 = "Name\nPlace"
+        var pageTitle = MacroStep(kind: .browserGet)
+        pageTitle.text2 = BrowserPart.title.rawValue
+        pageTitle.name = "Title"
+        var pageAddress = MacroStep(kind: .browserGet)
+        pageAddress.text2 = BrowserPart.url.rawValue
+        pageAddress.name = "Address"
+        var waitPage = MacroStep(kind: .pause)
+        waitPage.number = 3
+        var waitClick = MacroStep(kind: .pause)
+        waitClick.number = 1
+        let chrome = "Google Chrome"
+        let actionMacros = [
+            Macro(name: "Test files", steps: [
+                act(.file, km + "/a.txt", option: FileCommand.write.rawValue, "hello"),
+                act(.file, km + "/a.txt", option: FileCommand.append.rawValue, " world"),
+                act(.file, km + "/a.txt", option: FileCommand.copy.rawValue, km + "/copies"),
+                act(.file, km + "/a.txt", option: FileCommand.rename.rawValue, "b.txt"),
+                readBack, shellMark("file-%Text%"),
+            ]),
+            Macro(name: "Test trash file", steps: [act(.file, km + "/b.txt", option: FileCommand.trash.rawValue), shellMark("trashed")]),
+            Macro(name: "Test app back", steps: [act(.app, option: AppCommand.activateLast.rawValue), shellMark("app-back")]),
+            Macro(name: "Test hide app", steps: [act(.app, "Calculator", option: AppCommand.hide.rawValue)]),
+            Macro(name: "Test quit app", steps: [act(.app, "Calculator", option: AppCommand.quit.rawValue)]),
+            Macro(name: "Test close all", steps: [act(.window, option: WindowCommand.closeAll.rawValue)]),
+            Macro(name: "Test window frame", steps: [act(.window, "120,140,520,380", option: WindowCommand.setFrame.rawValue)]),
+            Macro(name: "Test minimise", steps: [act(.window, option: WindowCommand.minimize.rawValue)]),
+            Macro(name: "Test window click", steps: [act(.mouse, "click window %Trigger%")]),
+            Macro(name: "Test picture click", steps: [act(.mouse, "click image " + data.appendingPathComponent("clickme.png").path), shellMark("picture-clicked")]),
+            Macro(name: "Test speak", steps: [act(.speak, "Toolbelt is testing speech, one two three four five six seven eight nine ten")]),
+            Macro(name: "Test large text", steps: [act(.largeText, "E2E LARGE")]),
+            Macro(name: "Test alert", steps: [alertStep, shellMark("alert-%Button%")]),
+            Macro(name: "Test ask several", steps: [severalStep, shellMark("asked-%Name%-%Place%")]),
+            Macro(name: "Test volume", steps: [act(.setVolume, "30")]),
+            Macro(name: "Test desktop", steps: [act(.desktopPicture, data.appendingPathComponent("desk.png").path), shellMark("desktop-set")]),
+            Macro(name: "Test layout", steps: [act(.keyboardLayout, "%Trigger%"), shellMark("layout-ok")]),
+            Macro(name: "Test download", steps: [act(.download, "http://127.0.0.1:\(Self.webPort)/remote", data.appendingPathComponent("dl").path), shellMark("downloaded")]),
+            Macro(name: "Test browser", steps: [
+                act(.browser, "%Trigger%", option: BrowserCommand.openTab.rawValue, chrome), waitPage,
+                act(.browser, "email=e2e@example.com", option: BrowserCommand.fillField.rawValue, chrome),
+                act(.browser, "Send", option: BrowserCommand.clickButton.rawValue, chrome), waitClick,
+                pageTitle, shellMark("browser-%Title%"),
+                act(.browser, "Next page", option: BrowserCommand.clickLink.rawValue, chrome), waitClick,
+                pageAddress, shellMark("address-%Address%"),
+            ]),
+        ]
+        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros + newMacros + actionMacros, groups: []))
             .write(to: data.appendingPathComponent("macros.json"), options: .atomic)
 
         let snippets = [Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt")]
@@ -644,6 +712,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await panelTests()
             await editorTests()
             await conditionTests()
+            await kmActionTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -1047,6 +1116,215 @@ final class RealUse: NSObject, NSApplicationDelegate {
         await focus()
     }
 
+    /// The front window of an app, from the window list (top-left based), and how many it has.
+    func windows(of bundleID: String) -> [CGRect] {
+        guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.processIdentifier,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return list.compactMap { info in
+            guard (info[kCGWindowOwnerPID as String] as? Int32) == pid, (info[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any] else { return nil }
+            return CGRect(dictionaryRepresentation: bounds as CFDictionary)
+        }
+    }
+
+    func kmActionTests() async {
+        say("— 0.31: actions like Keyboard Maestro's")
+        // Files
+        _ = await runMacro("Test files")
+        let km = data.appendingPathComponent("km").path
+        check("files: write, add to, copy, rename and read a file", await waitUntil(8) { self.count("file-hello world") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("file") }), files: \((try? FileManager.default.contentsOfDirectory(atPath: km)) ?? [])")
+        check("… the copy is in its folder", FileManager.default.fileExists(atPath: km + "/copies/a.txt"))
+        _ = await runMacro("Test trash file")
+        check("files: move to the Trash", await waitUntil(5) { self.count("trashed") == 1 } && !FileManager.default.fileExists(atPath: km + "/b.txt"),
+              "marker \(count("trashed")), still there: \(FileManager.default.fileExists(atPath: km + "/b.txt"))")
+
+        // Apps
+        await focus()
+        _ = run("/usr/bin/open", ["-a", "Finder"])
+        _ = await waitUntil(5) { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" }
+        _ = await runMacro("Test app back")
+        check("apps: switch back to the app used before", await waitUntil(5) { self.isFront && self.count("app-back") == 1 },
+              "front: \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"), marker \(count("app-back"))")
+        _ = run("/usr/bin/open", ["-a", "Calculator"])
+        let calculator = "com.apple.calculator"
+        _ = await waitUntil(8) { !self.windows(of: calculator).isEmpty }
+        _ = await runMacro("Test close all")
+        check("windows: close all the front app's windows", await waitUntil(5) { self.windows(of: calculator).isEmpty },
+              "Calculator still has \(windows(of: calculator).count) windows")
+        _ = run("/usr/bin/open", ["-a", "Calculator"])
+        _ = await waitUntil(5) { !self.windows(of: calculator).isEmpty }
+        _ = await runMacro("Test hide app")
+        check("apps: hide an app", await waitUntil(5) { NSRunningApplication.runningApplications(withBundleIdentifier: calculator).first?.isHidden == true },
+              "Calculator hidden: \(NSRunningApplication.runningApplications(withBundleIdentifier: calculator).first?.isHidden ?? false)")
+        _ = await runMacro("Test quit app")
+        check("apps: quit an app", await waitUntil(8) { NSRunningApplication.runningApplications(withBundleIdentifier: calculator).isEmpty },
+              "Calculator is still running")
+
+        // The front window
+        await focus()
+        _ = await runMacro("Test window frame")
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        func topLeftFrame() -> CGRect { CGRect(x: window.frame.minX, y: screenHeight - window.frame.maxY, width: window.frame.width, height: window.frame.height) }
+        let moved = await waitUntil(5) {
+            let f = topLeftFrame()
+            return abs(f.minX - 120) <= 2 && abs(f.minY - 140) <= 2 && abs(f.width - 520) <= 2 && abs(f.height - 380) <= 2
+        }
+        check("windows: move and resize the front window to an exact place", moved, "frame is \(topLeftFrame())")
+        window.setFrame(homeFrame, display: true)
+        await focus()
+        _ = await runMacro("Test minimise")
+        check("windows: minimise the front window", await waitUntil(5) { self.window.isMiniaturized }, "not minimised")
+        window.deminiaturize(nil)
+        _ = await waitUntil(5) { !self.window.isMiniaturized }
+        window.setFrame(homeFrame, display: true)
+
+        // The mouse, from the window's corner and on a picture
+        await focus(clear: false)
+        pad.log = []
+        let corner = CGPoint(x: window.frame.minX, y: screenHeight - window.frame.maxY)
+        let target = padPoint(0.5)
+        let offset = "\(Int(target.x - corner.x)),\(Int(target.y - corner.y))"
+        _ = await get("http://127.0.0.1:\(Self.webPort)/run_macro?name=Test%20window%20click&input=\(offset)&secret=\(Self.webSecret)")
+        check("mouse: click counted from the front window's corner", await waitUntil(4) { self.pad.log.contains("left 1") }, "the pad saw \(pad.log)")
+
+        let pictureWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        pictureWindow.title = "Picture to click"
+        pictureWindow.isReleasedWhenClosed = false
+        let clickable = PatternView(frame: NSRect(x: 30, y: 20, width: 200, height: 160))
+        clickable.seed = 11
+        pictureWindow.contentView?.addSubview(clickable)
+        pictureWindow.setFrameTopLeftPoint(NSPoint(x: window.frame.midX - 130, y: window.frame.maxY - 60))
+        pictureWindow.makeKeyAndOrderFront(nil)
+        await pause(0.8)
+        let spot = pictureWindow.convertToScreen(clickable.convert(clickable.bounds.insetBy(dx: 50, dy: 40), to: nil))
+        let needleRect = CGRect(x: spot.minX, y: screenHeight - spot.maxY, width: spot.width, height: spot.height).integral
+        let needle = data.appendingPathComponent("clickme.png").path
+        let captured = run("/usr/sbin/screencapture", ["-x", "-R\(Int(needleRect.minX)),\(Int(needleRect.minY)),\(Int(needleRect.width)),\(Int(needleRect.height))", needle])
+        clickable.clicks = []
+        _ = await runMacro("Test picture click")
+        let clicked = await waitUntil(15) { !clickable.clicks.isEmpty }
+        let middle = CGPoint(x: clickable.bounds.midX, y: clickable.bounds.midY)
+        check("mouse: click on a picture found on screen (its middle)",
+              captured && clicked && clickable.clicks.allSatisfy { abs($0.x - middle.x) < 8 && abs($0.y - middle.y) < 8 },
+              "captured \(captured), clicks at \(clickable.clicks), middle \(middle), marker \(count("picture-clicked"))")
+        pictureWindow.close()
+
+        // Speech, large text, alerts and questions
+        _ = await runMacro("Test speak")
+        check("say text out loud", await waitUntil(4) { self.output("/usr/bin/pgrep", ["-x", "say"]).isEmpty == false }, "no say process was seen")
+        await focus()
+        let before = toolbeltWindows()
+        _ = await runMacro("Test large text")
+        check("show text large", await waitUntil(4) { self.toolbeltWindows() > before }, "Toolbelt's windows: \(before) → \(toolbeltWindows())")
+        await click(windowMiddle)
+        check("… gone after a click", await waitUntil(4) { self.toolbeltWindows() <= before }, "Toolbelt's windows: \(toolbeltWindows())")
+
+        _ = await runMacro("Test alert")
+        await pause(2)
+        // Like clicking on it: macOS doesn't let an app in the background take the keyboard by itself.
+        toolbelt?.activate()
+        await pause(0.8)
+        await press(CGKeyCode(kVK_Return), [])
+        check("an alert with buttons (Return clicks the first)", await waitUntil(5) { self.count("alert-First") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("alert") })")
+        _ = await runMacro("Test ask several")
+        await pause(2)
+        toolbelt?.activate()
+        await pause(1.5)
+        // Lowercase: the typing helper only knows unshifted keys.
+        await type("sam")
+        await pause(0.3)
+        await press(CGKeyCode(kVK_Tab), [])
+        await pause(0.3)
+        await type("home")
+        await pause(0.3)
+        await press(CGKeyCode(kVK_Return), [])
+        check("several questions at once, each into its own variable", await waitUntil(5) { self.count("asked-sam-home") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("asked") })")
+        await focus()
+
+        // The Mac: volume, desktop picture, keyboard layout
+        let volumeBefore = output("/usr/bin/osascript", ["-e", "output volume of (get volume settings)"])
+        _ = await runMacro("Test volume")
+        if Int(volumeBefore) != nil {
+            check("set the volume to 30%", await waitUntil(5) { self.output("/usr/bin/osascript", ["-e", "output volume of (get volume settings)"]) == "30" },
+                  "volume is \(output("/usr/bin/osascript", ["-e", "output volume of (get volume settings)"]))")
+        } else {
+            say("  (this Mac has no sound output, so the volume can't be read: \(volumeBefore))")
+        }
+        let picture = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in NSColor.systemPurple.setFill(); rect.fill(); return true }
+        if let png = picture.tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) })?.representation(using: .png, properties: [:]) {
+            try? png.write(to: data.appendingPathComponent("desk.png"))
+        }
+        let originalDesktop = NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
+        defer {
+            // Put the desktop back, so the screenshots taken later don't show the test picture.
+            if let originalDesktop {
+                for screen in NSScreen.screens { try? NSWorkspace.shared.setDesktopImageURL(originalDesktop, for: screen, options: [:]) }
+            }
+        }
+        _ = await runMacro("Test desktop")
+        check("change the desktop picture", await waitUntil(5) {
+            self.count("desktop-set") == 1 && NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }?.lastPathComponent == "desk.png"
+        }, "marker \(count("desktop-set")), picture \(NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }?.path ?? "none")")
+        let layout = KeyboardLayouts.currentName
+        _ = await get("http://127.0.0.1:\(Self.webPort)/run_macro?name=Test%20layout&input=\(layout.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")&secret=\(Self.webSecret)")
+        check("switch keyboard layout (to \(layout))", await waitUntil(5) { self.count("layout-ok") == 1 } && KeyboardLayouts.currentName == layout,
+              "marker \(count("layout-ok")), layout now \(KeyboardLayouts.currentName); layouts: \(KeyboardLayouts.names)")
+
+        // Downloading a file
+        _ = await runMacro("Test download")
+        let downloads = data.appendingPathComponent("dl").path
+        check("download a file into a folder", await waitUntil(10) { self.count("downloaded") == 1 }
+              && ((try? FileManager.default.contentsOfDirectory(atPath: downloads)) ?? []).isEmpty == false,
+              "marker \(count("downloaded")), folder: \((try? FileManager.default.contentsOfDirectory(atPath: downloads)) ?? [])")
+
+        await browserTests()
+        await focus()
+    }
+
+    /// Chrome, started with its own settings folder where "Allow JavaScript from Apple Events" is on.
+    func browserTests() async {
+        let chromeApp = URL(fileURLWithPath: "/Applications/Google Chrome.app")
+        guard FileManager.default.fileExists(atPath: chromeApp.path) else {
+            check("Chrome is installed (for the browser actions)", false, "no \(chromeApp.path)")
+            return
+        }
+        let profile = data.appendingPathComponent("chrome-profile")
+        try? FileManager.default.createDirectory(at: profile.appendingPathComponent("Default"), withIntermediateDirectories: true)
+        try? Data(#"{"browser":{"allow_javascript_apple_events":true,"check_default_browser":false}}"#.utf8)
+            .write(to: profile.appendingPathComponent("Default/Preferences"))
+        let page = data.appendingPathComponent("form.html")
+        try? Data("""
+        <!doctype html><title>E2E form</title>
+        <form onsubmit="return false"><label>Email <input name="email"></label>
+        <button onclick="document.title='sent '+document.getElementsByName('email')[0].value">Send</button></form>
+        <a href="#next">Next page</a>
+        """.utf8).write(to: page)
+        // Chrome's own program, started in the background (not waited for); no keychain or first-run windows.
+        let chrome = Process()
+        chrome.executableURL = chromeApp.appendingPathComponent("Contents/MacOS/Google Chrome")
+        chrome.arguments = ["--user-data-dir=\(profile.path)", "--no-first-run", "--no-default-browser-check",
+                            "--use-mock-keychain", "--password-store=basic", "about:blank"]
+        chrome.standardOutput = FileHandle.nullDevice
+        chrome.standardError = FileHandle.nullDevice
+        do { try chrome.run() } catch {
+            check("Chrome starts (for the browser actions)", false, "\(error)")
+            return
+        }
+        defer { if chrome.isRunning { chrome.terminate() } }
+        _ = await waitUntil(15) { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty }
+        await pause(4)
+        _ = await get("http://127.0.0.1:\(Self.webPort)/run_macro?name=Test%20browser&input=\(page.absoluteString.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")&secret=\(Self.webSecret)")
+        check("browser: open a page, fill in a field, click a button, read the title",
+              await waitUntil(30) { self.count("browser-sent e2e@example.com") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("browser") || $0.hasPrefix("address") })")
+        check("browser: click a link, read the address", await waitUntil(10) { self.markers().contains { $0.hasPrefix("address-") && $0.hasSuffix("#next") } },
+              "markers: \(markers().filter { $0.hasPrefix("address") })")
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome") { app.terminate() }
+    }
+
     func macEventTests() async {
         say("— 0.26: the Mac's own events")
         DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.apple.screenIsLocked"), object: nil, userInfo: nil,
@@ -1323,10 +1601,17 @@ final class SolidView: NSView {
     }
 }
 
-/// Blocks of different greys, for the “screen shows a picture” condition.
+/// Blocks of different greys, for the “screen shows a picture” condition and clicking on a picture.
 final class PatternView: NSView {
+    var seed: UInt32 = 3
+    /// Where it was clicked (in its own coordinates).
+    var clicks: [CGPoint] = []
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { clicks.append(convert(event.locationInWindow, from: nil)) }
+
     override func draw(_ dirtyRect: NSRect) {
-        var seed: UInt32 = 3
+        var seed = self.seed
         let size: CGFloat = 10
         for row in 0..<Int(bounds.height / size) {
             for column in 0..<Int(bounds.width / size) {
