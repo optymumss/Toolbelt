@@ -33,6 +33,10 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case wifiChanged, networkChanged, displayConnected, displayDisconnected, spaceChanged
         case timeOfDay, every
         case menuBar, launcher, terminal
+        case macWakes, macSleeps, screenLocked, screenUnlocked
+        case powerConnected, powerDisconnected, batteryBelow
+        case usbConnected, usbDisconnected, bluetoothConnected, bluetoothDisconnected, diskMounted, diskUnmounted
+        case idle, activeAgain
 
         var id: String { rawValue }
 
@@ -56,6 +60,21 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             case .menuBar: return "Menu bar item"
             case .launcher: return "Launcher"
             case .terminal: return "Command in Terminal"
+            case .macWakes: return "Mac wakes up"
+            case .macSleeps: return "Mac goes to sleep"
+            case .screenLocked: return "Screen locks"
+            case .screenUnlocked: return "Screen unlocks"
+            case .powerConnected: return "Charger plugged in"
+            case .powerDisconnected: return "Charger unplugged"
+            case .batteryBelow: return "Battery goes below a level"
+            case .usbConnected: return "USB device plugged in"
+            case .usbDisconnected: return "USB device unplugged"
+            case .bluetoothConnected: return "Bluetooth device connects"
+            case .bluetoothDisconnected: return "Bluetooth device disconnects"
+            case .diskMounted: return "Disk appears (plugged in or opened)"
+            case .diskUnmounted: return "Disk ejected"
+            case .idle: return "Not used for a while (idle)"
+            case .activeAgain: return "Used again after being idle"
             }
         }
     }
@@ -91,6 +110,11 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             let days = weekdays.isEmpty ? "every day" : weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[($0 - 1) % 7] }.joined(separator: ", ")
             return "At \(DownloadQueue.clock(number)), \(days)"
         case .every: return "Every \(number) minute\(number == 1 ? "" : "s")"
+        case .batteryBelow: return "Battery below \(number)%"
+        case .idle, .activeAgain:
+            return kind == .idle ? "Idle for \(number) minute\(number == 1 ? "" : "s")" : "Used again after \(number) idle minute\(number == 1 ? "" : "s")"
+        case .usbConnected, .usbDisconnected, .bluetoothConnected, .bluetoothDisconnected, .diskMounted, .diskUnmounted:
+            return text.isEmpty ? kind.title : kind.title + " (“\(text)”)"
         default: return kind.title
         }
     }

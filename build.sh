@@ -50,7 +50,7 @@ xcrun swiftc \
     -framework CoreAudio \
     -framework Network \
     -framework AVFoundation \
-    -framework CoreMedia \
+    -framework CoreMedia -framework IOBluetooth \
     "${SOURCES[@]}" \
     -o "$APP/Contents/MacOS/$APP_NAME"
 

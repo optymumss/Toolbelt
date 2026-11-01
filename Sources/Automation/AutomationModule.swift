@@ -14,6 +14,13 @@ final class AutomationModule: ToolbeltModule {
     weak var gestures: GesturesModule?
     let deviceKeys = DeviceKeyWatcher()
     let network = NetworkWatcher()
+    let power = PowerWatcher()
+    let usb = USBWatcher()
+    let bluetooth = BluetoothWatcher()
+    private var powerState: (onAC: Bool, percent: Int?)?
+    private var batteryChecks: [UUID: BatteryThreshold] = [:]
+    private var idleTrackers: [UUID: IdleTracker] = [:]
+    private var idleTimer: Timer?
     /// Names of the macros that ran, most recent last (shown in the editor, used by the tests).
     private(set) var history: [String] = []
     var lastRun: MacroRun?
@@ -168,6 +175,8 @@ final class AutomationModule: ToolbeltModule {
             network.start(wifi: wifi, network: net)
         }
 
+        armSystemEvents()
+
         // `ToolbeltBridge run "Name"` in Terminal drops a request here.
         let inbox = Self.terminalFolder
         try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
@@ -190,6 +199,11 @@ final class AutomationModule: ToolbeltModule {
         timers = []
         deviceKeys.stop()
         network.stop()
+        power.stop()
+        usb.stop()
+        bluetooth.stop()
+        idleTimer?.invalidate()
+        idleTimer = nil
         terminalInbox?.stop()
         terminalInbox = nil
     }
@@ -199,6 +213,97 @@ final class AutomationModule: ToolbeltModule {
             MainActor.assumeIsolated { handler(note) }
         }
         observers.append((center, observer))
+    }
+
+    // MARK: The Mac's own events
+
+    private func armSystemEvents() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let simple: [(MacroTrigger.Kind, NotificationCenter, Notification.Name)] = [
+            (.macWakes, workspace, NSWorkspace.didWakeNotification),
+            (.macSleeps, workspace, NSWorkspace.willSleepNotification),
+            (.screenLocked, DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsLocked")),
+            (.screenUnlocked, DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsUnlocked")),
+        ]
+        for (kind, center, name) in simple where !triggers([kind]).isEmpty {
+            observe(center, name) { [weak self] _ in self?.simpleEvent(kind) }
+        }
+        for (kind, name) in [(MacroTrigger.Kind.diskMounted, NSWorkspace.didMountNotification),
+                             (.diskUnmounted, NSWorkspace.didUnmountNotification)] where !triggers([kind]).isEmpty {
+            observe(workspace, name) { [weak self] note in
+                let disk = note.userInfo?[NSWorkspace.localizedVolumeNameUserInfoKey] as? String
+                    ?? (note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL)?.lastPathComponent ?? ""
+                self?.namedEvent(kind, disk)
+            }
+        }
+        if !triggers([.powerConnected, .powerDisconnected, .batteryBelow]).isEmpty {
+            powerState = PowerWatcher.state()
+            batteryChecks = [:]
+            for (_, trigger) in triggers([.batteryBelow]) {
+                var check = BatteryThreshold(below: trigger.number)
+                _ = check.update(percent: powerState?.percent, onBattery: !(powerState?.onAC ?? true))
+                batteryChecks[trigger.id] = check
+            }
+            power.onChange = { [weak self] onAC, percent in self?.powerChanged(onAC: onAC, percent: percent) }
+            power.start()
+        }
+        if !triggers([.usbConnected, .usbDisconnected]).isEmpty {
+            usb.onChange = { [weak self] name, connected in self?.namedEvent(connected ? .usbConnected : .usbDisconnected, name) }
+            usb.start()
+        }
+        if !triggers([.bluetoothConnected, .bluetoothDisconnected]).isEmpty {
+            bluetooth.onChange = { [weak self] name, connected in
+                self?.namedEvent(connected ? .bluetoothConnected : .bluetoothDisconnected, name)
+            }
+            bluetooth.start()
+        }
+        let idle = triggers([.idle, .activeAgain])
+        if !idle.isEmpty {
+            idleTrackers = Dictionary(idle.map { ($0.1.id, IdleTracker(idleAfter: Double(max(1, $0.1.number)) * 60)) }, uniquingKeysWith: { a, _ in a })
+            scheduleIdleCheck()
+        }
+    }
+
+    /// Checks how long the Mac has been idle: every 30 seconds, and every 2 while idle (to notice it being used again quickly).
+    private func scheduleIdleCheck() {
+        idleTimer?.invalidate()
+        let anyIdle = idleTrackers.values.contains { $0.isIdle }
+        let timer = Timer(timeInterval: anyIdle ? 2 : 30, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.checkIdle(InputIdle.seconds)
+                self?.scheduleIdleCheck()
+            }
+        }
+        timer.tolerance = anyIdle ? 0.5 : 5
+        RunLoop.main.add(timer, forMode: .common)
+        idleTimer = timer
+    }
+
+    func checkIdle(_ seconds: Double) {
+        for (macro, trigger) in triggers([.idle, .activeAgain]) {
+            guard var tracker = idleTrackers[trigger.id] else { continue }
+            let change = tracker.update(secondsSinceInput: seconds)
+            idleTrackers[trigger.id] = tracker
+            if change == .becameIdle, trigger.kind == .idle { fire(macro) }
+            if change == .activeAgain, trigger.kind == .activeAgain { fire(macro) }
+        }
+    }
+
+    func powerChanged(onAC: Bool, percent: Int?) {
+        let before = powerState
+        powerState = (onAC, percent)
+        if let before, before.onAC != onAC { simpleEvent(onAC ? .powerConnected : .powerDisconnected) }
+        for (macro, trigger) in triggers([.batteryBelow]) {
+            var check = batteryChecks[trigger.id] ?? BatteryThreshold(below: trigger.number)
+            if check.update(percent: percent, onBattery: !onAC) { fire(macro, value: percent.map(String.init) ?? "") }
+            batteryChecks[trigger.id] = check
+        }
+    }
+
+    func namedEvent(_ kind: MacroTrigger.Kind, _ name: String) {
+        for (macro, trigger) in triggers([kind]) where NameFilter.matches(name, trigger.text) {
+            fire(macro, value: name)
+        }
     }
 
     func appEvent(_ kind: MacroTrigger.Kind, bundleID: String?, name: String?) {

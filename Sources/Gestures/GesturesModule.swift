@@ -64,6 +64,7 @@ final class GesturesModule: ToolbeltModule {
 
     let store = GestureStore()
     let tap = GestureEventTap()
+    let screenSpots = ScreenSpotWatcher()
     let runner: ActionRunner
     private let openSettings: () -> Void
     private var running = false
@@ -94,7 +95,7 @@ final class GesturesModule: ToolbeltModule {
         tap.onTyped = { [weak self] text in self?.typedText(text) }
         tap.onBackspace = { [weak self] in self?.typed.deleteBackward() }
         tap.onClick = { [weak self] in self?.typed.reset() }
-        MultitouchReader.shared.onGesture = { [weak self] gesture in _ = self?.handle(gesture) }
+        MultitouchReader.shared.onGesture = { [weak self] gesture in self?.handle(gesture) ?? false }
         MultitouchReader.shared.onLift = { [weak self] source in self?.fingersLifted(source) }
         tap.onKey = { [weak self] press in self?.keyEvent(press) ?? false }
         TriggersWindowController.openFromSettings = { [weak self] in self?.open() }
@@ -104,11 +105,13 @@ final class GesturesModule: ToolbeltModule {
     func start() {
         running = true
         updateListening()
+        KeyRemapper.shared.update(running: true)
     }
 
     func stop() {
         running = false
         updateListening()
+        KeyRemapper.shared.update(running: false)
     }
 
     /// The Triggers window: every gesture, shortcut and key trigger, with its actions and conditions.
@@ -126,6 +129,7 @@ final class GesturesModule: ToolbeltModule {
         var touches = false
         var scrolls = false
         var holds = false
+        var spots = false
         for rule in rules {
             switch rule.gesture {
             case let .touch(_, kind, _):
@@ -138,6 +142,8 @@ final class GesturesModule: ToolbeltModule {
             case .stroke(let button, _): needs.strokeButtons.insert(button)
             case .modifierTap, .keySequence: needs.keyboard = true
             case .shortcut: if rule.needsKeyWatching { needs.watchedKeys = true } // others: registered below, no permission needed
+            case .wheel(let button, _): if button == 0 { needs.wheelTilt = true } else { needs.wheelButtons.insert(button) }
+            case .screenSpot: spots = true
             }
         }
         // Keyboard shortcuts, through macOS's own hot keys.
@@ -155,12 +161,16 @@ final class GesturesModule: ToolbeltModule {
         MultitouchReader.shared.setHolds(holds)
         MultitouchReader.shared.setSensitivity(Prefs.gestureSensitivity)
         if touches { MultitouchReader.shared.start() } else { MultitouchReader.shared.stop() }
+        screenSpots.watch(spots) { [weak self] spot in _ = self?.handle(.screenSpot(spot)) }
         let mouse = !needs.buttons.isEmpty || !needs.strokeButtons.isEmpty || needs.clicks || needs.forceClick
+            || needs.wheelTilt || !needs.wheelButtons.isEmpty
         if mouse, !PermissionGate.ensure(.accessibility, to: "use mouse gestures") {
             needs.buttons = []
             needs.strokeButtons = []
             needs.clicks = false
             needs.forceClick = false
+            needs.wheelTilt = false
+            needs.wheelButtons = []
         }
         if needs.watchedKeys, !(PermissionGate.ensure(.inputMonitoring, to: "notice keys being held and let go")
                                 && PermissionGate.ensure(.accessibility, to: "keep a shortcut's keys from the app in front")) {
@@ -351,6 +361,7 @@ final class GesturesModule: ToolbeltModule {
     func willTerminate() {
         shortcutKeys.forEach { $0.unregister() }
         tap.stop()
+        KeyRemapper.shared.update(running: false) // puts the keys back
         MultitouchReader.shared.stop()
     }
 }
@@ -397,6 +408,7 @@ struct GesturesSettingsTab: View {
                 Text("Trackpad and Magic Mouse gestures work alongside macOS's own; switch off any of macOS's you replace in System Settings → Trackpad (for the four-finger set above: More Gestures → Mission Control and App Exposé off). A double tap makes a single tap with the same fingers wait a moment. Scrolls repeat while your fingers keep sliding; swipes happen once. Mouse buttons and strokes need Accessibility; key taps and typed sequences need Input Monitoring. Toolbelt only listens while a gesture needs it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            KeyRemapSettings()
             Section {
                 LabeledContent("Sensitivity") {
                     HStack {
@@ -435,6 +447,12 @@ struct GesturesSettingsTab: View {
         ("Magic Mouse: tap", .touch(.magicMouse, .tap, fingers: 2)),
         ("Mouse: extra button", .mouseButton(3)),
         ("Mouse: hold the right button and draw", .stroke(button: 1, path: "L")),
+        ("Mouse: tilt the wheel", .wheel(button: 0, direction: "L")),
+        ("Mouse: hold a button and scroll", .wheel(button: 2, direction: "U")),
+        ("Screen: pointer to a corner or edge", .screenSpot(.topLeft)),
+        ("Trackpad: rotate two fingers", .touch(.trackpad, .rotateRight, fingers: 2)),
+        ("Trackpad: swipe in from an edge", .touch(.trackpad, .edgeSwipeFromRight, fingers: 2)),
+        ("Trackpad: TipSwipe (one finger resting)", .touch(.trackpad, .tipSwipeLeft, fingers: 3)),
         ("Keyboard: tap a modifier key twice", .modifierTap(.rightCommand, taps: 2)),
         ("Keyboard: type a sequence", .keySequence(";;")),
         ("Keyboard: shortcut", .shortcut(keyCode: 0, modifiers: 0)),
@@ -562,6 +580,33 @@ struct GestureEditor: View {
                 TextField("Typed sequence, e.g. ;;", text: Binding(get: { keys }, set: { gesture = .keySequence($0) }))
                 Toggle("Delete what I typed", isOn: $deleteTyped)
             }
+        case let .wheel(button, direction):
+            HStack {
+                Picker("Wheel", selection: Binding(get: { button }, set: { newButton in
+                    // Tilting goes only left or right.
+                    gesture = .wheel(button: newButton, direction: newButton == 0 && !"LR".contains(direction) ? "L" : direction)
+                })) {
+                    Text("Tilt it (no button)").tag(0)
+                    Text("Hold the middle button and scroll").tag(2)
+                    Text("Hold button 4 and scroll").tag(3)
+                    Text("Hold button 5 and scroll").tag(4)
+                }
+                Picker("Direction", selection: Binding(get: { direction }, set: { gesture = .wheel(button: button, direction: $0) })) {
+                    if button != 0 {
+                        Text("Up").tag("U")
+                        Text("Down").tag("D")
+                    }
+                    Text("Left").tag("L")
+                    Text("Right").tag("R")
+                }
+                .fixedSize()
+            }
+        case .screenSpot(let spot):
+            Picker("Move the pointer to the", selection: Binding(get: { spot }, set: { gesture = .screenSpot($0) })) {
+                ForEach(ScreenSpot.allCases) { Text($0.title).tag($0) }
+            }
+            Text("Push the pointer into it and hold it there a moment. Runs once until the pointer leaves.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }

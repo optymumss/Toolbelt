@@ -25,7 +25,7 @@ final class TriggersState: ObservableObject {
 }
 
 enum TriggerCategory: String, CaseIterable, Identifiable {
-    case all, trackpad, magicMouse, mouseButtons, drawings, shortcuts, keyTaps, typed
+    case all, trackpad, magicMouse, mouseButtons, drawings, screenSpots, shortcuts, keyTaps, typed
 
     var id: String { rawValue }
 
@@ -36,6 +36,7 @@ enum TriggerCategory: String, CaseIterable, Identifiable {
         case .magicMouse: return "Magic Mouse"
         case .mouseButtons: return "Mouse buttons"
         case .drawings: return "Drawings (mouse gestures)"
+        case .screenSpots: return "Screen corners and edges"
         case .shortcuts: return "Keyboard shortcuts"
         case .keyTaps: return "Modifier key taps"
         case .typed: return "Typed sequences"
@@ -49,6 +50,7 @@ enum TriggerCategory: String, CaseIterable, Identifiable {
         case .magicMouse: return "magicmouse"
         case .mouseButtons: return "computermouse"
         case .drawings: return "scribble"
+        case .screenSpots: return "rectangle.dashed"
         case .shortcuts: return "command"
         case .keyTaps: return "shift"
         case .typed: return "character.cursor.ibeam"
@@ -60,7 +62,7 @@ enum TriggerCategory: String, CaseIterable, Identifiable {
         case (.all, _): return true
         case let (.trackpad, .touch(source, _, _)): return source == .trackpad
         case let (.magicMouse, .touch(source, _, _)): return source == .magicMouse
-        case (.mouseButtons, .mouseButton), (.drawings, .stroke), (.shortcuts, .shortcut), (.keyTaps, .modifierTap), (.typed, .keySequence):
+        case (.mouseButtons, .mouseButton), (.mouseButtons, .wheel), (.drawings, .stroke), (.screenSpots, .screenSpot), (.shortcuts, .shortcut), (.keyTaps, .modifierTap), (.typed, .keySequence):
             return true
         default: return false
         }
@@ -73,6 +75,7 @@ enum TriggerCategory: String, CaseIterable, Identifiable {
         case .magicMouse: return .touch(.magicMouse, .tap, fingers: 2)
         case .mouseButtons: return .mouseButton(3)
         case .drawings: return .stroke(button: 1, path: "L")
+        case .screenSpots: return .screenSpot(.topLeft)
         case .shortcuts: return .shortcut(keyCode: 0, modifiers: 0)
         case .keyTaps: return .modifierTap(.rightCommand, taps: 2)
         case .typed: return .keySequence(";;")

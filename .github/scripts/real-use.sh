@@ -37,7 +37,7 @@ done < <(find Sources E2E -name '*.swift' ! -path 'Sources/App/App.swift' | sort
 xcrun swiftc -parse-as-library -swift-version 5 -target "${ARCH}-apple-macos14.0" -sdk "$SDK" \
     -framework AppKit -framework SwiftUI -framework Carbon -framework ServiceManagement -framework IOKit \
     -framework Quartz -framework Vision -framework CoreWLAN -framework CoreLocation -framework CoreAudio \
-    -framework Network -framework AVFoundation -framework CoreMedia \
+    -framework Network -framework AVFoundation -framework CoreMedia -framework IOBluetooth \
     "${SOURCES[@]}" -o "$E2E/Contents/MacOS/ToolbeltE2E" || exit 1
 cat > "$E2E/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

@@ -25,6 +25,12 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
     /// The moment that many fingers touch; holding them still for a while; a tap high or low on the
     /// trackpad; and a Force Click (pressing harder until the second click).
     case touchStart, longTouch, tapTop, tapBottom, forceClick
+    /// Turning two fingers (like turning a knob): left is anticlockwise.
+    case rotateLeft, rotateRight
+    /// Starting at an edge of the trackpad and sliding in.
+    case edgeSwipeFromLeft, edgeSwipeFromRight, edgeSwipeFromTop, edgeSwipeFromBottom
+    /// One finger rests while the others swipe ("fingers" counts them all).
+    case tipSwipeLeft, tipSwipeRight, tipSwipeUp, tipSwipeDown
 
     var id: String { rawValue }
 
@@ -66,6 +72,16 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         case .tapTop: return "Tap near the top"
         case .tapBottom: return "Tap near the bottom"
         case .forceClick: return "Force Click (experimental)"
+        case .rotateLeft: return "Rotate left (anticlockwise)"
+        case .rotateRight: return "Rotate right (clockwise)"
+        case .edgeSwipeFromLeft: return "Swipe in from the left edge"
+        case .edgeSwipeFromRight: return "Swipe in from the right edge"
+        case .edgeSwipeFromTop: return "Swipe in from the top edge"
+        case .edgeSwipeFromBottom: return "Swipe in from the bottom edge"
+        case .tipSwipeLeft: return "TipSwipe left"
+        case .tipSwipeRight: return "TipSwipe right"
+        case .tipSwipeUp: return "TipSwipe up"
+        case .tipSwipeDown: return "TipSwipe down"
         }
     }
 
@@ -82,6 +98,11 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         }
     }
     var isTipTap: Bool { self == .tipTapLeft || self == .tipTapRight }
+    var isTipSwipe: Bool { rawValue.hasPrefix("tipSwipe") }
+    var isEdgeSwipe: Bool { rawValue.hasPrefix("edgeSwipe") }
+    /// Reported together with the plain swipe they also are; when one of these has a rule, the plain
+    /// swipe is skipped, so a swipe from the edge doesn't also run the ordinary swipe's actions.
+    var isMoreSpecificSwipe: Bool { isTipSwipe || isEdgeSwipe }
 
     /// What can be done with each number of fingers on a device, for the gesture picker.
     static func choices(for source: TouchSource) -> [(fingers: Int, kinds: [TouchKind])] {
@@ -90,13 +111,15 @@ enum TouchKind: String, Codable, CaseIterable, Identifiable {
         switch source {
         case .trackpad:
             let held: [TouchKind] = [.touchStart, .longTouch]
+            let edges: [TouchKind] = [.edgeSwipeFromLeft, .edgeSwipeFromRight, .edgeSwipeFromTop, .edgeSwipeFromBottom]
+            let tipSwipes: [TouchKind] = [.tipSwipeLeft, .tipSwipeRight, .tipSwipeUp, .tipSwipeDown]
             return [
                 (1, [.tap, .doubleTap, .tapTopLeft, .tapTopMiddle, .tapTopRight, .tapLeftMiddle, .tapRightMiddle,
                      .tapBottomLeft, .tapBottomMiddle, .tapBottomRight, .cornerTopLeft, .cornerTopRight, .cornerBottomLeft, .cornerBottomRight,
-                     .forceClick] + held),
-                (2, [.tap, .doubleTap, .tapTop, .tapBottom, .tipTapLeft, .tipTapRight] + swipes + [.pinchIn, .pinchOut] + held),
-                (3, [.tap, .doubleTap, .tapTop, .tapBottom, .click, .forceClick, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut] + held),
-                (4, [.tap, .doubleTap, .tapTop, .tapBottom, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut] + held),
+                     .forceClick] + edges + held),
+                (2, [.tap, .doubleTap, .tapTop, .tapBottom, .tipTapLeft, .tipTapRight] + swipes + [.pinchIn, .pinchOut, .rotateLeft, .rotateRight] + edges + held),
+                (3, [.tap, .doubleTap, .tapTop, .tapBottom, .click, .forceClick, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut] + tipSwipes + held),
+                (4, [.tap, .doubleTap, .tapTop, .tapBottom, .click, .tipTapLeft, .tipTapRight] + swipes + scrolls + [.pinchIn, .pinchOut] + tipSwipes + held),
                 (5, [.tap, .doubleTap, .tapTop, .tapBottom, .click] + swipes + scrolls + [.pinchIn, .pinchOut] + held),
             ]
         case .magicMouse:
@@ -186,12 +209,18 @@ enum Gesture: Codable, Hashable {
     case keySequence(String)
     /// A keyboard shortcut: a key with ⌘ ⌥ ⌃ ⇧ (Carbon modifier flags).
     case shortcut(keyCode: Int, modifiers: Int)
+    /// The mouse wheel: tilted left or right ("L", "R"; button 0), or turned while holding a mouse button
+    /// (2 = middle, 3 = back, 4 = forward…; "U", "D", "L", "R").
+    case wheel(button: Int, direction: String)
+    /// Pushing the pointer into a corner of the screen, or against an edge, and leaving it there a moment.
+    case screenSpot(ScreenSpot)
 
     var title: String {
         switch self {
         case let .touch(source, kind, fingers):
             if kind.isPlaced { return "\(source.title): \(kind.title)" }
             if kind.isTipTap { return "\(source.title): \(kind.title) (\(fingers - 1) resting, tap with one more)" }
+            if kind.isTipSwipe { return "\(source.title): \(kind.title) (1 resting, swipe with \(fingers - 1))" }
             return "\(source.title): \(kind.title) with \(fingers) finger\(fingers == 1 ? "" : "s")"
         case .mouseButton(let button): return "Mouse button \(button + 1)"
         case let .stroke(button, path):
@@ -201,6 +230,11 @@ enum Gesture: Codable, Hashable {
         case .keySequence(let keys): return "Type “\(keys)”"
         case let .shortcut(keyCode, modifiers):
             return keyCode == 0 && modifiers == 0 ? "Keyboard shortcut (not set)" : Shortcut(keyCode: keyCode, modifiers: modifiers).display
+        case let .wheel(button, direction):
+            let way = ["U": "up", "D": "down", "L": "left", "R": "right"][direction] ?? direction
+            if button == 0 { return "Tilt the mouse wheel \(way)" }
+            return "Hold \(button == 2 ? "the middle button" : "mouse button \(button + 1)") and scroll \(way)"
+        case .screenSpot(let spot): return "Pointer to the \(spot.title)"
         }
     }
 
@@ -223,6 +257,71 @@ enum Gesture: Codable, Hashable {
         default:
             return self == event
         }
+    }
+}
+
+// MARK: - Screen corners and edges
+
+enum ScreenSpot: String, Codable, CaseIterable, Identifiable {
+    case topLeft, topRight, bottomLeft, bottomRight, topEdge, bottomEdge, leftEdge, rightEdge
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .topLeft: return "top-left corner"
+        case .topRight: return "top-right corner"
+        case .bottomLeft: return "bottom-left corner"
+        case .bottomRight: return "bottom-right corner"
+        case .topEdge: return "top edge"
+        case .bottomEdge: return "bottom edge"
+        case .leftEdge: return "left edge"
+        case .rightEdge: return "right edge"
+        }
+    }
+
+    /// Where the pointer is (screen points, bottom-left origin, as NSEvent.mouseLocation gives them),
+    /// if it's pushed into a corner or against an outer edge. An edge shared with another display
+    /// isn't an edge: the pointer goes on to that display.
+    static func at(_ point: CGPoint, screens: [CGRect], corner: CGFloat = 12, edge: CGFloat = 1) -> ScreenSpot? {
+        guard let frame = screens.first(where: { $0.insetBy(dx: -0.5, dy: -0.5).contains(point) }) else { return nil }
+        func open(_ dx: CGFloat, _ dy: CGFloat) -> Bool {
+            let beyond = CGPoint(x: point.x + dx, y: point.y + dy)
+            return !screens.contains { $0.contains(beyond) }
+        }
+        let left = point.x - frame.minX <= edge && open(-3, 0)
+        let right = frame.maxX - point.x <= edge + 1 && open(3, 0)
+        let bottom = point.y - frame.minY <= edge && open(0, -3)
+        let top = frame.maxY - point.y <= edge + 1 && open(0, 3)
+        let nearLeft = point.x - frame.minX <= corner, nearRight = frame.maxX - point.x <= corner
+        let nearBottom = point.y - frame.minY <= corner, nearTop = frame.maxY - point.y <= corner
+        if (left || top) && nearLeft && nearTop { return .topLeft }
+        if (right || top) && nearRight && nearTop { return .topRight }
+        if (left || bottom) && nearLeft && nearBottom { return .bottomLeft }
+        if (right || bottom) && nearRight && nearBottom { return .bottomRight }
+        if top { return .topEdge }
+        if bottom { return .bottomEdge }
+        if left { return .leftEdge }
+        if right { return .rightEdge }
+        return nil
+    }
+}
+
+/// Turns mouse-wheel events into wheel gestures: only real wheels (not trackpads or the Magic Mouse,
+/// whose scrolling is "continuous"), one gesture per notch, and tilts no more than every `tiltGap` seconds.
+struct WheelDetector {
+    var tiltGap = 0.15
+    private var lastTilt = -Double.infinity
+
+    /// `vertical` and `horizontal` are the wheel's line deltas (positive: up, and left).
+    mutating func gesture(vertical: Int64, horizontal: Int64, continuous: Bool, heldButton: Int?, at time: Double) -> Gesture? {
+        guard !continuous, vertical != 0 || horizontal != 0 else { return nil }
+        let across = abs(horizontal) > abs(vertical)
+        let direction = across ? (horizontal > 0 ? "L" : "R") : (vertical > 0 ? "U" : "D")
+        if let heldButton { return .wheel(button: heldButton, direction: direction) }
+        guard across, time - lastTilt >= tiltGap else { return nil }
+        lastTilt = time
+        return .wheel(button: 0, direction: direction)
     }
 }
 
@@ -260,7 +359,7 @@ struct TouchRecognizer {
     private var firstPositions: [Int: TouchPoint] = [:]
     private var moved = 0.0
     private var fired = false
-    private var countStart: (count: Int, centre: (Double, Double), spread: Double)?
+    private var countStart: (count: Int, centre: (Double, Double), spread: Double, angle: Double?)?
     private var countSince: Double = 0
     private var previousCount = 0
     private var longTouched = false
@@ -343,7 +442,7 @@ struct TouchRecognizer {
             // More fingers than a moment ago: "touch start" for that many.
             let added = touches.count > previousCount
             previousCount = touches.count
-            countStart = (touches.count, centre, spread)
+            countStart = (touches.count, centre, spread, Self.angle(of: touches))
             countSince = time
             longTouched = false
             scrollAnchor = centre
@@ -364,9 +463,26 @@ struct TouchRecognizer {
             return gestures + [.touch(source, .longTouch, fingers: count)]
         }
 
+        // Before pinches: one finger resting while the others slide changes their spread too.
+        if count >= 3, let tipSwipe = tipSwipeCheck(touches) {
+            fired = true
+            // The plain swipe too (the moving fingers' share of it), for when only that has a rule.
+            return gestures + [.touch(source, tipSwipe, fingers: count), .touch(source, Self.direction(tipSwipe), fingers: count)]
+        }
         if count >= 2, start.spread > 0.02 {
             let ratio = spread / start.spread
             let travel = hypot(centre.0 - start.centre.0, centre.1 - start.centre.1)
+            // Two fingers turning around their middle, staying about as far apart: a rotation.
+            if count == 2, let startAngle = start.angle, let angle = Self.angle(of: touches), travel < swipeDistance * 0.6,
+               ratio > 0.7, ratio < 1.4 {
+                var turn = angle - startAngle
+                if turn > .pi { turn -= 2 * .pi }
+                if turn < -.pi { turn += 2 * .pi }
+                if abs(turn) >= rotateAngle {
+                    fired = true
+                    return gestures + [.touch(source, turn > 0 ? .rotateLeft : .rotateRight, fingers: 2)]
+                }
+            }
             if travel < swipeDistance * 0.6 {
                 if ratio < 0.6 { fired = true; return gestures + [.touch(source, .pinchIn, fingers: count)] }
                 if ratio > 1.6 { fired = true; return gestures + [.touch(source, .pinchOut, fingers: count)] }
@@ -376,7 +492,62 @@ struct TouchRecognizer {
         guard max(abs(dx), abs(dy)) >= swipeDistance else { return gestures }
         fired = true
         let kind: TouchKind = abs(dx) > abs(dy) ? (dx < 0 ? .swipeLeft : .swipeRight) : (dy > 0 ? .swipeUp : .swipeDown)
+        if source == .trackpad, count <= 2, let edge = edgeSwipe(kind) {
+            return gestures + [.touch(source, edge, fingers: count), .touch(source, kind, fingers: count)]
+        }
         return gestures + [.touch(source, kind, fingers: count)]
+    }
+
+    /// How far two fingers must turn for a rotation (radians, about 25°).
+    var rotateAngle = 0.44
+    /// How close to an edge (0–1 of the trackpad) a swipe must start to be a swipe in from that edge.
+    var edgeZone = 0.07
+
+    /// The angle of the line from the first finger to the second (by finger id), or nil without two fingers.
+    static func angle(of touches: [TouchPoint]) -> Double? {
+        guard touches.count == 2 else { return nil }
+        let sorted = touches.sorted { $0.id < $1.id }
+        return atan2(sorted[1].y - sorted[0].y, sorted[1].x - sorted[0].x)
+    }
+
+    /// A swipe that started at an edge and moved in from it.
+    private func edgeSwipe(_ kind: TouchKind) -> TouchKind? {
+        let starts = firstPositions.values
+        guard !starts.isEmpty else { return nil }
+        switch kind {
+        case .swipeRight where starts.allSatisfy({ $0.x < edgeZone }): return .edgeSwipeFromLeft
+        case .swipeLeft where starts.allSatisfy({ $0.x > 1 - edgeZone }): return .edgeSwipeFromRight
+        case .swipeDown where starts.allSatisfy({ $0.y > 1 - edgeZone }): return .edgeSwipeFromTop
+        case .swipeUp where starts.allSatisfy({ $0.y < edgeZone }): return .edgeSwipeFromBottom
+        default: return nil
+        }
+    }
+
+    /// One finger staying where it landed while all the others slide the same way far enough.
+    private func tipSwipeCheck(_ touches: [TouchPoint]) -> TouchKind? {
+        func travel(_ touch: TouchPoint) -> (Double, Double)? {
+            guard let first = firstPositions[touch.id] else { return nil }
+            return (touch.x - first.x, touch.y - first.y)
+        }
+        let moves = touches.compactMap { touch in travel(touch).map { (touch, $0) } }
+        guard moves.count == touches.count else { return nil }
+        let still = moves.filter { hypot($0.1.0, $0.1.1) <= tapMovement * 2 }
+        guard still.count == 1 else { return nil }
+        let moving = moves.filter { $0.0.id != still[0].0.id }.map(\.1)
+        let dx = moving.reduce(0) { $0 + $1.0 } / Double(moving.count)
+        let dy = moving.reduce(0) { $0 + $1.1 } / Double(moving.count)
+        guard max(abs(dx), abs(dy)) >= swipeDistance,
+              moving.allSatisfy({ hypot($0.0, $0.1) >= swipeDistance * 0.6 }) else { return nil }
+        return abs(dx) > abs(dy) ? (dx < 0 ? .tipSwipeLeft : .tipSwipeRight) : (dy > 0 ? .tipSwipeUp : .tipSwipeDown)
+    }
+
+    static func direction(_ tipSwipe: TouchKind) -> TouchKind {
+        switch tipSwipe {
+        case .tipSwipeLeft: return .swipeLeft
+        case .tipSwipeRight: return .swipeRight
+        case .tipSwipeUp: return .swipeUp
+        default: return .swipeDown
+        }
     }
 
     /// Which place a one-finger tap was in, if it was near an edge (trackpad) or to one side (Magic Mouse).

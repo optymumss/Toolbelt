@@ -206,6 +206,35 @@ enum Prefs {
         set { store.set(newValue, for: "gestures.typingPause") }
     }
 
+    /// Caps Lock as the Hyper key (⌃⌥⇧⌘), and whether tapping it alone types Esc.
+    static var hyperKey: Bool {
+        get { store.value("keys.hyper", default: false) }
+        set { store.set(newValue, for: "keys.hyper") }
+    }
+
+    static var hyperEscape: Bool {
+        get { store.value("keys.hyperEscape", default: true) }
+        set { store.set(newValue, for: "keys.hyperEscape") }
+    }
+
+    /// Keys changed into other keys (HID usages).
+    static var keyRemaps: [KeyRemap] {
+        get {
+            let saved: [[String: Int]] = store.value("keys.remaps", default: [])
+            return saved.compactMap { item in
+                guard let from = item["from"], let to = item["to"] else { return nil }
+                return KeyRemap(from: from, to: to)
+            }
+        }
+        set { store.set(newValue.map { ["from": $0.from, "to": $0.to] }, for: "keys.remaps") }
+    }
+
+    /// Whether Toolbelt has changed macOS's key mapping (so it knows to put it back, and leaves it alone otherwise).
+    static var keyMappingApplied: Bool {
+        get { store.value("keys.applied", default: false) }
+        set { store.set(newValue, for: "keys.applied") }
+    }
+
     /// The web server (Settings → Automation): off unless switched on.
     static var webServerOn: Bool {
         get { store.value("web.on", default: false) }
