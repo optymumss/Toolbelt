@@ -19,4 +19,10 @@ ln -s /Applications "$STAGE/Applications"
 
 rm -f "$DMG"
 hdiutil create -quiet -volname "Toolbelt $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
+if ! hdiutil verify -quiet "$DMG"; then
+    echo "✗ the new disk image doesn't verify"
+    du -sh "$STAGE"; find "$STAGE" -type f -size +5M -exec ls -l {} \;
+    xxd "$DMG" | head -4; tail -c 512 "$DMG" | xxd | head -4
+    exit 1
+fi
 echo "✓ $DMG (Toolbelt $VERSION, $(du -h "$DMG" | cut -f1 | tr -d ' '))"
