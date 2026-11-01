@@ -72,6 +72,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             self?.openSettings(nil)
         }
         menu.addItem(settings)
+        menu.addItem(ActionMenuItem("Check for Updates…") { Task { await Updater.shared.check(userAsked: true) } })
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Toolbelt", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))

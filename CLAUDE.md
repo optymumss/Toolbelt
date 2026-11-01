@@ -15,14 +15,18 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32). Self-update from GitHub releases ✅ (v0.33).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
 
 - `Sources/App/` — app shell: `Modules.swift` (`ModuleID`, `ToolbeltModule`, `ModuleManager`),
   `Shortcuts.swift` (`ShortcutAction`, `ShortcutCenter`, Carbon `HotKey`), `Permissions.swift`,
-  `SettingsStore.swift` (`Prefs`), `StatusMenu.swift`.
+  `SettingsStore.swift` (`Prefs`), `StatusMenu.swift`. `Updater.swift` (0.33): `ReleaseFeed` (GitHub
+  releases/latest, or TOOLBELT_UPDATE_URL in tests), `AppVersion` (numeric compare; TOOLBELT_PRETEND_VERSION),
+  `Updater.unpack` (mount DMG, check bundle ID + version, ditto to a staging copy beside the app), `UpdateSwap.script`
+  (waits for the pid, swaps with rollback, relaunches). The release step puts the README's "What's new in <version>"
+  into the release notes, so bump the version and write that section for every release.
 - `Sources/Settings/` — Settings window: General, Shortcuts, Permissions, and one tab per module.
 - `Sources/<Module>/` — one folder per module. A module conforms to `ToolbeltModule`, adds a
   `ModuleID` case, its `ShortcutAction` cases, and is registered in `AppDelegate`.

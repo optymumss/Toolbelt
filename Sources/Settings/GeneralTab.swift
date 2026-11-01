@@ -19,6 +19,8 @@ struct GeneralTab: View {
                 }
             }
 
+            UpdateSettings()
+
             Section("Appearance") {
                 Picker("Look", selection: appearance) {
                     ForEach(AppearanceMode.allCases) { mode in

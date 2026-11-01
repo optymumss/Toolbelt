@@ -1,9 +1,18 @@
-# Toolbelt — v0.32
+# Toolbelt — v0.33
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.33: Toolbelt updates itself
+- **Check for Updates…** in the menu-bar menu, and **Settings → General → Updates**: Toolbelt asks its GitHub
+  releases once a day (switch that off if you like) whether there's a newer version.
+- When there is, a small window shows what's new, with **Install and Restart**, **Later** and **Skip This Version**.
+- **Install and Restart** downloads the new Toolbelt.dmg, checks it really holds Toolbelt at that version,
+  swaps it in for the copy in Applications and opens it again — no dragging. Your settings, macros and
+  clipboard stay as they are. macOS asks once more for Toolbelt's permissions afterwards.
+- Each release on GitHub now carries its "What's new" notes, which the window shows.
 
 ## What's new in 0.32: calculations, picture filters, sub-macros, palettes and a friendlier Macros window
 - **Calculate** step: sums like `%Price% * 1.2` or `(3 + 4) / 2` (+ − × ÷, % remainder, ^ power, brackets).

@@ -60,6 +60,7 @@ enum ToolbeltTests {
         t.group("Macro triggers and conditions: clipboard, start, windows, pause until, keys, colours, pictures", MacroConditionTests.run)
         t.group("Macro actions: apps, windows, files, browser, download, speech, sounds, volume, layouts, prompts", KMActionTests.run)
         t.group("Calculations, picture filters, sub-macros, palettes and the Macros window's lists", MacroExtraTests.run)
+        t.group("Updating Toolbelt from GitHub: versions, releases, unpacking and swapping", UpdaterTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4639,5 +4640,102 @@ enum MacroExtraTests {
         check((try? JSONDecoder().decode(FloatingMenu.self, from: Data(oldMenu.utf8)))?.apps == nil, "floating menus saved before still load")
         check(!MacroTrigger.Kind.clipboardFilter.title.isEmpty && [MacroStep.Kind.calculate, .pictureFilter, .runMacro].allSatisfy { !$0.title.isEmpty },
               "the new trigger and steps have names")
+    }
+}
+
+@MainActor
+enum UpdaterTests {
+    static func shell(_ command: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
+    /// A pretend Toolbelt.app in `folder` with this bundle ID and version.
+    static func fakeApp(in folder: URL, id: String = "local.personal.toolbelt", version: String) -> URL {
+        let app = folder.appendingPathComponent("Toolbelt.app")
+        try? FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+        (["CFBundleIdentifier": id, "CFBundleShortVersionString": version] as NSDictionary)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"), atomically: true)
+        try? Data("v\(version)".utf8).write(to: app.appendingPathComponent("Contents/MacOS/Toolbelt"))
+        return app
+    }
+
+    static func version(of app: URL) -> String? {
+        NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
+    }
+
+    static func run() {
+        // Versions
+        check(AppVersion.isNewer("0.10", than: "0.9"), "0.10 is newer than 0.9 (numbers, not letters)")
+        check(AppVersion.isNewer("v0.33", than: "0.32") && !AppVersion.isNewer("0.32", than: "0.32"), "a leading v is ignored; the same isn't newer")
+        check(AppVersion.isNewer("1.0", than: "0.99.9") && AppVersion.compare("0.33", "0.33.0") == .orderedSame, "missing parts count as 0")
+        check(!AppVersion.isNewer("0.31", than: "0.32"), "an older one isn't offered")
+
+        // GitHub's answer
+        let json = ###"{"tag_name":"v0.34","draft":false,"prerelease":false,"html_url":"https://github.com/optymumss/Toolbelt/releases/tag/v0.34","body":"## What's new in 0.34: more\n- **Bold** and `code`","assets":[{"name":"notes.txt","browser_download_url":"https://x/notes.txt"},{"name":"Toolbelt.dmg","browser_download_url":"https://github.com/optymumss/Toolbelt/releases/download/v0.34/Toolbelt.dmg"}]}"###
+        let release = ReleaseFeed.parse(Data(json.utf8))
+        checkEqual(release?.version, "0.34", "the version comes from the tag")
+        checkEqual(release?.dmg.lastPathComponent, "Toolbelt.dmg", "the DMG is picked from the release's files")
+        checkEqual(release.map { ReleaseFeed.plainNotes($0.notes) }, " What's new in 0.34: more\n- Bold and code".trimmingCharacters(in: .whitespaces),
+                   "notes are shown as plain words")
+        check(ReleaseFeed.parse(Data(#"{"tag_name":"v1","draft":true,"assets":[{"name":"Toolbelt.dmg","browser_download_url":"https://x/T.dmg"}]}"#.utf8)) == nil,
+              "a draft release isn't offered")
+        check(ReleaseFeed.parse(Data(#"{"tag_name":"v1","assets":[]}"#.utf8)) == nil, "nor one without a DMG")
+        check(ReleaseFeed.parse(Data("not json".utf8)) == nil, "nor an answer that isn't one")
+        checkEqual(ReleaseFeed.latest.absoluteString, "https://api.github.com/repos/optymumss/Toolbelt/releases/latest", "it asks Toolbelt's own GitHub releases")
+
+        // Unpacking a downloaded DMG
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("tb-update-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let source = work.appendingPathComponent("source")
+        _ = fakeApp(in: source, version: "9.9")
+        let dmg = work.appendingPathComponent("Toolbelt.dmg")
+        let made = shell("hdiutil create -quiet -volname Toolbelt -srcfolder '\(source.path)' -format UDZO -ov '\(dmg.path)'")
+        check(made, "a test DMG is made")
+        let staged = work.appendingPathComponent(".Toolbelt-update.app")
+        do {
+            try Updater.unpack(dmg, version: "9.9", to: staged)
+            checkEqual(version(of: staged), "9.9", "the app is copied out of the DMG")
+        } catch {
+            check(false, "the app is copied out of the DMG", "\(error)")
+        }
+        do {
+            try Updater.unpack(dmg, version: "9.8", to: work.appendingPathComponent(".other.app"))
+            check(false, "a DMG with a different version is refused")
+        } catch {
+            check("\(error.localizedDescription)".contains("9.8"), "a DMG with a different version is refused", "\(error)")
+        }
+        let strangerSource = work.appendingPathComponent("stranger")
+        _ = fakeApp(in: strangerSource, id: "com.example.other", version: "9.9")
+        let strangerDMG = work.appendingPathComponent("Other.dmg")
+        _ = shell("hdiutil create -quiet -volname Other -srcfolder '\(strangerSource.path)' -format UDZO -ov '\(strangerDMG.path)'")
+        do {
+            try Updater.unpack(strangerDMG, version: "9.9", to: work.appendingPathComponent(".stranger.app"))
+            check(false, "a DMG holding another app is refused")
+        } catch {
+            check("\(error.localizedDescription)".contains("isn't Toolbelt"), "a DMG holding another app is refused", "\(error)")
+        }
+
+        // Swapping it in
+        let installed = fakeApp(in: work.appendingPathComponent("Applications"), version: "1.0")
+        let script = UpdateSwap.script(staged: staged, target: installed, pid: 0, relaunch: false)
+        check(shell(script), "the swap script runs")
+        checkEqual(version(of: installed), "9.9", "the new version is where the old one was")
+        check(!FileManager.default.fileExists(atPath: staged.path) && !FileManager.default.fileExists(atPath: installed.path + ".old"),
+              "nothing is left behind")
+        let missing = work.appendingPathComponent("nothing-here.app")
+        check(!shell(UpdateSwap.script(staged: missing, target: installed, pid: 0, relaunch: false)) && version(of: installed) == "9.9",
+              "if the new copy is missing, the installed one is kept")
+        check(UpdateSwap.quoted("it's") == "'it'\\''s'", "paths with quotes are safe in the script")
+        check(UpdateSwap.script(staged: staged, target: installed, pid: 42, relaunch: true).contains("kill -0 42")
+              && UpdateSwap.script(staged: staged, target: installed, pid: 42, relaunch: true).contains("open "),
+              "it waits for Toolbelt to quit, then opens the new one")
     }
 }
