@@ -100,6 +100,9 @@ final class AutomationModule: ToolbeltModule {
         gestures?.updateListening()
     }
 
+    /// A macro to show when the Macros window opens (used for the screenshots).
+    var selectOnOpen: UUID?
+
     func open() {
         if editor == nil {
             let window = NSWindow(contentViewController: NSHostingController(rootView: MacrosView(store: store, module: self)))

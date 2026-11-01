@@ -184,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         MacroStep(kind: .action, action: .toolbelt(.layout(1))),
                     ]),
                 ]
+                automation.selectOnOpen = automation.store.macros.first?.id
                 automation.open()
             case "settings-gestures":
                 // A few example gestures, one opened for editing.

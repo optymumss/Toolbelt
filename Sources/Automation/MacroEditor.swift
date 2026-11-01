@@ -14,6 +14,15 @@ struct MacrosView: View {
     @State private var recording = false
 
     var body: some View {
+        content.onAppear {
+            if let wanted = module.selectOnOpen {
+                selection = wanted
+                module.selectOnOpen = nil
+            }
+        }
+    }
+
+    private var content: some View {
         NavigationSplitView {
             List(selection: $selection) {
                 ForEach(sections) { section in
