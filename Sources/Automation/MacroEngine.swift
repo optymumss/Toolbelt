@@ -348,11 +348,15 @@ final class MacroRun {
         grid.column(at: 0).xPlacement = .trailing
         grid.frame.size = grid.fittingSize
         alert.accessoryView = grid
-        for (box, next) in zip(boxes, boxes.dropFirst()) { box.nextKeyView = next }
+        // Tab and ⇧Tab go from box to box (the alert's own key order doesn't follow the boxes).
+        let order = TabOrder(boxes)
+        boxes.forEach { $0.delegate = order }
         alert.window.initialFirstResponder = boxes.first
         // The alert picks its own first responder as it opens: put the cursor in the first box once it's showing.
         guard let first = boxes.first else { return alert.runModal() == .alertFirstButtonReturn ? [] : nil }
-        return Self.run(alert, focusing: first) == .alertFirstButtonReturn ? boxes.map(\.stringValue) : nil
+        let answered = Self.run(alert, focusing: first) == .alertFirstButtonReturn
+        withExtendedLifetime(order) {}
+        return answered ? boxes.map(\.stringValue) : nil
     }
 
     static func postNotification(_ title: String, _ message: String) {
@@ -362,5 +366,23 @@ final class MacroRun {
             return
         }
         DownloadNotifier.post(id: UUID().uuidString, title: title, body: message, path: nil)
+    }
+}
+
+/// Moves between the boxes of "Ask me several things at once" with Tab and ⇧Tab.
+final class TabOrder: NSObject, NSTextFieldDelegate {
+    let boxes: [NSTextField]
+
+    init(_ boxes: [NSTextField]) {
+        self.boxes = boxes
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard selector == #selector(NSResponder.insertTab(_:)) || selector == #selector(NSResponder.insertBacktab(_:)),
+              let index = boxes.firstIndex(where: { $0 === control }), !boxes.isEmpty else { return false }
+        let step = selector == #selector(NSResponder.insertTab(_:)) ? 1 : -1
+        let next = boxes[(index + step + boxes.count) % boxes.count]
+        control.window?.makeFirstResponder(next)
+        return true
     }
 }
