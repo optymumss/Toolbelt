@@ -11,6 +11,34 @@ final class GestureStore: ObservableObject {
     @Published var groups: [ActivationGroup] = [] {
         didSet { if groups != oldValue { saveGroups(); onChange?() } }
     }
+    /// Presets ("Work", "Home"…), and the one in use (nil: none, so only triggers in no preset work).
+    @Published var presets: [TriggerPreset] = [] {
+        didSet { if presets != oldValue { savePresets(); onChange?() } }
+    }
+    @Published var activePreset: UUID? = Prefs.activePreset {
+        didSet { if activePreset != oldValue { Prefs.activePreset = activePreset; onChange?() } }
+    }
+    private let presetsFile = SettingsStore.folder.appendingPathComponent("presets.json")
+
+    private func savePresets() {
+        do {
+            try JSONEncoder().encode(presets).write(to: presetsFile, options: .atomic)
+        } catch {
+            NSLog("Toolbelt: could not save presets: \(error)")
+        }
+    }
+
+    /// Switches to the preset with this name ("" or no match: the next one, in turn).
+    func switchPreset(named name: String) {
+        if let preset = presets.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            activePreset = preset.id
+        } else if !presets.isEmpty {
+            let index = presets.firstIndex { $0.id == activePreset }.map { ($0 + 1) % presets.count } ?? 0
+            activePreset = presets[index].id
+        }
+        HUD.show("Preset: \(presets.first { $0.id == activePreset }?.name ?? "none")", symbol: "square.stack")
+        RealUseHooks.writeStatus()
+    }
     var onChange: (() -> Void)?
     private let file = SettingsStore.folder.appendingPathComponent("gestures.json")
     private let groupsFile = SettingsStore.folder.appendingPathComponent("trigger-groups.json")
@@ -21,6 +49,9 @@ final class GestureStore: ObservableObject {
         }
         if let data = try? Data(contentsOf: groupsFile), let saved = try? JSONDecoder().decode([ActivationGroup].self, from: data) {
             groups = saved
+        }
+        if let data = try? Data(contentsOf: presetsFile), let saved = try? JSONDecoder().decode([TriggerPreset].self, from: data) {
+            presets = saved
         }
     }
 
@@ -85,7 +116,11 @@ final class GesturesModule: ToolbeltModule {
     private(set) var log: [Gesture] = []
     /// More rules from other modules (macros started by a gesture or typed text).
     var extraRules: () -> [GestureRule] = { [] }
-    private var allRules: [GestureRule] { store.rules + extraRules() }
+    /// Every rule that works now: this module's and other modules', in no preset or in the one in use.
+    private var allRules: [GestureRule] {
+        let active = store.activePreset
+        return (store.rules + extraRules()).filter { TriggerPreset.allows($0, active: active) }
+    }
 
     init(shortcuts: ShortcutCenter, openSettings: @escaping () -> Void = {}) {
         runner = ActionRunner(shortcuts: shortcuts)
@@ -99,6 +134,11 @@ final class GesturesModule: ToolbeltModule {
         MultitouchReader.shared.onLift = { [weak self] source in self?.fingersLifted(source) }
         tap.onKey = { [weak self] press in self?.keyEvent(press) ?? false }
         TriggersWindowController.openFromSettings = { [weak self] in self?.open() }
+        ActionRunner.switchPreset = { [weak self] name in self?.store.switchPreset(named: name) }
+        RealUseHooks.extraStatus["activePreset"] = { [weak self] in
+            guard let store = self?.store else { return "" }
+            return store.presets.first { $0.id == store.activePreset }?.name ?? ""
+        }
         TriggersWindowController.stopLiveView = { [weak self] in self?.updateListening() }
     }
 

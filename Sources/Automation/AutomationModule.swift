@@ -37,6 +37,7 @@ final class AutomationModule: ToolbeltModule {
     static var terminalFolder: URL { SettingsStore.folder.appendingPathComponent("inbox-macros", isDirectory: true) }
 
     let web = WebServer()
+    let panels = PanelController()
 
     /// Starts, restarts or stops the web server to match Settings.
     func updateWebServer() {
@@ -61,6 +62,10 @@ final class AutomationModule: ToolbeltModule {
     func start() {
         running = true
         ActionRunner.runMacro = { [weak self] name in self?.run(named: name) }
+        ActionRunner.toggleFloatingMenu = { [weak self] name in self?.panels.toggle(named: name) }
+        panels.start(runner: runner)
+        RealUseHooks.extraStatus["floatingMenus"] = { [weak self] in self?.panels.showingFrames ?? [:] }
+        RealUseHooks.extraStatus["menuBarItems"] = { [weak self] in self?.panels.menuBarStatus ?? [] }
         arm()
         updateWebServer()
     }
@@ -68,6 +73,7 @@ final class AutomationModule: ToolbeltModule {
     func stop() {
         running = false
         web.stop()
+        panels.stop()
         disarm()
         gestures?.updateListening()
     }
@@ -384,7 +390,10 @@ final class AutomationModule: ToolbeltModule {
     }
 
     func settingsView() -> AnyView {
-        AnyView(AutomationSettingsTab(store: store, web: self) { [weak self] in self?.open() })
+        AnyView(Group {
+            AutomationSettingsTab(store: store, web: self) { [weak self] in self?.open() }
+            PanelSettings(store: panels.store, controller: panels)
+        })
     }
 
     func willTerminate() {

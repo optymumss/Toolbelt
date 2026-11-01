@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -52,6 +52,12 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   `WheelDetector`, scrollWheel in the mouse tap) and `.screenSpot` (`ScreenSpot.at`, `ScreenSpotWatcher` via
   mouse-moved monitors). `KeyRemapper`: hidutil UserKeyMapping (Caps Lock → F18 for the Hyper key, plus
   `KeyRemap`s), an active tap adding ⌃⌥⇧⌘ while F18 is held; cleared on quit (`keys.applied` tracks it).
+- Presets: `TriggerPreset` (Conditions.swift), `GestureRule.presetID`, `GestureStore.presets`/`activePreset`
+  (presets.json, `triggers.preset`); `GesturesModule.allRules` filters by preset, so hot keys follow the switch.
+- Floating menus and menu-bar items (`Automation/FloatingMenus.swift`): `PanelStore` (panels.json), `PanelController`
+  (non-activating floating `NSPanel`s with `FirstClickHostingView`; `NSStatusItem`s whose title comes from a shell
+  script on a timer, min 5 s). Actions `.floatingMenu` and `.switchPreset` go through `ActionRunner` hooks.
+  In test mode `RealUseHooks.extraStatus` reports showing menus, menu-bar titles/frames and the active preset.
 - Mac-event macro triggers (`SystemEvents.swift`): sleep/wake and disks from NSWorkspace, lock/unlock from
   distributed notifications, `PowerWatcher` (IOPS), `USBWatcher` (IOKit), `BluetoothWatcher` (IOBluetooth,
   needs NSBluetoothAlwaysUsageDescription), idle via `InputIdle` polled every 30 s (2 s while idle).

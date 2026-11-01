@@ -118,6 +118,7 @@ SCREENS=(
     "trigger-conditions=trigger-conditions"
     "trigger-group=trigger-group"
     "trigger-keys=trigger-keys"
+    "floating-menu=floating-menu"
     "macros=macros"
     "settings-automation=settings-automation"
     "launcher-switcher=launcher-switcher"
@@ -142,6 +143,7 @@ for entry in "${SCREENS[@]}"; do
     [ "$screen" = "shelf-demo" ] && rm -f "$DATA_DIR/shelves.json"
     [ "$screen" = "settings-gestures" ] && rm -f "$DATA_DIR/gestures.json"
     case "$screen" in trigger*) rm -f "$DATA_DIR/gestures.json" "$DATA_DIR/trigger-groups.json" ;; esac
+    [ "$screen" = "floating-menu" ] && rm -f "$DATA_DIR/panels.json"
     sleep 1
 done
 

@@ -206,6 +206,12 @@ enum Prefs {
         set { store.set(newValue, for: "gestures.typingPause") }
     }
 
+    /// The trigger preset in use (Triggers window).
+    static var activePreset: UUID? {
+        get { (store.raw("triggers.preset") as? String).flatMap(UUID.init(uuidString:)) }
+        set { store.set(newValue?.uuidString, for: "triggers.preset") }
+    }
+
     /// Caps Lock as the Hyper key (⌃⌥⇧⌘), and whether tapping it alone types Esc.
     static var hyperKey: Bool {
         get { store.value("keys.hyper", default: false) }

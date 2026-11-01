@@ -126,6 +126,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "drop-grid": (modules.module(.shelf) as? ShelfModule)?.dropGrid.show()
             case "settings-screenshots": settings.show(tab: .module(.screenshots))
             case "settings-automation": settings.show(tab: .module(.automation))
+            case "floating-menu":
+                // An example floating menu and menu-bar item.
+                if let automation = modules.module(.automation) as? AutomationModule {
+                    let buttons = [
+                        FloatingButton(title: "Launcher", symbol: "magnifyingglass", actions: [.toolbelt(.openLauncher)]),
+                        FloatingButton(title: "Clipboard", symbol: "doc.on.clipboard", actions: [.toolbelt(.clipboardHistory)]),
+                        FloatingButton(title: "Screenshot", symbol: "camera.viewfinder", actions: [.toolbelt(.captureArea)]),
+                        FloatingButton(title: "Volume up", symbol: "speaker.wave.3", actions: [.system(.volumeUp)]),
+                        FloatingButton(title: "Dark mode", symbol: "circle.lefthalf.filled", actions: [.system(.toggleDarkMode)]),
+                        FloatingButton(title: "Lock", symbol: "lock", actions: [.system(.lockScreen)]),
+                    ]
+                    let menu = FloatingMenu(name: "Favourites", buttons: buttons, x: 300, y: 200)
+                    automation.panels.store.menus = [menu]
+                    automation.panels.store.menuBarItems = [MenuBarItem(title: "★", script: "date +'%H:%M'", every: 30)]
+                    automation.panels.show(menu)
+                    settings.show(tab: .module(.automation))
+                }
             case "macros":
                 // An example macro, opened in the Macros window.
                 guard let automation = modules.module(.automation) as? AutomationModule else { break }

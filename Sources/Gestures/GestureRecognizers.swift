@@ -829,6 +829,8 @@ struct GestureRule: Identifiable, Codable, Equatable {
     /// a change of keyboard layout (`keyCharacter` is what the key typed when it was recorded).
     var followLayout: Bool? = nil
     var keyCharacter: String? = nil
+    /// Only while this preset is the one in use (nil: in every preset).
+    var presetID: UUID? = nil
 
     func actions(for phase: TriggerPhase) -> [MacroAction] { phaseActions?[phase] ?? [] }
     var hasPhaseActions: Bool { phaseActions?.values.contains { !$0.isEmpty } ?? false }

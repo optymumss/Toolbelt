@@ -164,6 +164,39 @@ struct TriggersView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
+            // Presets: named sets of triggers; only the one in use (and triggers in no preset) work.
+            HStack(spacing: 4) {
+                Picker("Preset", selection: $store.activePreset) {
+                    Text("No preset").tag(UUID?.none)
+                    ForEach(store.presets) { Text($0.name).tag(UUID?.some($0.id)) }
+                }
+                .labelsHidden()
+                Menu {
+                    Button("New Preset") {
+                        let preset = TriggerPreset(name: "Preset \(store.presets.count + 1)")
+                        store.presets.append(preset)
+                        store.activePreset = preset.id
+                    }
+                    if let active = store.activePreset, let index = store.presets.firstIndex(where: { $0.id == active }) {
+                        Button("Delete “\(store.presets[index].name)”") {
+                            for rule in store.rules.indices where store.rules[rule].presetID == active { store.rules[rule].presetID = nil }
+                            store.presets.remove(at: index)
+                            store.activePreset = nil
+                        }
+                    }
+                } label: {
+                    Image(systemName: "square.stack")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+            .padding(8)
+            if let active = store.activePreset, let index = store.presets.firstIndex(where: { $0.id == active }) {
+                TextField("Preset name", text: $store.presets[index].name)
+                    .textFieldStyle(.roundedBorder)
+                    .padding([.horizontal, .bottom], 8)
+            }
+            Divider()
             List(selection: Binding<TriggersState.Scope?>(get: { state.scope }, set: { if let new = $0 { state.scope = new; state.selected = nil } })) {
                 Label("For All Apps", systemImage: "globe").tag(TriggersState.Scope.all)
                 if !store.groups.isEmpty {
@@ -388,7 +421,7 @@ struct TriggersView: View {
     @ViewBuilder
     private var settingsColumn: some View {
         if let index = selectedIndex {
-            TriggerSettings(rule: $store.rules[index], groups: store.groups,
+            TriggerSettings(rule: $store.rules[index], groups: store.groups, presets: store.presets,
                             inUse: Set(store.rules.filter { $0.id != store.rules[index].id }.map(\.gesture)),
                             editConditions: { state.editingCondition = true })
         } else {
@@ -425,6 +458,7 @@ struct TriggerRow: View {
 struct TriggerSettings: View {
     @Binding var rule: GestureRule
     let groups: [ActivationGroup]
+    var presets: [TriggerPreset] = []
     let inUse: Set<Gesture>
     let editConditions: () -> Void
     @State private var advanced = false
@@ -464,6 +498,10 @@ struct TriggerSettings: View {
                         Picker("Activation group", selection: $rule.groupID) {
                             Text("None").tag(UUID?.none)
                             ForEach(groups) { Text($0.name).tag(UUID?.some($0.id)) }
+                        }
+                        Picker("Preset", selection: $rule.presetID) {
+                            Text("Every preset").tag(UUID?.none)
+                            ForEach(presets) { Text("Only in “\($0.name)”").tag(UUID?.some($0.id)) }
                         }
                         AppScopeEditor(scope: $rule.scope, apps: $rule.apps)
                     }

@@ -207,6 +207,18 @@ struct ActivationGroup: Codable, Equatable, Identifiable {
     var enabled = true
 }
 
+/// A named set of triggers, like BetterTouchTool's presets ("Work", "Home"). Triggers put in a preset
+/// only work while it's the one in use; triggers in no preset always work.
+struct TriggerPreset: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name: String
+
+    /// Whether a rule works while `active` is the preset in use.
+    static func allows(_ rule: GestureRule, active: UUID?) -> Bool {
+        rule.presetID == nil || rule.presetID == active
+    }
+}
+
 /// What's true right now, for checking conditions. Built only when a trigger with conditions fires.
 struct ConditionContext: Equatable {
     var values: [ConditionField: String] = [:]
