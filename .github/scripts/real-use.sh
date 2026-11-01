@@ -90,6 +90,15 @@ grant() {
 }
 grant "$APP"
 grant "$E2E"
+# macOS 15 and later also confirm screen recording from time to time ("…requesting to bypass the system
+# private window picker"); nobody can click that here, and it stays on screen. Record it as approved, as
+# macOS does once you've clicked Allow.
+APPROVALS="$HOME/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+mkdir -p "$(dirname "$APPROVALS")"
+for executable in "$APP/Contents/MacOS/Toolbelt" "$E2E/Contents/MacOS/ToolbeltE2E"; do
+    defaults write "$APPROVALS" "$executable" -date "3024-01-01 00:00:00 +0000"
+done
+killall -HUP replayd 2>/dev/null
 # Toolbelt may control Finder (for "Empty the Trash"), as if you'd clicked OK when macOS asked.
 FINDER_REQ="$(codesign -d -r- /System/Library/CoreServices/Finder.app 2>&1 | sed -n 's/^designated => //p')"
 FINDER_HEX=""
