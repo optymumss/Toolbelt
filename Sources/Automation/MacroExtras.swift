@@ -229,6 +229,7 @@ final class PromptPanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     private(set) static var open: [PromptPanel] = []
 
     private let panel: NSPanel
+    private let message: String
     private var boxes: [NSTextField] = []
     private var popup: NSPopUpButton?
     private var buttons: [String]
@@ -247,6 +248,7 @@ final class PromptPanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
 
     private init(message: String, fields: [String], options: [String]?, buttons: [String]) {
         self.buttons = buttons.isEmpty ? ["OK"] : buttons
+        self.message = message
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 160), styleMask: [.titled, .closable],
                         backing: .buffered, defer: false)
         super.init()
@@ -291,6 +293,10 @@ final class PromptPanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 8
+        // Buttons on the right, like every Mac dialog: a stretchy space first.
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        row.addArrangedSubview(spacer)
         // macOS order: the default (first) button on the right.
         for (index, title) in self.buttons.enumerated().reversed() {
             let button = NSButton(title: title, target: self, action: #selector(pressed(_:)))
@@ -301,9 +307,20 @@ final class PromptPanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
             row.addArrangedSubview(button)
         }
         stack.addArrangedSubview(row)
-        row.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        panel.contentView = stack
+        // Laid out with constraints inside the window, so nothing runs past its edges.
+        let container = NSView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+        ])
+        panel.contentView = container
+        container.layoutSubtreeIfNeeded()
         panel.setContentSize(stack.fittingSize)
         if let first = boxes.first { panel.initialFirstResponder = first }
     }
@@ -348,5 +365,5 @@ final class PromptPanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     }
 
     /// For the tests: the message of each window that's waiting.
-    static var waitingMessages: [String] { open.map { ($0.panel.contentView?.subviews.first as? NSTextField)?.stringValue ?? "" } }
+    static var waitingMessages: [String] { open.map(\.message) }
 }
