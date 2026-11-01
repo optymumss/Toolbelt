@@ -398,6 +398,15 @@ final class RealUse: NSObject, NSApplicationDelegate {
             rule(.touch(.trackpad, .tap, fingers: 3), mark("tap3")),
             rule(.touch(.trackpad, .swipeLeft, fingers: 4), mark("swipe4")),
             rule(.touch(.trackpad, .longTouch, fingers: 2), mark("long2")) { $0.phaseActions = [.release: [mark("lift2")]] },
+            // 0.26: more trackpad gestures, the mouse wheel, screen corners and the Hyper key.
+            rule(.touch(.trackpad, .rotateRight, fingers: 2), mark("rotate")),
+            rule(.touch(.trackpad, .edgeSwipeFromRight, fingers: 2), mark("edge")),
+            rule(.touch(.trackpad, .swipeLeft, fingers: 2), mark("plainswipe")),
+            rule(.touch(.trackpad, .tipSwipeRight, fingers: 3), mark("tipswipe")),
+            rule(.wheel(button: 0, direction: "L"), mark("tilt")),
+            rule(.wheel(button: 2, direction: "U"), mark("middlescroll")),
+            rule(.screenSpot(.topLeft), mark("corner")),
+            rule(shortcut(kVK_ANSI_1, controlKey | optionKey | shiftKey | cmdKey), mark("hyper")),
         ]
         try JSONEncoder().encode(rules).write(to: data.appendingPathComponent("gestures.json"), options: .atomic)
         try JSONEncoder().encode([frontGroup, neverGroup]).write(to: data.appendingPathComponent("trigger-groups.json"), options: .atomic)
@@ -426,7 +435,22 @@ final class RealUse: NSObject, NSApplicationDelegate {
         webStep.action = mark("web")
         let webMacro = Macro(name: "Test web", steps: [webStep])
         struct SavedMacros: Codable { var macros: [Macro]; var groups: [MacroGroup] }
-        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro], groups: []))
+        // 0.26: the Mac's own events.
+        func eventMacro(_ name: String, _ kind: MacroTrigger.Kind, text: String = "", number: Int = 0) -> Macro {
+            var trigger = MacroTrigger(kind: kind)
+            trigger.text = text
+            trigger.number = number
+            var step = MacroStep(kind: .action)
+            step.action = mark(name)
+            return Macro(name: "Test \(name)", triggers: [trigger], steps: [step])
+        }
+        let eventMacros = [
+            eventMacro("locked", .screenLocked), eventMacro("unlocked", .screenUnlocked),
+            eventMacro("diskin", .diskMounted, text: "ToolbeltTest"), eventMacro("diskout", .diskUnmounted, text: "ToolbeltTest"),
+            eventMacro("otherdisk", .diskMounted, text: "Something else"),
+            eventMacro("idle", .idle, number: 1), eventMacro("back", .activeAgain, number: 1),
+        ]
+        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro] + eventMacros, groups: []))
             .write(to: data.appendingPathComponent("macros.json"), options: .atomic)
 
         let snippets = [Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt")]
@@ -437,6 +461,9 @@ final class RealUse: NSObject, NSApplicationDelegate {
         Prefs.webServerSecret = Self.webSecret
         Prefs.screenshotFolder = shotsFolder
         Prefs.screenshotAfterCapture = .save
+        Prefs.hyperKey = true
+        Prefs.hyperEscape = false
+        Prefs.keyRemaps = [KeyRemap(from: 0x64, to: 0x29)] // § becomes Esc
     }
 
     func startToolbelt() async -> Bool {
@@ -497,8 +524,148 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await touchTests()
             await typingTests()
             await moduleTests()
+            await moreTests()
+            await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
+        if mode != "stability", let toolbelt {
+            toolbelt.terminate()
+            _ = await waitUntil(10) { toolbelt.isTerminated }
+            let mapping = hidutilMapping()
+            check("quitting Toolbelt puts the keys back", !mapping.contains("30064771129") && !mapping.contains("30064771172"),
+                  "macOS's key mapping is still \(mapping)")
+        }
+    }
+
+    /// macOS's current key mapping, as hidutil prints it.
+    func hidutilMapping() -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
+        process.arguments = ["property", "--get", "UserKeyMapping"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try? process.run()
+        process.waitUntilExit()
+        return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    func run(_ tool: String, _ arguments: [String]) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
+    func scroll(vertical: Int32, horizontal: Int32) {
+        guard let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 2, wheel1: vertical, wheel2: horizontal, wheel3: 0) else { return }
+        event.location = windowMiddle
+        post(event)
+    }
+
+    func moveMouse(to point: CGPoint) {
+        mouse(.mouseMoved, at: point, button: .left)
+    }
+
+    func moreTests() async {
+        say("— 0.26: rotate, edge swipes, TipSwipe, mouse wheel, screen corners, keys")
+        await focus()
+        await pause(0.5)
+        // Clockwise: the line between the two fingers turns from flat to pointing down-right.
+        let start = ProcessInfo.processInfo.systemUptime
+        let turn: [(time: Double, touches: [TouchPoint])] = (0...30).map { step in
+            let angle = -0.7 * Double(step) / 30
+            return (start + Double(step) * 0.01, [TouchPoint(id: 1, x: 0.5 - 0.1 * cos(angle), y: 0.5 - 0.1 * sin(angle)),
+                                                  TouchPoint(id: 2, x: 0.5 + 0.1 * cos(angle), y: 0.5 + 0.1 * sin(angle))])
+        }
+        touches(turn)
+        await pause(0.3)
+        touches([(start + 0.32, [])])
+        check("two-finger rotate right", await waitUntil(3) { self.count("rotate") == 1 }, "ran \(count("rotate")) times")
+
+        await touch([(0.97, 0.45), (0.97, 0.55)], duration: 0.2, move: (-0.3, 0))
+        check("two-finger swipe in from the right edge", await waitUntil(3) { self.count("edge") == 1 }, "ran \(count("edge")) times")
+        await pause(0.5)
+        check("… without also running the plain swipe left", count("plainswipe") == 0, "the plain swipe ran \(count("plainswipe")) times")
+        await touch([(0.7, 0.45), (0.7, 0.55)], duration: 0.2, move: (-0.3, 0))
+        check("a swipe left from the middle is the plain swipe", await waitUntil(3) { self.count("plainswipe") == 1 }, "ran \(count("plainswipe")) times")
+
+        let tipStart = ProcessInfo.processInfo.systemUptime
+        let tip: [(time: Double, touches: [TouchPoint])] = (0...20).map { step in
+            let move = 0.25 * Double(step) / 20
+            return (tipStart + Double(step) * 0.01, [TouchPoint(id: 1, x: 0.3, y: 0.5), TouchPoint(id: 2, x: 0.5 + move, y: 0.5),
+                                                     TouchPoint(id: 3, x: 0.6 + move, y: 0.5)])
+        }
+        touches(tip)
+        await pause(0.3)
+        touches([(tipStart + 0.22, [])])
+        check("TipSwipe right (one finger resting)", await waitUntil(3) { self.count("tipswipe") == 1 }, "ran \(count("tipswipe")) times")
+
+        await focus()
+        scroll(vertical: 0, horizontal: 1)
+        check("tilting the mouse wheel left", await waitUntil(3) { self.count("tilt") == 1 }, "ran \(count("tilt")) times")
+        let middle = windowMiddle
+        mouse(.otherMouseDown, at: middle, button: .center, number: 2)
+        await pause(0.1)
+        scroll(vertical: 1, horizontal: 0)
+        await pause(0.1)
+        mouse(.otherMouseUp, at: middle, button: .center, number: 2)
+        check("holding the middle button and scrolling up", await waitUntil(3) { self.count("middlescroll") == 1 }, "ran \(count("middlescroll")) times")
+
+        moveMouse(to: CGPoint(x: 300, y: 300))
+        await pause(0.2)
+        moveMouse(to: CGPoint(x: 0, y: 0)) // the top-left corner (mouse events count from the top left)
+        check("pointer pushed into the top-left corner", await waitUntil(3) { self.count("corner") == 1 }, "ran \(count("corner")) times")
+        await pause(0.6)
+        check("… runs once while it stays there", count("corner") == 1, "ran \(count("corner")) times")
+        moveMouse(to: windowMiddle)
+
+        // Hyper key: Caps Lock is remapped to F18; F18 held adds ⌃⌥⇧⌘ to other keys.
+        let mapping = hidutilMapping()
+        check("Caps Lock is remapped for the Hyper key", mapping.contains("30064771129") && mapping.contains("30064771181"), "mapping: \(mapping)")
+        check("§ is changed into Esc", mapping.contains("30064771172") && mapping.contains("30064771113"), "mapping: \(mapping)")
+        await focus()
+        keyEvent(79, down: true, flags: 0)
+        await pause(0.1)
+        keyEvent(CGKeyCode(kVK_ANSI_1), down: true, flags: 0, character: "1")
+        await pause(0.05)
+        keyEvent(CGKeyCode(kVK_ANSI_1), down: false, flags: 0, character: "1")
+        await pause(0.1)
+        keyEvent(79, down: false, flags: 0)
+        check("Hyper key + 1 runs the ⌃⌥⇧⌘1 trigger", await waitUntil(3) { self.count("hyper") == 1 }, "ran \(count("hyper")) times")
+        check("… and the 1 doesn't reach the app as typing", !textView.string.contains("1"), "text box has “\(textView.string)”")
+    }
+
+    func macEventTests() async {
+        say("— 0.26: the Mac's own events")
+        DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.apple.screenIsLocked"), object: nil, userInfo: nil,
+                                                                     deliverImmediately: true)
+        check("screen locks", await waitUntil(3) { self.count("locked") == 1 }, "ran \(count("locked")) times")
+        DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.apple.screenIsUnlocked"), object: nil, userInfo: nil,
+                                                                     deliverImmediately: true)
+        check("screen unlocks", await waitUntil(3) { self.count("unlocked") == 1 }, "ran \(count("unlocked")) times")
+
+        let image = data.appendingPathComponent("ToolbeltTest.dmg").path
+        let made = run("/usr/bin/hdiutil", ["create", "-size", "2m", "-fs", "HFS+", "-volname", "ToolbeltTest", "-ov", image])
+        let attached = made && run("/usr/bin/hdiutil", ["attach", image])
+        let diskIn = attached ? await waitUntil(8) { self.count("diskin") == 1 } : false
+        check("disk appears (named ToolbeltTest)", diskIn,
+              "made \(made), attached \(attached), ran \(count("diskin")) times")
+        check("… not the trigger for a disk with another name", count("otherdisk") == 0, "ran \(count("otherdisk")) times")
+        let detached = run("/usr/bin/hdiutil", ["detach", "/Volumes/ToolbeltTest", "-force"])
+        let diskOut = detached ? await waitUntil(8) { self.count("diskout") == 1 } : false
+        check("disk ejected", diskOut, "detached \(detached), ran \(count("diskout")) times")
+
+        // Idle for a minute (no key, click or mouse move), then used again.
+        say("  waiting a minute and a half without touching anything…")
+        let idle = await waitUntil(100) { self.count("idle") == 1 }
+        check("not used for a minute (idle)", idle, "ran \(count("idle")) times after \(Int(InputIdle.seconds)) idle seconds")
+        moveMouse(to: CGPoint(x: windowMiddle.x + 5, y: windowMiddle.y))
+        check("used again", await waitUntil(6) { self.count("back") == 1 }, "ran \(count("back")) times")
     }
 
     func keyboardTests() async {

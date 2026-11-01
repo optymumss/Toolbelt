@@ -53,6 +53,7 @@ enum ToolbeltTests {
         t.group("Triggers: conditions, activation groups and the Triggers window", TriggerTests.run)
         t.group("Triggers: key up, long hold, repeat, left/right keys and more gestures", MoreTriggerTests.run)
         t.group("Real-use test helpers: pretend trackpad touches", RealUseHelperTests.run)
+        t.group("Rotate, edge swipes, TipSwipe, mouse wheel, screen corners, keys and Mac events", MoreBTTTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -3884,5 +3885,117 @@ enum RealUseHelperTests {
         check(back?.last?.touches.isEmpty == true, "an empty frame means the fingers lifted")
         check(RealUseHooks.parseFrames("not json") == nil, "anything else is ignored")
         check(!RealUseHooks.isOn, "the test hooks are off unless TOOLBELT_E2E=1")
+    }
+}
+
+@MainActor
+enum MoreBTTTests {
+    static func run() {
+        func feed(_ frames: [[TouchPoint]], step: Double = 0.01) -> [Gesture] {
+            var pad = TouchRecognizer(source: .trackpad)
+            var seen: [Gesture] = []
+            for (index, frame) in frames.enumerated() { seen += pad.feedAll(frame, at: Double(index) * step) }
+            seen += pad.feedAll([], at: Double(frames.count) * step)
+            return seen
+        }
+        // Two fingers turning around their middle.
+        func turning(to end: Double) -> [[TouchPoint]] {
+            (0...30).map { step in
+                let angle = end * Double(step) / 30
+                return [TouchPoint(id: 1, x: 0.5 - 0.1 * cos(angle), y: 0.5 - 0.1 * sin(angle)),
+                        TouchPoint(id: 2, x: 0.5 + 0.1 * cos(angle), y: 0.5 + 0.1 * sin(angle))]
+            }
+        }
+        checkEqual(feed(turning(to: 0.7)), [.touch(.trackpad, .rotateLeft, fingers: 2)], "turning two fingers anticlockwise is rotate left")
+        checkEqual(feed(turning(to: -0.7)), [.touch(.trackpad, .rotateRight, fingers: 2)], "clockwise is rotate right")
+        check(!feed(turning(to: 0.2)).contains { if case .touch(_, .rotateLeft, _) = $0 { return true }; return false },
+              "a small turn isn't a rotation")
+        let apart = (0...20).map { step -> [TouchPoint] in
+            let spread = 0.05 + 0.1 * Double(step) / 20
+            return [TouchPoint(id: 1, x: 0.5 - spread, y: 0.5), TouchPoint(id: 2, x: 0.5 + spread, y: 0.5)]
+        }
+        checkEqual(feed(apart), [.touch(.trackpad, .pinchOut, fingers: 2)], "fingers moving apart are still a pinch, not a rotation")
+
+        let fromRight = (0...20).map { step -> [TouchPoint] in
+            let x = 0.97 - 0.3 * Double(step) / 20
+            return [TouchPoint(id: 1, x: x, y: 0.45), TouchPoint(id: 2, x: x, y: 0.55)]
+        }
+        checkEqual(feed(fromRight), [.touch(.trackpad, .edgeSwipeFromRight, fingers: 2), .touch(.trackpad, .swipeLeft, fingers: 2)],
+                   "a swipe starting at the right edge is a swipe in from the edge (and a swipe left)")
+        let middle = (0...20).map { step -> [TouchPoint] in
+            let x = 0.7 - 0.3 * Double(step) / 20
+            return [TouchPoint(id: 1, x: x, y: 0.45), TouchPoint(id: 2, x: x, y: 0.55)]
+        }
+        checkEqual(feed(middle), [.touch(.trackpad, .swipeLeft, fingers: 2)], "one from the middle is just a swipe")
+
+        let tipSwipe = (0...20).map { step -> [TouchPoint] in
+            let move = 0.25 * Double(step) / 20
+            return [TouchPoint(id: 1, x: 0.3, y: 0.5), TouchPoint(id: 2, x: 0.5 + move, y: 0.5), TouchPoint(id: 3, x: 0.6 + move, y: 0.5)]
+        }
+        checkEqual(feed(tipSwipe), [.touch(.trackpad, .tipSwipeRight, fingers: 3), .touch(.trackpad, .swipeRight, fingers: 3)],
+                   "one finger resting while two slide right is a TipSwipe right")
+        let allMove = (0...20).map { step -> [TouchPoint] in
+            let move = 0.25 * Double(step) / 20
+            return [TouchPoint(id: 1, x: 0.3 + move, y: 0.5), TouchPoint(id: 2, x: 0.4 + move, y: 0.5), TouchPoint(id: 3, x: 0.5 + move, y: 0.5)]
+        }
+        checkEqual(feed(allMove), [.touch(.trackpad, .swipeRight, fingers: 3)], "all three sliding is an ordinary swipe")
+        check(TouchKind.choices(for: .trackpad).first { $0.fingers == 2 }?.kinds.contains(.rotateLeft) == true, "rotations are in the gesture picker")
+
+        // Screen corners and edges
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        checkEqual(ScreenSpot.at(CGPoint(x: 0, y: 899), screens: [screen]), .topLeft, "pointer at the top left is the top-left corner")
+        checkEqual(ScreenSpot.at(CGPoint(x: 1439, y: 0), screens: [screen]), .bottomRight, "bottom right")
+        checkEqual(ScreenSpot.at(CGPoint(x: 700, y: 899), screens: [screen]), .topEdge, "top edge")
+        checkEqual(ScreenSpot.at(CGPoint(x: 0, y: 450), screens: [screen]), .leftEdge, "left edge")
+        checkEqual(ScreenSpot.at(CGPoint(x: 700, y: 450), screens: [screen]), nil, "the middle is nothing")
+        let second = CGRect(x: 1440, y: 0, width: 1920, height: 1080)
+        checkEqual(ScreenSpot.at(CGPoint(x: 1439, y: 450), screens: [screen, second]), nil, "an edge shared with another display isn't an edge")
+        checkEqual(ScreenSpot.at(CGPoint(x: 3359, y: 500), screens: [screen, second]), .rightEdge, "the far side of the second display is")
+
+        // Mouse wheel
+        var wheel = WheelDetector()
+        checkEqual(wheel.gesture(vertical: 0, horizontal: 1, continuous: false, heldButton: nil, at: 10), .wheel(button: 0, direction: "L"),
+                   "tilting the wheel left")
+        checkEqual(wheel.gesture(vertical: 0, horizontal: 1, continuous: false, heldButton: nil, at: 10.05), nil, "not again straight away")
+        checkEqual(wheel.gesture(vertical: 0, horizontal: -1, continuous: false, heldButton: nil, at: 11), .wheel(button: 0, direction: "R"), "right")
+        checkEqual(wheel.gesture(vertical: 0, horizontal: 3, continuous: true, heldButton: nil, at: 12), nil, "trackpad scrolling isn't a wheel")
+        checkEqual(wheel.gesture(vertical: 2, horizontal: 0, continuous: false, heldButton: nil, at: 13), nil, "ordinary scrolling stays scrolling")
+        checkEqual(wheel.gesture(vertical: 2, horizontal: 0, continuous: false, heldButton: 2, at: 14), .wheel(button: 2, direction: "U"),
+                   "scrolling up while holding the middle button")
+        checkEqual(Gesture.wheel(button: 2, direction: "D").title, "Hold the middle button and scroll down", "named in plain words")
+
+        // Keys
+        let mapping = KeyMapping.userKeyMapping(remaps: [KeyRemap(from: 0x64, to: 0x29), KeyRemap(from: 0x64, to: 0x2B), KeyRemap(from: 0x04, to: 0x04)],
+                                                hyper: true)
+        checkEqual(mapping.count, 2, "Caps Lock for the Hyper key plus one change per key (the first wins, a key into itself is no change)")
+        checkEqual(mapping.first?[KeyMapping.srcKey], 30_064_771_129, "Caps Lock (0x700000039)…")
+        checkEqual(mapping.first?[KeyMapping.dstKey], 30_064_771_181, "…becomes F18 (0x70000006D)")
+        check(KeyMapping.json(mapping).hasPrefix("{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":30064771129"), "written the way hidutil wants it")
+        checkEqual(KeyMapping.json([]), "{\"UserKeyMapping\":[]}", "no changes clears macOS's mapping")
+        checkEqual(HIDKeys.name(0x29), "Esc", "keys have names")
+        Prefs.keyRemaps = [KeyRemap(from: 0x64, to: 0x29)]
+        checkEqual(Prefs.keyRemaps.map { [$0.from, $0.to] }, [[0x64, 0x29]], "key changes are saved")
+        Prefs.keyRemaps = []
+
+        // The Mac's own events
+        check(NameFilter.matches("SanDisk Ultra", "sandisk") && NameFilter.matches("Anything", "") && !NameFilter.matches("Keyboard", "disk"),
+              "device names match when they contain the text, case aside")
+        var idle = IdleTracker(idleAfter: 300)
+        checkEqual(idle.update(secondsSinceInput: 100), nil, "not idle after 100 seconds")
+        checkEqual(idle.update(secondsSinceInput: 301), .becameIdle, "idle after 5 minutes")
+        checkEqual(idle.update(secondsSinceInput: 400), nil, "only once")
+        checkEqual(idle.update(secondsSinceInput: 1), .activeAgain, "used again")
+        var battery = BatteryThreshold(below: 20)
+        check(!battery.update(percent: 25, onBattery: true), "25%: not below 20%")
+        check(battery.update(percent: 19, onBattery: true), "19% on battery: below 20%")
+        check(!battery.update(percent: 18, onBattery: true), "only once")
+        check(!battery.update(percent: 30, onBattery: false) && !battery.update(percent: 10, onBattery: false), "not while charging")
+        let triggers: [MacroTrigger.Kind] = [.macWakes, .screenLocked, .powerConnected, .batteryBelow, .usbConnected, .bluetoothConnected, .diskMounted, .idle]
+        check(triggers.allSatisfy { MacroTrigger.Kind.allCases.contains($0) }, "the new triggers are offered in the macro editor")
+
+        // Saved and read back
+        let gestures: [Gesture] = [.wheel(button: 3, direction: "L"), .screenSpot(.bottomRight), .touch(.trackpad, .tipSwipeUp, fingers: 4)]
+        let back = (try? JSONDecoder().decode([Gesture].self, from: JSONEncoder().encode(gestures))) ?? []
+        checkEqual(back, gestures, "new triggers save and load")
     }
 }

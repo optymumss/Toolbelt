@@ -22,8 +22,8 @@ final class MultitouchReader: @unchecked Sendable {
     private var handle: UnsafeMutableRawPointer?
     private var devices: [UnsafeMutableRawPointer] = []
     private var recognizers: [UnsafeMutableRawPointer: TouchRecognizer] = [:]
-    /// Called on the main thread when a touch gesture completes.
-    var onGesture: ((Gesture) -> Void)?
+    /// Called on the main thread when a touch gesture completes; returns whether a rule ran.
+    var onGesture: ((Gesture) -> Bool)?
 
     /// Whether the framework could be loaded on this Mac.
     var isAvailable: Bool { load() }
@@ -206,7 +206,13 @@ final class MultitouchReader: @unchecked Sendable {
         }
         if !gestures.isEmpty {
             DispatchQueue.main.async { [weak self] in
-                for gesture in gestures { self?.onGesture?(gesture) }
+                var skipPlainSwipe = false
+                for gesture in gestures {
+                    if case let .touch(_, kind, _) = gesture, kind.rawValue.hasPrefix("swipe"), skipPlainSwipe { continue }
+                    let ran = self?.onGesture?(gesture) ?? false
+                    // A swipe in from an edge, or a TipSwipe, that has a rule: not also the ordinary swipe.
+                    if ran, case let .touch(_, kind, _) = gesture, kind.isMoreSpecificSwipe { skipPlainSwipe = true }
+                }
             }
         }
     }
@@ -272,8 +278,14 @@ final class GestureEventTap {
         var watchedKeys = false
         /// Force Clicks on the trackpad (macOS reports them as pressure events).
         var forceClick = false
+        /// Tilting the mouse wheel left or right.
+        var wheelTilt = false
+        /// Buttons held while scrolling the wheel (their clicks are kept back until it's clear no scroll follows).
+        var wheelButtons: Set<Int> = []
 
-        var isEmpty: Bool { buttons.isEmpty && strokeButtons.isEmpty && !clicks && !keyboard && !watchedKeys && !forceClick }
+        var isEmpty: Bool {
+            buttons.isEmpty && strokeButtons.isEmpty && !clicks && !keyboard && !watchedKeys && !forceClick && !wheelTilt && wheelButtons.isEmpty
+        }
     }
 
     /// Marks the clicks Toolbelt itself sends, so the tap lets them through.
@@ -299,6 +311,9 @@ final class GestureEventTap {
     private var modifiers = ModifierTapDetector()
     private var stroke: (button: Int, points: [CGPoint])?
     private var swallowedUp: Set<Int> = []
+    private var wheel = WheelDetector()
+    /// A button held for "hold and scroll", and whether the wheel turned while it was down.
+    private var wheelHeld: (button: Int, scrolled: Bool, at: CGPoint)?
 
     var isRunning: Bool { mouseTap != nil || keyTap != nil || watchTap != nil }
 
@@ -310,7 +325,8 @@ final class GestureEventTap {
         var ok = true
         var mouse: UInt64 = 0
         func add(_ type: CGEventType) { mouse |= 1 << type.rawValue }
-        if !needs.buttons.isEmpty || needs.strokeButtons.contains(2) { add(.otherMouseDown); add(.otherMouseUp) }
+        if !needs.buttons.isEmpty || needs.strokeButtons.contains(2) || !needs.wheelButtons.isEmpty { add(.otherMouseDown); add(.otherMouseUp) }
+        if needs.wheelTilt || !needs.wheelButtons.isEmpty { add(.scrollWheel) }
         if needs.strokeButtons.contains(2) { add(.otherMouseDragged) }
         if needs.strokeButtons.contains(1) { add(.rightMouseDown); add(.rightMouseUp); add(.rightMouseDragged) }
         if needs.clicks { add(.leftMouseDown); add(.leftMouseUp) }
@@ -357,6 +373,7 @@ final class GestureEventTap {
         watchTap = nil
         stroke = nil
         swallowedUp = []
+        wheelHeld = nil
     }
 
     /// Returns false to keep the event from the app underneath (only possible for mouse events).
@@ -405,6 +422,11 @@ final class GestureEventTap {
                 stroke = (button, [event.location])
                 return false
             }
+            if needs.wheelButtons.contains(button) {
+                // Held for "hold and scroll": its click waits until the button comes up.
+                wheelHeld = (button, false, event.location)
+                return false
+            }
             if needs.buttons.contains(button), handle?(.mouseButton(button)) == true {
                 swallowedUp.insert(button)
                 return false
@@ -426,6 +448,14 @@ final class GestureEventTap {
         case .rightMouseUp, .otherMouseUp:
             let button = type == .rightMouseUp ? 1 : Int(event.getIntegerValueField(.mouseEventButtonNumber))
             if swallowedUp.remove(button) != nil { return false }
+            if let held = wheelHeld, held.button == button {
+                wheelHeld = nil
+                // No scroll while it was down: it was an ordinary press after all.
+                if !held.scrolled, !(needs.buttons.contains(button) && handle?(.mouseButton(button)) == true) {
+                    replayClick(button: button, at: held.at)
+                }
+                return false
+            }
             guard let current = stroke, current.button == button else { return true }
             stroke = nil
             let path = StrokeRecognizer.path(of: current.points)
@@ -444,6 +474,14 @@ final class GestureEventTap {
 
         case .leftMouseUp:
             return swallowedUp.remove(0) == nil
+
+        case .scrollWheel:
+            let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
+            guard let gesture = wheel.gesture(vertical: event.getIntegerValueField(.scrollWheelEventDeltaAxis1),
+                                              horizontal: event.getIntegerValueField(.scrollWheelEventDeltaAxis2),
+                                              continuous: continuous, heldButton: wheelHeld?.button, at: time) else { return true }
+            if wheelHeld != nil { wheelHeld?.scrolled = true }
+            return handle?(gesture) != true
 
         default:
             return true
@@ -514,4 +552,53 @@ private func gestureTapCallback(proxy: CGEventTapProxy, type: CGEventType, event
     let tap = Unmanaged<GestureEventTap>.fromOpaque(refcon).takeUnretainedValue()
     let pass = MainActor.assumeIsolated { tap.process(type, event) }
     return pass ? Unmanaged.passUnretained(event) : nil
+}
+
+/// Notices the pointer pushed into a screen corner or against an edge, and held there a moment. Uses
+/// macOS's mouse-moved events (no permission needed) and only while a rule uses it, so it costs nothing otherwise.
+@MainActor
+final class ScreenSpotWatcher {
+    /// How long the pointer stays there before it counts.
+    var dwell = 0.3
+    private var monitors: [Any] = []
+    private var current: ScreenSpot?
+    private var pending: DispatchWorkItem?
+    private var onSpot: ((ScreenSpot) -> Void)?
+
+    var isWatching: Bool { !monitors.isEmpty }
+
+    func watch(_ on: Bool, onSpot: @escaping (ScreenSpot) -> Void) {
+        self.onSpot = onSpot
+        guard on != isWatching else { return }
+        if on {
+            let handler: (NSEvent) -> Void = { [weak self] _ in MainActor.assumeIsolated { self?.moved() } }
+            if let global = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: handler) { monitors.append(global) }
+            if let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved], handler: { event in handler(event); return event }) {
+                monitors.append(local)
+            }
+        } else {
+            monitors.forEach(NSEvent.removeMonitor)
+            monitors = []
+            pending?.cancel()
+            pending = nil
+            current = nil
+        }
+    }
+
+    func moved(to point: CGPoint = NSEvent.mouseLocation) {
+        let spot = ScreenSpot.at(point, screens: NSScreen.screens.map(\.frame))
+        guard spot != current else { return }
+        current = spot
+        pending?.cancel()
+        pending = nil
+        guard let spot else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.current == spot else { return }
+                self.onSpot?(spot)
+            }
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + dwell, execute: work)
+    }
 }

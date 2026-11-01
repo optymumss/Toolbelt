@@ -39,7 +39,7 @@ xcrun swiftc \
     -framework CoreAudio \
     -framework Network \
     -framework AVFoundation \
-    -framework CoreMedia \
+    -framework CoreMedia -framework IOBluetooth \
     "${SOURCES[@]}" \
     -o build/ToolbeltTests
 

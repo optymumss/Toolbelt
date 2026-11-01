@@ -1,9 +1,30 @@
-# Toolbelt — v0.25
+# Toolbelt — v0.26
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.26: more BetterTouchTool triggers, the Hyper key and changing keys
+In the Triggers window (and Settings → Gestures):
+- **Trackpad:** rotate two fingers left or right; swipe in from the left, right, top or bottom edge
+  (one or two fingers); **TipSwipe**: rest one finger and swipe with the others. A swipe in from an edge
+  with its own trigger doesn't also run the ordinary swipe's.
+- **Mouse wheel:** tilt it left or right, or hold the middle button (or button 4 or 5) and scroll. A press
+  of that button without scrolling still clicks as usual.
+- **Screen corners and edges:** push the pointer into a corner or against an edge and hold it there a
+  moment. An edge shared with another display doesn't count.
+
+In Settings → Gestures → **Keys**:
+- **Hyper key:** Caps Lock becomes ⌃⌥⇧⌘ all at once, so you get a whole set of shortcuts no app uses.
+  On its own it can type Esc.
+- **Change a key** into another, for example § into Esc, or Right ⌥ into Right ⌘. Works in every app.
+  Toolbelt puts the keys back when it quits.
+
+New macro triggers (Macros → Add Trigger): the Mac wakes up or goes to sleep, the screen locks or unlocks,
+the charger is plugged in or out, the battery goes below a level, a USB or Bluetooth device connects or
+disconnects, a disk appears or is ejected, the Mac hasn't been used for a while, and is used again.
+Bluetooth asks for permission the first time.
 
 ## What's new in 0.25: tested like a person uses it
 Nothing changes on your Mac: this version adds tests. Before each release, GitHub's Mac now starts the

@@ -110,7 +110,12 @@ struct MacroDetail: View {
                 }
                 Menu("Add Trigger") {
                     ForEach(MacroTrigger.Kind.allCases) { kind in
-                        Button(kind.title) { macro.triggers.append(MacroTrigger(kind: kind, gesture: kind == .gesture ? .touch(.trackpad, .tap, fingers: 3) : nil)) }
+                        Button(kind.title) {
+                            var trigger = MacroTrigger(kind: kind, gesture: kind == .gesture ? .touch(.trackpad, .tap, fingers: 3) : nil)
+                            if kind == .batteryBelow { trigger.number = 20 }
+                            if kind == .idle || kind == .activeAgain { trigger.number = 5 }
+                            macro.triggers.append(trigger)
+                        }
                     }
                 }
                 .fixedSize()
@@ -210,8 +215,19 @@ struct TriggerEditor: View {
             Text("Shown in Toolbelt's menu bar menu.").font(.caption).foregroundStyle(.secondary)
         case .launcher:
             Text("Type its name in the launcher (⌥Space).").font(.caption).foregroundStyle(.secondary)
-        case .networkChanged, .displayConnected, .displayDisconnected, .spaceChanged:
+        case .networkChanged, .displayConnected, .displayDisconnected, .spaceChanged,
+             .macWakes, .macSleeps, .screenLocked, .screenUnlocked, .powerConnected, .powerDisconnected:
             EmptyView()
+        case .batteryBelow:
+            Stepper("Below \(trigger.number)%", value: $trigger.number, in: 5...95, step: 5)
+            Text("Only while running on battery; once until it's back above that level.").font(.caption).foregroundStyle(.secondary)
+        case .usbConnected, .usbDisconnected, .bluetoothConnected, .bluetoothDisconnected, .diskMounted, .diskUnmounted:
+            TextField("Name contains (empty for any)", text: $trigger.text)
+            Text("The device's or disk's name is in %Trigger%.\(trigger.kind == .bluetoothConnected || trigger.kind == .bluetoothDisconnected ? " macOS asks once for the Bluetooth permission." : "")")
+                .font(.caption).foregroundStyle(.secondary)
+        case .idle, .activeAgain:
+            Stepper("After \(trigger.number) minute\(trigger.number == 1 ? "" : "s") without a key press, click or mouse move",
+                    value: $trigger.number, in: 1...240)
         }
     }
 
