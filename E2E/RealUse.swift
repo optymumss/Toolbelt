@@ -786,7 +786,8 @@ final class RealUse: NSObject, NSApplicationDelegate {
         let trashed = (inTrash as URL?).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         await press(CGKeyCode(kVK_ANSI_C), Self.testMods)
         let emptied = trashed ? await waitUntil(25) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
-        check("empty the Trash", emptied, "put in the Trash: \(trashed)")
+        check("empty the Trash", emptied,
+              "put in the Trash: \(trashed); still asking Finder: \(output("/usr/bin/pgrep", ["-lf", "empty trash"]).isEmpty ? "no" : "yes")")
     }
 
     func macEventTests() async {

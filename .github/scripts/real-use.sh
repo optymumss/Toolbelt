@@ -99,8 +99,12 @@ fi
 FINDER_ID="NULL"
 [ -n "$FINDER_HEX" ] && FINDER_ID="X'$FINDER_HEX'"
 for db in "$SYSTEM_DB" "$USER_DB"; do
-    sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified) VALUES ('kTCCServiceAppleEvents', 'local.personal.toolbelt', 0, 2, 3, 1, NULL, 0, 'com.apple.finder', $FINDER_ID, 0, $(date +%s));" 2>/dev/null
+    for client in "local.personal.toolbelt|0" "/usr/bin/osascript|1"; do
+        sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified) VALUES ('kTCCServiceAppleEvents', '${client%|*}', ${client#*|}, 2, 3, 1, NULL, 0, 'com.apple.finder', $FINDER_ID, 0, $(date +%s));" \
+            || echo "Couldn't save the Finder permission in $db"
+    done
 done
+echo "Finder permission rows: $(sqlite3 "$USER_DB" "SELECT client, auth_value FROM access WHERE service='kTCCServiceAppleEvents';" 2>&1 | tr '\n' ' ')"
 # Make the test app the handler for its toolbelte2e: links (the web-search test's search site).
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$E2E"
 # Make macOS read the database again.
