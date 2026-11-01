@@ -267,7 +267,7 @@ enum FileActions {
     }
 
     /// Does it; returns false if it couldn't (no such file, no permission…).
-    static func perform(_ command: FileCommand, path: String, second: String) -> Bool {
+    static func perform(_ command: FileCommand, path: String, second: String = "") -> Bool {
         let manager = FileManager.default
         let source = self.path(path)
         do {
