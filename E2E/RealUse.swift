@@ -46,6 +46,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
 
     var window: NSWindow!
     var textView: NSTextView!
+    var pad: InputPad!
     var toolbelt: NSRunningApplication?
     var passed = 0
     var failed = 0
@@ -57,6 +58,18 @@ final class RealUse: NSObject, NSApplicationDelegate {
         self.resultsURL = results
         self.mode = mode
         self.minutes = minutes
+    }
+
+    /// Web addresses opened with the toolbelte2e: scheme (the web-search action's test search site).
+    var openedURLs: [String] = []
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(openURL(_:reply:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+    }
+
+    @objc func openURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        if let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue { openedURLs.append(text) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -146,7 +159,11 @@ final class RealUse: NSObject, NSApplicationDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Toolbelt real-use test"
-        let scroll = NSScrollView(frame: window.contentView!.bounds)
+        // A pad along the bottom that notes every click, scroll and drag (for the mouse actions).
+        pad = InputPad(frame: NSRect(x: 0, y: 0, width: 640, height: 120))
+        pad.autoresizingMask = [.width]
+        window.contentView?.addSubview(pad)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 120, width: 640, height: 300))
         scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         textView = NSTextView(frame: scroll.bounds)
@@ -160,10 +177,15 @@ final class RealUse: NSObject, NSApplicationDelegate {
         scroll.documentView = textView
         window.contentView?.addSubview(scroll)
         window.center()
+        homeFrame = window.frame
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(textView)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    /// Where the window starts; it's put back exactly here after the window-moving tests (the mouse
+    /// actions' places are worked out from it).
+    var homeFrame = NSRect.zero
 
     /// Brings this app and its text box to the front, and empties the text box.
     func focus(clear: Bool = true) async {
@@ -348,6 +370,19 @@ final class RealUse: NSObject, NSApplicationDelegate {
         return rule
     }
 
+    func place(_ point: CGPoint) -> String { "\(Int(point.x)),\(Int(point.y))" }
+
+    func mouseAction(_ command: String, _ point: CGPoint) -> MacroAction {
+        MacroAction(kind: .mouse, value: "\(command) \(place(point))")
+    }
+
+    /// A point across the middle of the pad (0 = left end, 1 = right end), in mouse-event coordinates (top left).
+    func padPoint(_ across: CGFloat) -> CGPoint {
+        let frame = window.convertToScreen(pad.convert(pad.bounds, to: nil))
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        return CGPoint(x: (frame.minX + frame.width * across).rounded(), y: (screenHeight - frame.midY).rounded())
+    }
+
     func shortcut(_ code: Int, _ modifiers: Int = controlKey | optionKey | shiftKey) -> Gesture {
         .shortcut(keyCode: code, modifiers: modifiers)
     }
@@ -407,6 +442,18 @@ final class RealUse: NSObject, NSApplicationDelegate {
             rule(.wheel(button: 2, direction: "U"), mark("middlescroll")),
             rule(.screenSpot(.topLeft), mark("corner")),
             rule(shortcut(kVK_ANSI_1, controlKey | optionKey | shiftKey | cmdKey), mark("hyper")),
+            // 0.27: actions. Places are on the test window's pad (worked out now; the window is put back here after moving).
+            rule(shortcut(kVK_ANSI_A), mouseAction("click", padPoint(0.2))),
+            rule(shortcut(kVK_ANSI_S), mouseAction("doubleClick", padPoint(0.4))),
+            rule(shortcut(kVK_ANSI_D), mouseAction("rightClick", padPoint(0.5))),
+            rule(shortcut(kVK_ANSI_F), mouseAction("middleClick", padPoint(0.6))),
+            rule(shortcut(kVK_ANSI_G), MacroAction(kind: .mouse, value: "scrollDown 3")),
+            rule(shortcut(kVK_ANSI_H), MacroAction(kind: .mouse, value: "drag \(place(padPoint(0.2))) \(place(padPoint(0.8)))")),
+            rule(shortcut(kVK_ANSI_J), mouseAction("moveTo", CGPoint(x: 77, y: 155))),
+            rule(shortcut(kVK_ANSI_L), MacroAction(kind: .webSearch, value: "toolbelte2e://search?q=%s")),
+            rule(shortcut(kVK_ANSI_Z), .system(.ejectDisks)),
+            rule(shortcut(kVK_ANSI_X), .system(.toggleDockHiding)),
+            rule(shortcut(kVK_ANSI_C), mark("trashpressed")) { $0.moreActions = [.system(.emptyTrash)] },
         ]
         try JSONEncoder().encode(rules).write(to: data.appendingPathComponent("gestures.json"), options: .atomic)
         try JSONEncoder().encode([frontGroup, neverGroup]).write(to: data.appendingPathComponent("trigger-groups.json"), options: .atomic)
@@ -525,6 +572,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await typingTests()
             await moduleTests()
             await moreTests()
+            await actionTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -640,6 +688,113 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("… and the 1 doesn't reach the app as typing", !textView.string.contains("1"), "text box has “\(textView.string)”")
     }
 
+    func output(_ tool: String, _ arguments: [String]) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// For failures: the pad's place on screen, and the window that's really at a point.
+    func whereIs(_ point: CGPoint) -> String {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        let top = list.first { info in
+            guard let bounds = (info[kCGWindowBounds as String] as? [String: Any]).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }) else { return false }
+            return bounds.contains(point) && (info[kCGWindowAlpha as String] as? Double ?? 1) > 0
+        }
+        let owner = top?[kCGWindowOwnerName as String] as? String ?? "nothing"
+        let layer = top?[kCGWindowLayer as String] as? Int ?? -1
+        return "at \(Int(point.x)),\(Int(point.y)) the top window is \(owner)'s (layer \(layer)); pad \(padPoint(0)) to \(padPoint(1)), window \(window.frame)"
+    }
+
+    func actionTests() async {
+        say("— 0.27: mouse actions, web search, Dock, disks, Trash")
+        await focus()
+        pad.log = []
+        await press(CGKeyCode(kVK_ANSI_A), Self.testMods)
+        check("click at a place", await waitUntil(3) { self.pad.log.contains("left 1") }, "the pad saw \(pad.log); \(whereIs(padPoint(0.2)))")
+        await pause(0.6)
+        pad.log = []
+        await press(CGKeyCode(kVK_ANSI_S), Self.testMods)
+        check("double-click", await waitUntil(3) { self.pad.log.contains("left 2") }, "the pad saw \(pad.log)")
+        pad.log = []
+        await press(CGKeyCode(kVK_ANSI_D), Self.testMods)
+        check("right-click", await waitUntil(3) { self.pad.log.contains("right") }, "the pad saw \(pad.log)")
+        await focus()
+        pad.log = []
+        await press(CGKeyCode(kVK_ANSI_F), Self.testMods)
+        check("middle-click", await waitUntil(3) { self.pad.log.contains("middle") }, "the pad saw \(pad.log)")
+        pad.log = []
+        moveMouse(to: padPoint(0.5))
+        await pause(0.2)
+        await press(CGKeyCode(kVK_ANSI_G), Self.testMods)
+        check("scroll where the pointer is", await waitUntil(3) { self.pad.log.contains { $0.hasPrefix("scroll") } },
+              "the pad saw \(pad.log); pointer at \(MouseDriver.pointer); \(whereIs(MouseDriver.pointer))")
+        pad.log = []
+        await press(CGKeyCode(kVK_ANSI_H), Self.testMods)
+        check("drag from one place to another", await waitUntil(3) { self.pad.log.contains("drop") } && pad.dragDistance > 150,
+              "the pad saw \(pad.log), dragged \(Int(pad.dragDistance)) points")
+        await press(CGKeyCode(kVK_ANSI_J), Self.testMods)
+        let moved = await waitUntil(3) { abs(MouseDriver.pointer.x - 77) < 2 && abs(MouseDriver.pointer.y - 155) < 2 }
+        check("move the pointer", moved, "pointer at \(MouseDriver.pointer)")
+
+        // Search the web for the selected text (a test search address this app answers), keeping the clipboard.
+        await focus()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("keep this copy", forType: .string)
+        textView.string = "find me please"
+        textView.selectAll(nil)
+        await pause(0.3)
+        await press(CGKeyCode(kVK_ANSI_L), Self.testMods)
+        let searched = await waitUntil(5) { self.openedURLs.contains { $0.contains("find%20me%20please") } }
+        check("search the web for the selected text", searched, "opened \(openedURLs)")
+        await pause(0.5)
+        check("… and the clipboard is put back", NSPasteboard.general.string(forType: .string) == "keep this copy",
+              "clipboard has “\(NSPasteboard.general.string(forType: .string) ?? "")”")
+
+        // Hide / show the Dock (macOS's own ⌥⌘D), then put it back.
+        func dockHides() -> String { output("/usr/bin/defaults", ["read", "com.apple.dock", "autohide"]) }
+        let before = dockHides()
+        await press(CGKeyCode(kVK_ANSI_X), Self.testMods)
+        let changed = await waitUntil(5) { dockHides() != before }
+        check("hide / show the Dock", changed, "autohide was “\(before)”, now “\(dockHides())”")
+        if changed {
+            await pause(1)
+            await press(CGKeyCode(kVK_ANSI_X), Self.testMods)
+            _ = await waitUntil(5) { dockHides() == before }
+        }
+
+        // Eject all disks: a disk image is attached, then ejected.
+        let image = data.appendingPathComponent("ToolbeltEject.dmg").path
+        let attached = run("/usr/bin/hdiutil", ["create", "-size", "2m", "-fs", "HFS+", "-volname", "ToolbeltEject", "-ov", image])
+            && run("/usr/bin/hdiutil", ["attach", image])
+        let mounted = attached ? await waitUntil(5) { FileManager.default.fileExists(atPath: "/Volumes/ToolbeltEject") } : false
+        await press(CGKeyCode(kVK_ANSI_Z), Self.testMods)
+        let ejected = mounted ? await waitUntil(10) { !FileManager.default.fileExists(atPath: "/Volumes/ToolbeltEject") } : false
+        check("eject all disks", ejected, "attached \(attached), mounted \(mounted)")
+
+        // Empty the Trash (through Finder).
+        let file = data.appendingPathComponent("throw away \(Int.random(in: 1000...9999)).txt")
+        try? "rubbish".write(to: file, atomically: true, encoding: .utf8)
+        var inTrash: NSURL?
+        try? FileManager.default.trashItem(at: file, resultingItemURL: &inTrash)
+        let trashed = (inTrash as URL?).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        // Like a person: Finder takes a moment to notice something new in the Trash.
+        await pause(2)
+        await press(CGKeyCode(kVK_ANSI_C), Self.testMods)
+        let emptied = trashed ? await waitUntil(40) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
+        check("empty the Trash", emptied,
+              "put in the Trash: \(trashed); the trigger ran: \(count("trashpressed")); still asking Finder: \(output("/usr/bin/pgrep", ["-lf", "empty trash"]).isEmpty ? "no" : "yes"); "
+                + "Finder running: \(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty ? "no" : "yes"); "
+                + "the Trash holds \((try? FileManager.default.contentsOfDirectory(atPath: NSHomeDirectory() + "/.Trash"))?.count ?? -1) items, "
+                + "the file is at \((inTrash as URL?)?.path ?? "?")")
+    }
+
     func macEventTests() async {
         say("— 0.26: the Mac's own events")
         DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.apple.screenIsLocked"), object: nil, userInfo: nil,
@@ -739,7 +894,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
         await press(CGKeyCode(kVK_ANSI_9), Self.testMods)
         let right = await waitUntil(3) { abs(self.window.frame.maxX - visible.maxX) < 20 && abs(self.window.frame.width - visible.width / 2) < 30 }
         check("a trigger running “Right half” moves the window", right, "window \(window.frame), screen \(visible)")
-        window.center()
+        window.setFrame(homeFrame, display: true)
     }
 
     func mouseTests() async {
@@ -906,4 +1061,31 @@ final class RealUse: NSObject, NSApplicationDelegate {
             check("memory measured", false, "only \(samples.count) samples")
         }
     }
+}
+
+/// Notes every click, scroll and drag it gets, for checking the mouse actions.
+final class InputPad: NSView {
+    var log: [String] = []
+    var dragStart: NSPoint?
+    var dragDistance: CGFloat = 0
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.systemTeal.withAlphaComponent(0.25).setFill()
+        bounds.fill()
+    }
+    override func mouseDown(with event: NSEvent) {
+        log.append("left \(event.clickCount)")
+        dragStart = event.locationInWindow
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if log.last != "drag" { log.append("drag") }
+        if let start = dragStart { dragDistance = hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        if log.last == "drag" { log.append("drop") }
+    }
+    override func rightMouseDown(with event: NSEvent) { log.append("right") }
+    override func otherMouseDown(with event: NSEvent) { log.append("middle") }
+    override func scrollWheel(with event: NSEvent) { log.append(event.scrollingDeltaY < 0 ? "scroll down" : "scroll up") }
 }

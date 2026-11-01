@@ -15,7 +15,10 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    trackpad touches (GitHub's Macs have no trackpad), snippets, a macro, the clipboard history,
    the launcher, the web server, window moves and a screenshot; and (0.26) rotate, swipe in from an edge,
    TipSwipe, wheel tilt, middle button + scroll, a screen corner, the Hyper key, a changed key (and that
-   quitting puts the keys back), screen lock and unlock, a disk appearing and ejected, and idle / used again. Each check confirms the action really
+   quitting puts the keys back), screen lock and unlock, a disk appearing and ejected, and idle / used again;
+   and (0.27) click, double-, right- and middle-click at a place, scroll, drag and moving the pointer (on a
+   pad in the test window that notes what it gets), searching the web for selected text (to a test search
+   address the test app answers) with the clipboard kept, hiding the Dock, ejecting disks and emptying the Trash. Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.
@@ -27,7 +30,8 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
 
 Some things need a person: they depend on hardware a test machine doesn't have (a real trackpad,
 Force Click, a Magic Mouse, brightness and keyboard light, a microphone, Wi-Fi, a second display,
-real sleep and lock, the charger and battery, USB and Bluetooth devices).
+real sleep and lock, the charger and battery, USB and Bluetooth devices, switching Bluetooth and Wi-Fi,
+the screen saver, the emoji picker and Shortcuts-app shortcuts).
 They're marked **Manual** below and are in the checklist that comes with each release.
 
 ## Feature → test

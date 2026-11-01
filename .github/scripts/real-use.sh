@@ -52,6 +52,11 @@ cat > "$E2E/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>Toolbelt test search</string>
+        <key>CFBundleURLSchemes</key><array><string>toolbelte2e</string></array>
+    </dict></array>
 </dict>
 </plist>
 PLIST
@@ -75,7 +80,7 @@ grant() {
     local csreq="NULL"
     [ -n "$hex" ] && csreq="X'$hex'"
     now="$(date +%s)"
-    for service in kTCCServiceAccessibility kTCCServiceListenEvent kTCCServicePostEvent kTCCServiceScreenCapture; do
+    for service in kTCCServiceAccessibility kTCCServiceListenEvent kTCCServicePostEvent kTCCServiceScreenCapture kTCCServiceSystemPolicyAllFiles; do
         for db in "$SYSTEM_DB" "$USER_DB"; do
             sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified) VALUES ('$service', '$id', 0, 2, 4, 1, $csreq, 0, $now);" 2>/dev/null
             sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags, last_modified) VALUES ('$service', '$executable', 1, 2, 4, 1, NULL, 0, $now);" 2>/dev/null
@@ -85,6 +90,23 @@ grant() {
 }
 grant "$APP"
 grant "$E2E"
+# Toolbelt may control Finder (for "Empty the Trash"), as if you'd clicked OK when macOS asked.
+FINDER_REQ="$(codesign -d -r- /System/Library/CoreServices/Finder.app 2>&1 | sed -n 's/^designated => //p')"
+FINDER_HEX=""
+if [ -n "$FINDER_REQ" ] && echo "$FINDER_REQ" | csreq -r- -b /tmp/finder-req.bin 2>/dev/null; then
+    FINDER_HEX="$(xxd -p /tmp/finder-req.bin | tr -d '\n')"
+fi
+FINDER_ID="NULL"
+[ -n "$FINDER_HEX" ] && FINDER_ID="X'$FINDER_HEX'"
+for db in "$SYSTEM_DB" "$USER_DB"; do
+    for client in "local.personal.toolbelt|0" "/usr/bin/osascript|1"; do
+        sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified) VALUES ('kTCCServiceAppleEvents', '${client%|*}', ${client#*|}, 2, 3, 1, NULL, 0, 'com.apple.finder', $FINDER_ID, 0, $(date +%s));" \
+            || echo "Couldn't save the Finder permission in $db"
+    done
+done
+echo "Finder permission rows: $(sqlite3 "$USER_DB" "SELECT client, auth_value FROM access WHERE service='kTCCServiceAppleEvents';" 2>&1 | tr '\n' ' ')"
+# Make the test app the handler for its toolbelte2e: links (the web-search test's search site).
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$E2E"
 # Make macOS read the database again.
 sudo killall tccd 2>/dev/null
 killall tccd 2>/dev/null
@@ -132,9 +154,9 @@ if [ "$CRASHES_AFTER" -gt "$CRASHES_BEFORE" ]; then
     head -80 "$HOME/Library/Logs/DiagnosticReports/$report"
     failed=1
 fi
-if [ "$failed" -ne 0 ]; then
+if true; then
     echo "Toolbelt's log:"
-    log show --last 15m --predicate 'process == "Toolbelt"' --style compact 2>/dev/null | grep -i "toolbelt:" | tail -30
+    log show --last 15m --predicate 'process == "Toolbelt"' --style compact 2>/dev/null | grep -i "toolbelt:\|finder" | tail -40
 fi
 rm -rf "$DATA_DIR"
 exit "$failed"
