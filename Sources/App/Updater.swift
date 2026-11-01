@@ -305,6 +305,7 @@ struct UpdateView: View {
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
                 Text("Toolbelt quits, swaps in the new version and opens again. macOS then asks once more for its permissions.")
                     .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Skip This Version") { updater.skip(release) }
                     Spacer()
