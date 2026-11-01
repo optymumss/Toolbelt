@@ -57,6 +57,7 @@ enum ToolbeltTests {
         t.group("Mouse actions, web search, Shortcuts, Bluetooth, Wi-Fi, Dock, Trash, disks", MoreActionTests.run)
         t.group("Presets, floating menus and menu-bar items", PresetAndMenuTests.run)
         t.group("Macro editor: recording, switched-off steps, time limits, failures, copy/paste, undo, export", MacroEditorTests.run)
+        t.group("Macro triggers and conditions: clipboard, start, windows, pause until, keys, colours, pictures", MacroConditionTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -2066,6 +2067,14 @@ enum AutomationTests {
         _ = DownloadTests.waitFor(timeout) { done.value }
     }
 
+    /// Whether a condition is true for this run (conditions are checked asynchronously).
+    static func truth(_ run: MacroRun, _ condition: MacroCondition) -> Bool {
+        let result = Box<Bool?>(nil)
+        Task { @MainActor in result.value = await run.isTrue(condition) }
+        _ = DownloadTests.waitFor(10) { result.value != nil }
+        return result.value ?? false
+    }
+
     static func run() {
         let shortcuts = ShortcutCenter()
         let runner = ActionRunner(shortcuts: shortcuts)
@@ -2090,11 +2099,11 @@ enum AutomationTests {
 
         // Conditions
         let contains = MacroCondition(left: "%Name%", test: .contains, right: "sa")
-        check(vars.isTrue(contains), "conditions: contains (ignoring case)")
-        check(!vars.isTrue(MacroCondition(left: "%Name%", test: .equals, right: "Alex")), "is")
-        check(vars.isTrue(MacroCondition(left: "%Missing%", test: .isEmpty)), "is empty")
-        check(vars.isTrue(MacroCondition(left: "12", test: .greaterThan, right: "9")), "numbers compare as numbers (12 > 9)")
-        check(vars.isTrue(MacroCondition(left: "ABC-123", test: .matches, right: "^[A-Z]+-[0-9]+$")), "matches a pattern")
+        check(truth(vars, contains), "conditions: contains (ignoring case)")
+        check(!truth(vars, MacroCondition(left: "%Name%", test: .equals, right: "Alex")), "is")
+        check(truth(vars, MacroCondition(left: "%Missing%", test: .isEmpty)), "is empty")
+        check(truth(vars, MacroCondition(left: "12", test: .greaterThan, right: "9")), "numbers compare as numbers (12 > 9)")
+        check(truth(vars, MacroCondition(left: "ABC-123", test: .matches, right: "^[A-Z]+-[0-9]+$")), "matches a pattern")
 
         // A whole macro: variables, loops, if/otherwise, scripts, questions, notifications, pause and stop
         let engine = MacroRun(runner: runner)
@@ -4195,5 +4204,145 @@ enum MacroEditorTests {
         checkEqual(RecordingBuilder.event(keyCode: kVK_ANSI_C, flags: .maskCommand, characters: "c"), .keys(keyCode: kVK_ANSI_C, modifiers: cmdKey),
                    "⌘C is a shortcut")
         checkEqual(RecordingBuilder.event(keyCode: kVK_Command, flags: .maskCommand, characters: nil), nil, "a modifier key alone is nothing")
+    }
+}
+
+@MainActor
+enum MacroConditionTests {
+    static func run() {
+        let runner = ActionRunner(shortcuts: ShortcutCenter())
+
+        // Keys held down
+        checkEqual(ModifierNames.parse("⌘⌥"), [.command, .option], "⌘⌥ means command and option")
+        checkEqual(ModifierNames.parse("ctrl+Shift"), [.control, .shift], "words work too (ctrl+Shift)")
+        checkEqual(ModifierNames.parse("fn"), [.function], "and fn")
+        checkEqual(ModifierNames.parse("hello"), [], "anything else means no keys")
+        checkEqual(ModifierNames.display([.command, .shift]), "⇧⌘", "shown the Mac way")
+
+        // Points and colours
+        checkEqual(ScreenPoint.parse("200, 300"), CGPoint(x: 200, y: 300), "a point written x,y")
+        check(ScreenPoint.parse("200") == nil, "one number isn't a point")
+        checkEqual(RGBColor(hex: "#FF8800"), RGBColor(red: 255, green: 136, blue: 0), "a colour written #FF8800")
+        checkEqual(RGBColor(hex: "f80"), RGBColor(red: 255, green: 136, blue: 0), "the short way (f80) too")
+        check(RGBColor(hex: "#12345") == nil && RGBColor(hex: "blue") == nil, "anything else isn't a colour")
+        checkEqual(RGBColor(red: 1, green: 2, blue: 255).hex, "#0102FF", "and written back")
+        check(RGBColor(red: 250, green: 10, blue: 250).isClose(to: RGBColor(red: 255, green: 0, blue: 255)), "nearly the same colour counts")
+        check(!RGBColor(red: 200, green: 0, blue: 255).isClose(to: RGBColor(red: 255, green: 0, blue: 255)), "a different colour doesn't")
+
+        // Finding a picture
+        var pixels: [UInt8] = []
+        var seed: UInt32 = 7
+        for _ in 0..<(80 * 50) {
+            seed = seed &* 1_103_515_245 &+ 12345
+            pixels.append(UInt8((seed >> 16) & 0xFF))
+        }
+        let screen = GrayImage(width: 80, height: 50, pixels: pixels)
+        func crop(_ x: Int, _ y: Int, _ w: Int, _ h: Int, change: (UInt8) -> UInt8 = { $0 }) -> GrayImage {
+            var out: [UInt8] = []
+            for row in y..<(y + h) { for column in x..<(x + w) { out.append(change(screen[column, row])) } }
+            return GrayImage(width: w, height: h, pixels: out)
+        }
+        let found = ImageFinder.find(crop(37, 21, 14, 11), in: screen)
+        check(found?.x == 37 && found?.y == 21, "finds a picture on the screen, at the right place", "found \(String(describing: found))")
+        let shaded = ImageFinder.find(crop(5, 30, 20, 15) { UInt8(min(255, Int($0) + 4)) }, in: screen)
+        check(shaded?.x == 5 && shaded?.y == 30, "even when the colours are slightly off", "found \(String(describing: shaded))")
+        check(ImageFinder.find(crop(10, 10, 12, 12) { 255 - $0 }, in: screen) == nil, "a picture that isn't there isn't found")
+        check(ImageFinder.find(GrayImage(width: 90, height: 10, pixels: [UInt8](repeating: 0, count: 900)), in: screen) == nil,
+              "a picture bigger than the screen isn't found")
+        if let context = CGContext(data: nil, width: 4, height: 2, bitsPerComponent: 8, bytesPerRow: 16, space: CGColorSpaceCreateDeviceRGB(),
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 2))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+            context.fill(CGRect(x: 0, y: 1, width: 2, height: 1)) // the top-left two pixels (CG counts from the bottom)
+            let gray = context.makeImage().flatMap { GrayImage(cgImage: $0) }
+            check(gray?[0, 0] ?? 255 < 30 && gray?[3, 1] ?? 0 > 225, "pictures are read top row first", "\(gray?.pixels ?? [])")
+        }
+
+        // The front window
+        var tracker = WindowChangeTracker()
+        checkEqual(tracker.update(window: "1", title: "Inbox"), .none, "the first look only remembers")
+        checkEqual(tracker.update(window: "1", title: "Inbox"), .none, "nothing changed")
+        checkEqual(tracker.update(window: "1", title: "Inbox (3)"), .title, "the same window with a new title")
+        checkEqual(tracker.update(window: "2", title: "Draft"), .window, "a different window")
+        checkEqual(tracker.update(window: nil, title: nil), .none, "no window at all isn't a change to run anything for")
+        checkEqual(tracker.update(window: "2", title: "Draft"), .window, "and a window after none is")
+
+        // Login
+        let login = Date(timeIntervalSince1970: 1_000_000)
+        check(LoginTime.isAtLogin(started: login.addingTimeInterval(40), loggedIn: login), "starting 40 s after logging in is at login")
+        check(!LoginTime.isAtLogin(started: login.addingTimeInterval(3600), loggedIn: login), "an hour later isn't")
+        check(!LoginTime.isAtLogin(started: login, loggedIn: nil), "nor when the login time is unknown")
+
+        // Conditions about the Mac, with made-up answers
+        var world = ConditionWorld()
+        world.frontApp = { "com.apple.Safari" }
+        world.windowTitle = { "Invoice 2041 – Mail" }
+        world.runningApps = { ["com.apple.Safari", "Safari", "com.apple.mail", "Mail"] }
+        let folder = NSHomeDirectory()
+        world.fileExists = { $0 == folder + "/report.pdf" }
+        world.modifiers = { [.command, .option, .capsLock] }
+        world.pixel = { point in point == CGPoint(x: 10, y: 20) ? RGBColor(red: 250, green: 5, blue: 250) : RGBColor(red: 0, green: 0, blue: 0) }
+        world.findOnScreen = { path in path.hasSuffix("button.png") ? CGPoint(x: 5, y: 5) : nil }
+        let engine = MacroRun(runner: runner)
+        engine.world = world
+        func truth(_ left: String = "", _ test: MacroCondition.Test, _ right: String = "") -> Bool {
+            AutomationTests.truth(engine, MacroCondition(left: left, test: test, right: right))
+        }
+        check(truth(.windowTitleContains, "invoice"), "the front window's title contains (ignoring capitals)")
+        check(!truth(.windowTitleContains, "Calendar"), "… and not when it doesn't")
+        check(truth(.appRunning, "Mail") && truth(.appRunning, "com.apple.mail"), "an app is running (by name or identifier)")
+        check(truth(.appNotRunning, "Notes") && !truth(.appNotRunning, "safari"), "an app is not running")
+        check(truth("~/report.pdf", .fileExists) && truth("~/other.pdf", .fileMissing), "a file exists / doesn't (~ is your home folder)")
+        check(!truth("", .fileExists), "no path is never a file that exists")
+        check(truth(.modifiersHeld, "⌘⌥") && truth(.modifiersHeld, "cmd"), "keys held down (other held keys don't matter)")
+        check(!truth(.modifiersHeld, "⌘⇧") && !truth(.modifiersHeld, ""), "… but every key named must be held")
+        check(truth("10,20", .pixelColorIs, "#FF00FF") && !truth("11,20", .pixelColorIs, "#FF00FF"), "the colour at a point")
+        check(!truth("10,20", .pixelColorIs, "pink"), "a colour that isn't one is never true")
+        check(truth(.screenShows, "~/button.png") && truth(.screenDoesNotShow, "~/other.png"), "the screen shows a picture / doesn't")
+        check(truth(.frontAppIs, "Safari"), "the earlier tests still work (the app in front)")
+        check(truth("abc", .contains, "B"), "and text tests too")
+        engine.set("Who", "Mail")
+        check(truth(.appRunning, "%Who%"), "variables are filled in first")
+
+        // Pause until
+        let titleNow = Box("Loading…")
+        var waiting = ConditionWorld()
+        waiting.windowTitle = { titleNow.value }
+        let pausing = MacroRun(runner: runner)
+        pausing.world = waiting
+        pausing.pauseCheckEvery = 0.05
+        var until = MacroStep(kind: .pauseUntil)
+        until.condition = MacroCondition(left: "", test: .windowTitleContains, right: "Ready")
+        until.timeout = 5
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { titleNow.value = "Ready – Page" }
+        let started = Date()
+        AutomationTests.runSteps(pausing, [until, MacroEditorTests.step("After", "yes")])
+        let waited = Date().timeIntervalSince(started)
+        check(waited >= 0.45 && waited < 2, "“Pause until” waits until it happens", "waited \(waited) s")
+        checkEqual(pausing.value(of: "After"), "yes", "and then carries on")
+
+        var never = until
+        never.condition.right = "Never"
+        never.timeout = 0.3
+        never.onFailure = .stop
+        let givingUp = MacroRun(runner: runner)
+        givingUp.world = waiting
+        givingUp.pauseCheckEvery = 0.05
+        AutomationTests.runSteps(givingUp, [never, MacroEditorTests.step("After", "yes")])
+        checkEqual(givingUp.value(of: "After"), "", "giving up counts as failing (here: stop the macro)")
+        check(givingUp.failures.first?.contains("didn't happen") == true, "and says why", "\(givingUp.failures)")
+        checkEqual(never.summary, "Pause until the front window's title contains “Never”", "summary in plain words")
+
+        // Saving
+        let triggers: [MacroTrigger.Kind] = [.clipboardChanged, .toolbeltStarts, .atLogin, .windowChanged, .windowTitleChanged, .calledByMacro]
+        var macro = Macro(name: "New triggers", triggers: triggers.map { MacroTrigger(kind: $0) }, steps: [until])
+        macro.triggers[0].text = "INV-"
+        let back = try? JSONDecoder().decode(Macro.self, from: JSONEncoder().encode(macro))
+        checkEqual(back, macro, "the new triggers and steps are saved and read back")
+        checkEqual(macro.triggers[0].summary, "Copied text containing “INV-”", "clipboard trigger in plain words")
+        check(triggers.allSatisfy { !$0.title.isEmpty } && MacroCondition.Test.allCases.allSatisfy { !$0.title.isEmpty }, "everything has a name")
+        let old = #"{"left":"%Clipboard%","test":"contains","right":"x"}"#
+        checkEqual((try? JSONDecoder().decode(MacroCondition.self, from: Data(old.utf8)))?.test, .contains, "conditions saved by 0.29 still load")
     }
 }

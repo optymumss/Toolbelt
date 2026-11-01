@@ -23,7 +23,11 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    action whose button runs and closes it, and a menu-bar item showing its script's output and running its
    action when clicked;
    and (0.29) recording typing into a macro and playing it back, a script that runs out of time stopping its
-   macro, a failing script carrying on, and a switched-off step being skipped. Each check confirms the action really
+   macro, a failing script carrying on, and a switched-off step being skipped;
+   and (0.30) Toolbelt-starts and clipboard triggers (a macro's own copy not starting it again), a second
+   window coming to the front and being renamed, conditions (an app running, a file existing, the window's
+   title, the colour of a pink square, a pattern found on screen and an upside-down one not found, ⇧ held),
+   and "Pause until" waiting for a file and giving up after its time. Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.
