@@ -61,7 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSUpdateDynamicServices()
 
         if !RealUseHooks.isOn { warnAboutTakenShortcuts() }
-        RealUseHooks.start()
+        RealUseHooks.start { [weak self] in
+            guard let shortcuts = self?.shortcuts else { return [] }
+            return ShortcutAction.allCases.filter { shortcuts.failed.contains($0) }.map(\.rawValue)
+        }
         showForScreenshot()
     }
 

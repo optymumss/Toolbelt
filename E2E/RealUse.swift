@@ -129,6 +129,20 @@ final class RealUse: NSObject, NSApplicationDelegate {
     // MARK: - This app's window (the "app in front" that keys are typed into)
 
     func makeWindow() {
+        // Like every real app, an Edit menu: without it ⌘V (how Toolbelt pastes) does nothing.
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu()
+        main.addItem(appItem)
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Toolbelt real-use test"
@@ -189,7 +203,9 @@ final class RealUse: NSObject, NSApplicationDelegate {
 
     func keyEvent(_ code: CGKeyCode, down: Bool, flags: UInt64, character: String? = nil) {
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { return }
-        event.flags = CGEventFlags(rawValue: flags)
+        // A real keyboard marks the arrow keys (and Home, End, Page Up/Down) as "fn" and "keypad" keys.
+        let special: Set<CGKeyCode> = [123, 124, 125, 126, 115, 116, 119, 121]
+        event.flags = CGEventFlags(rawValue: flags | (special.contains(code) ? CGEventFlags.maskSecondaryFn.rawValue | CGEventFlags.maskNumericPad.rawValue : 0))
         if let character {
             let units = Array(character.utf16)
             event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
@@ -467,6 +483,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
         }
         guard await startToolbelt() else { return }
         let status = toolbeltStatus()
+        say("Toolbelt's status: \(status)")
         check("Toolbelt has Accessibility", status["accessibility"] as? Bool == true, "status: \(status)")
         check("Toolbelt has Input Monitoring", status["inputMonitoring"] as? Bool == true, "status: \(status)")
         await focus()

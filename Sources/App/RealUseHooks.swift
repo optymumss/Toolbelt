@@ -14,9 +14,12 @@ enum RealUseHooks {
     static var isOn: Bool { ProcessInfo.processInfo.environment["TOOLBELT_E2E"] == "1" }
 
     private static var observer: NSObjectProtocol?
+    /// Toolbelt's shortcuts that couldn't be registered because something else has them.
+    private static var takenShortcuts: () -> [String] = { [] }
 
-    static func start() {
+    static func start(takenShortcuts: @escaping () -> [String] = { [] }) {
         guard isOn else { return }
+        self.takenShortcuts = takenShortcuts
         writeStatus()
         observer = DistributedNotificationCenter.default().addObserver(forName: touchNotification, object: nil, queue: .main) { note in
             guard let text = note.object as? String, let frames = parseFrames(text) else { return }
@@ -32,6 +35,7 @@ enum RealUseHooks {
             "accessibility": Permission.accessibility.isGranted,
             "inputMonitoring": Permission.inputMonitoring.isGranted,
             "screenRecording": Permission.screenRecording.isGranted,
+            "takenShortcuts": takenShortcuts(),
         ]
         if let data = try? JSONSerialization.data(withJSONObject: status, options: [.sortedKeys]) {
             try? data.write(to: SettingsStore.folder.appendingPathComponent("e2e-status.json"), options: .atomic)
