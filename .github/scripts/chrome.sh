@@ -22,7 +22,8 @@ cat > "$DATA/settings.plist" <<PLIST
   <key>downloads.sort</key><false/>
 </dict></plist>
 PLIST
-TOOLBELT_DATA_DIR="$DATA" build/Toolbelt.app/Contents/MacOS/Toolbelt &
+# TOOLBELT_E2E=1: Toolbelt writes e2e-status.json, where the test reads the list of links it shows.
+TOOLBELT_DATA_DIR="$DATA" TOOLBELT_E2E=1 build/Toolbelt.app/Contents/MacOS/Toolbelt &
 APP=$!
 
 # A small website: a page with a download link and videos, and a page that streams a video the way
@@ -53,6 +54,12 @@ cat > "$SITE/index.html" <<'HTML'
   <source src="clip-720.mp4" type="video/mp4" label="720p">
   <source src="clip-360.mp4" type="video/mp4" label="360p">
 </video></p>
+</body></html>
+HTML
+cat > "$SITE/links.html" <<'HTML'
+<!doctype html><html><head><title>Toolbelt links test</title></head><body>
+<a href="report.zip">The report</a> <a href="guide.pdf">Guide</a> <a href="other.html">Another page</a>
+<img src="pic.png" alt="A picture"> <a href="mailto:someone@example.com">Mail</a>
 </body></html>
 HTML
 for page in stream protected; do

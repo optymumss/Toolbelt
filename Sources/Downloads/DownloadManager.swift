@@ -175,7 +175,7 @@ final class DownloadManager: ObservableObject {
     /// Starts downloading a link. Returns nil if the text isn't a link Toolbelt can download.
     @discardableResult
     func add(_ text: String, name: String? = nil, headers: [String: String] = [:], queue: UUID? = nil,
-             stream: Bool = false, audio: String? = nil, page: String? = nil) -> DownloadItem? {
+             stream: Bool = false, audio: String? = nil, page: String? = nil, folder: URL? = nil) -> DownloadItem? {
         guard let url = Self.downloadableURL(from: text) else { return nil }
         let fromURL = url.lastPathComponent.isEmpty || url.lastPathComponent == "/" ? (url.host ?? "download") : url.lastPathComponent
         let chosen = name.map(Self.safeFileName).flatMap { $0.isEmpty ? nil : $0 }
@@ -184,6 +184,7 @@ final class DownloadManager: ObservableObject {
         item.headers = headers.isEmpty ? nil : headers
         if chosen != nil { item.nameIsFixed = true }
         item.pageURL = page.flatMap(Self.downloadableURL)
+        item.folder = folder?.path
         if stream {
             item.kind = "hls"
             item.audioURL = audio.flatMap(Self.downloadableURL)
@@ -211,7 +212,7 @@ final class DownloadManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func downloadableURL(from text: String) -> URL? {
+    nonisolated static func downloadableURL(from text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: \.isWhitespace),
               let url = URL(string: trimmed),
@@ -453,13 +454,13 @@ final class DownloadManager: ObservableObject {
         }
     }
 
-    /// Moves the finished file to the downloads folder, sorted by type if that's switched on.
+    /// Moves the finished file to its category's folder: its own folder if it has one, else the downloads
+    /// folder (sorted by type if that's switched on). A download given a folder of its own goes there.
     private func finish(_ id: UUID) {
         guard let item = item(id) else { return }
-        var folder = Prefs.downloadFolder
-        if Prefs.downloadSortByType {
-            folder = folder.appendingPathComponent(DownloadCategory.of(item.name).rawValue, isDirectory: true)
-        }
+        let folder = item.folder.map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? DownloadCategories.folder(for: item.name, base: Prefs.downloadFolder, sortByType: Prefs.downloadSortByType,
+                                         rules: Prefs.downloadCategories)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let destination = ShelfStore.unusedURL(for: item.name, in: folder)

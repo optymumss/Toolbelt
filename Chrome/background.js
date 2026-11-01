@@ -61,18 +61,61 @@ chrome.downloads.onCreated.addListener(async (item) => {
 });
 
 // Right-click a link, picture, video or sound: "Download with Toolbelt".
+// Right-click the page: "Download All Links with Toolbelt…"; with text selected, only the links in it.
 chrome.runtime.onInstalled.addListener(() => {
+  // Updating the extension keeps the old items, so start from none.
+  chrome.contextMenus.removeAll(() => {
   chrome.contextMenus.create({
     id: "toolbelt-download",
     title: "Download with Toolbelt",
     contexts: ["link", "image", "video", "audio"],
   });
+  chrome.contextMenus.create({ id: "toolbelt-all-links", title: "Download All Links with Toolbelt…", contexts: ["page"] });
+  chrome.contextMenus.create({ id: "toolbelt-selected-links", title: "Download Selected Links with Toolbelt…", contexts: ["selection"] });
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "toolbelt-all-links" || info.menuItemId === "toolbelt-selected-links") {
+    if (tab && tab.id >= 0) sendPageLinks(tab.id);
+    return;
+  }
   const url = info.linkUrl || info.srcUrl;
   if (canHandOver(url)) sendToToolbelt(url, { referrer: info.pageUrl || (tab && tab.url) || "" });
 });
+
+// Asks the page for its links, then hands them to Toolbelt, which lists them to tick.
+// Each site's cookies go along, so links that need you signed in still download.
+async function sendPageLinks(tabId) {
+  let page = null;
+  try {
+    page = await chrome.tabs.sendMessage(tabId, { type: "collect-links" }, { frameId: 0 });
+  } catch {}
+  if (!page || !Array.isArray(page.links)) return { ok: false, count: 0, error: "This page can't be read (open a web page, or reload it)." };
+  if (page.links.length === 0) return { ok: false, count: 0, error: "No links on this page." };
+  const origins = new Map();
+  for (const link of page.links) {
+    try {
+      const url = new URL(link.url);
+      if (!origins.has(url.hostname) && origins.size < 50) origins.set(url.hostname, url.origin + "/");
+    } catch {}
+  }
+  const cookiesByHost = {};
+  for (const [host, origin] of origins) {
+    const cookies = await cookiesFor(origin);
+    if (cookies) cookiesByHost[host.toLowerCase()] = cookies;
+  }
+  const message = {
+    type: "links", url: page.url, title: page.title || "", referrer: page.url,
+    links: page.links, cookiesByHost, userAgent: navigator.userAgent,
+  };
+  return new Promise((resolve) => {
+    chrome.runtime.sendNativeMessage(HOST, message, (reply) => {
+      const ok = !chrome.runtime.lastError && !!reply && reply.ok === true;
+      resolve({ ok, count: page.links.length, error: ok ? "" : "Toolbelt isn't answering." });
+    });
+  });
+}
 
 // ── Streamed videos ──────────────────────────────────────────────────────────────────────────
 // Most video sites stream: the page fetches a playlist (.m3u8) listing the video at several sizes,
@@ -200,6 +243,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   }
   if (message && message.type === "streams" && sender.tab) {
     streamOptions(sender.tab.id, message.pageStart, message.found).then(reply, () => reply({ options: [] }));
+    return true;
+  }
+  if (message && message.type === "page-links" && Number.isInteger(message.tabId)) {
+    sendPageLinks(message.tabId).then(reply, () => reply({ ok: false, count: 0, error: "Something went wrong." }));
     return true;
   }
   if (message && message.type === "ping") {

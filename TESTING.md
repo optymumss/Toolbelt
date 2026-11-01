@@ -38,7 +38,11 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    the clipboard's picture rotated and its text read (OCR), a macro run on a clipboard-history item, a palette
    showing only while its app is in front, and another macro running while a question window waits;
    and (0.33) an update found in a test release made from this run's DMG, installed into a copy of the app
-   (downloaded, checked, swapped in, nothing left behind, signature intact). Each check confirms the action really
+   (downloaded, checked, swapped in, nothing left behind, signature intact);
+   and (0.34) a small web site served on the Mac: the site grabber finding its pictures and downloading the ticked
+   ones into the Images folder, the whole site saved to read offline with working links, Chrome's list of links
+   (files ticked, pages not, the Documents button, a PDF going to the Documents category's own folder), and
+   copied links (one offered and downloaded, several offered as a list, a web page not offered). Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.

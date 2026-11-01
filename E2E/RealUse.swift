@@ -672,6 +672,14 @@ final class RealUse: NSObject, NSApplicationDelegate {
         try JSONEncoder().encode(snippets).write(to: data.appendingPathComponent("snippets.json"), options: .atomic)
 
         Prefs.updateAutoCheck = false // only the test's own check, never a window popping up mid-test
+        // 0.34: downloads sorted into category folders, Documents into a folder of its own; copied links
+        // are only offered during the test of that (other tests copy links too).
+        Prefs.downloadFolder = data.appendingPathComponent("Downloads")
+        Prefs.downloadSortByType = true
+        var categories = DownloadCategories.defaults
+        categories[2].folder = data.appendingPathComponent("MyDocs").path
+        Prefs.downloadCategories = categories
+        Prefs.downloadCatchClipboard = false
         let builtVersion = NSDictionary(contentsOf: toolbeltURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String ?? "0"
         let release: [String: Any] = [
             "tag_name": "v\(builtVersion)", "draft": false, "prerelease": false, "body": "## What's new in \(builtVersion): test",
@@ -758,6 +766,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await kmActionTests()
             await kmExtraTests()
             await updateTests()
+            await linkTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -1468,6 +1477,100 @@ final class RealUse: NSObject, NSApplicationDelegate {
               "update: \(update()), old copy still there: \(FileManager.default.fileExists(atPath: marker.path)), version \(version ?? "none")")
         check("… leaving nothing behind", leftovers.isEmpty, "left: \(leftovers)")
         check("… and the new copy is signed and intact", run("/usr/bin/codesign", ["--verify", "--deep", "--strict", copy.path]), "codesign says no")
+    }
+
+    static let sitePort = 12398
+
+    /// 0.34: a small web site served on this Mac, the site grabber, Chrome's list of links, and copied links.
+    func linkTests() async {
+        say("— 0.34: download all links, site grabber, copied links, category folders")
+        let site = data.appendingPathComponent("site")
+        try? FileManager.default.createDirectory(at: site, withIntermediateDirectories: true)
+        let pages = [
+            "index.html": #"<html><body><a href="a.pdf">Manual</a> <a href="b.zip">Files</a> <a href="page2.html">Next</a> <img src="pic1.png" alt="one"></body></html>"#,
+            "page2.html": #"<html><body><img src="pic2.png"><a href="deep.html">Deeper</a> <a href="index.html">Home</a></body></html>"#,
+            "deep.html": #"<html><body><img src="pic3.png"></body></html>"#,
+        ]
+        for (name, text) in pages { try? Data(text.utf8).write(to: site.appendingPathComponent(name)) }
+        for name in ["a.pdf", "b.zip", "pic1.png", "pic2.png", "pic3.png"] {
+            try? Data(repeating: UInt8(name.count), count: 20_000).write(to: site.appendingPathComponent(name))
+        }
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        server.arguments = ["python3", "-m", "http.server", "\(Self.sitePort)", "--bind", "127.0.0.1", "--directory", site.path]
+        server.standardOutput = FileHandle.nullDevice
+        server.standardError = FileHandle.nullDevice
+        guard (try? server.run()) != nil else {
+            check("the test web site starts", false, "python3 didn't start")
+            return
+        }
+        defer { server.terminate() }
+        let home = "http://127.0.0.1:\(Self.sitePort)/"
+        _ = await waitUntil(10) { (try? Data(contentsOf: URL(string: home)!)) != nil }
+        func status(_ key: String) -> String { toolbeltStatus()[key] as? String ?? "" }
+        let downloads = data.appendingPathComponent("Downloads")
+        func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
+
+        // The site grabber: all pictures, one level down.
+        command("grab:pictures 1 \(home)")
+        check("the site grabber finds the pictures on a site", await waitUntil(20) { status("grabber") == "found 2" }, "grabber: \(status("grabber"))")
+        check("… and lists them ticked", status("linkPicker") == "2 shown, 2 ticked: pic1.png,pic2.png", "list: \(status("linkPicker"))")
+        command("picker-download")
+        let pictures = downloads.appendingPathComponent("Images")
+        check("ticked pictures download into the Images folder",
+              await waitUntil(20) { exists(pictures.appendingPathComponent("pic1.png").path) && exists(pictures.appendingPathComponent("pic2.png").path) },
+              "Images: \((try? FileManager.default.contentsOfDirectory(atPath: pictures.path)) ?? [])")
+
+        // The whole site, for reading offline.
+        command("grab:site 2 \(home)")
+        let saved = await waitUntil(30) { status("grabber").hasPrefix("saved ") }
+        let start = String(status("grabber").dropFirst("saved ".count))
+        let index = (try? String(contentsOfFile: start, encoding: .utf8)) ?? ""
+        let folder = URL(fileURLWithPath: start).deletingLastPathComponent()
+        check("the whole site is saved to read offline", saved && start.hasSuffix("index.html"), "grabber: \(status("grabber"))")
+        check("… its pages link to each other's copies", index.contains(#"href="page2.html""#) && index.contains(#"src="pic1.png""#), index)
+        check("… with every page and file", ["deep.html", "pic3.png", "a.pdf", "b.zip"].allSatisfy { exists(folder.appendingPathComponent($0).path) },
+              "saved: \((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])")
+
+        // Chrome's "Download All Links with Toolbelt" (what the bridge hands over).
+        let request: [String: Any] = ["url": home, "title": "Test site", "referrer": home, "links": [
+            ["url": home + "a.pdf", "text": "Manual"], ["url": home + "b.zip"], ["url": home + "page2.html", "text": "Next"],
+            ["url": home + "pic1.png", "media": "picture"]]]
+        let inbox = data.appendingPathComponent("inbox")
+        try? JSONSerialization.data(withJSONObject: request).write(to: inbox.appendingPathComponent(".links.json"))
+        try? FileManager.default.moveItem(at: inbox.appendingPathComponent(".links.json"), to: inbox.appendingPathComponent("links.json"))
+        check("links from Chrome open the list, files ticked and web pages not",
+              await waitUntil(10) { status("linkPicker") == "4 shown, 3 ticked: a.pdf,b.zip,pic1.png" }, "list: \(status("linkPicker"))")
+        command("picker-kind:Documents")
+        check("the Documents button shows only documents", await waitUntil(5) { status("linkPicker") == "1 shown, 1 ticked: a.pdf" },
+              "list: \(status("linkPicker"))")
+        command("picker-download")
+        let documents = data.appendingPathComponent("MyDocs/a.pdf")
+        check("a document goes to the Documents category's own folder", await waitUntil(20) { exists(documents.path) },
+              "MyDocs: \((try? FileManager.default.contentsOfDirectory(atPath: documents.deletingLastPathComponent().path)) ?? [])")
+        check("… and only what was shown and ticked downloads", !exists(downloads.appendingPathComponent("Archives/b.zip").path))
+
+        // Copied links.
+        command("catch-clipboard:on")
+        await pause(1)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(home + "b.zip", forType: .string)
+        check("copying a link to a file offers to download it", await waitUntil(5) { status("linkOffer") == "Download b.zip?" },
+              "offer: \(status("linkOffer"))")
+        command("link-offer-accept")
+        check("… and Download downloads it (into Archives)", await waitUntil(20) { exists(downloads.appendingPathComponent("Archives/b.zip").path) })
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(home + "a.pdf\n" + home + "b.zip\n" + home + "page2.html", forType: .string)
+        check("copying several links offers the list", await waitUntil(5) { status("linkOffer") == "3 links copied" }, "offer: \(status("linkOffer"))")
+        command("link-offer-accept")
+        check("… which opens with the files ticked", await waitUntil(5) { status("linkPicker") == "3 shown, 2 ticked: a.pdf,b.zip" },
+              "list: \(status("linkPicker"))")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(home + "page2.html", forType: .string)
+        await pause(1.5)
+        check("a copied link to a web page isn't offered", status("linkOffer").isEmpty, "offer: \(status("linkOffer"))")
+        command("catch-clipboard:off")
+        command("picker-close")
     }
 
     func macEventTests() async {

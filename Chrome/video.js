@@ -6,6 +6,42 @@
 // the page asks browsers not to offer downloading (controlsList="nodownload").
 // It does no work until a video plays or the pointer is over one, so it costs nothing on other pages.
 
+// "Download All Links with Toolbelt": the page's links, pictures, videos and sounds (only those in the
+// selected text when some is selected). Answers the extension's background script; only the top frame does.
+if (window === window.top) {
+  chrome.runtime.onMessage.addListener((message, sender, reply) => {
+    if (!message || message.type !== "collect-links") return false;
+    const selection = window.getSelection();
+    const inSelection = !!selection && !selection.isCollapsed && selection.rangeCount > 0;
+    const within = (el) => {
+      if (!inSelection) return true;
+      for (let i = 0; i < selection.rangeCount; i += 1) if (selection.getRangeAt(i).intersectsNode(el)) return true;
+      return false;
+    };
+    const links = [];
+    const add = (url, text, media) => {
+      if (!/^(https?|ftp):/i.test(url || "")) return;
+      const link = { url, text: (text || "").replace(/\s+/g, " ").trim().slice(0, 200) };
+      if (media) link.media = media;
+      links.push(link);
+    };
+    document.querySelectorAll("a[href], area[href]").forEach((a) => {
+      if (within(a)) add(a.href, a.innerText || a.title || a.getAttribute("aria-label"));
+    });
+    document.querySelectorAll("img").forEach((img) => {
+      if (within(img)) add(img.currentSrc || img.src, img.alt || img.title, "picture");
+    });
+    document.querySelectorAll("video, audio").forEach((media) => {
+      if (!within(media)) return;
+      const kind = media.tagName === "AUDIO" ? "sound" : "video";
+      add(media.currentSrc || media.src, media.title, kind);
+      media.querySelectorAll("source").forEach((source) => add(source.src, source.getAttribute("label") || "", kind));
+    });
+    reply({ url: location.href, title: document.title, selection: inSelection, links: links.slice(0, 5000) });
+    return false;
+  });
+}
+
 (() => {
   const NEVER = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i;
   if (NEVER.test(location.hostname)) return;

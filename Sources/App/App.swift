@@ -275,6 +275,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()
+            case "link-picker", "grabber", "link-offer":
+                // 0.34: Chrome's "Download All Links", the site grabber with what it found, and a copied link's offer.
+                guard let downloads = modules.module(.downloads) as? DownloadsModule else { break }
+                let site = "https://photos.example/trip/"
+                let names = ["Lake.jpg", "Mountains.jpg", "Campfire.jpg", "Trip-video.mp4", "Route.pdf", "Packing-list.pdf",
+                             "All-photos.zip", "Soundtrack.mp3", "Day 2", "About us"]
+                let links = names.map { name in
+                    FoundLink(url: URL(string: site + name.replacingOccurrences(of: " ", with: "-"))!,
+                              text: (name as NSString).deletingPathExtension.replacingOccurrences(of: "-", with: " "),
+                              media: name.hasSuffix(".jpg") ? .picture : nil)
+                }
+                switch target {
+                case "link-picker": downloads.chooseLinks(links, title: "Our trip — photos.example", page: site)
+                case "grabber": GrabberWindow.showExample(manager: downloads.manager, address: site, links: links.filter { $0.media == .picture })
+                default:
+                    LinkOfferPanel.show(message: "Download Route.pdf?", detail: "photos.example", button: "Download") {}
+                }
             case "downloads-100":
                 // 100 streamed videos from the test server the screenshot script starts, as if clicked
                 // one after another in 100 Chrome tabs; the list shows them all downloading at once.

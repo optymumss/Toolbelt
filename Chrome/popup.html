@@ -9,7 +9,10 @@
   input[type=number] { width: 56px; }
   #status { margin-top: 10px; font-size: 12px; color: #666; }
   #status.ok { color: #1a7f37; }
-  #status.bad { color: #b42318; }
+  #status.bad, #linksStatus.bad { color: #b42318; }
+  #linksStatus { font-size: 12px; color: #666; margin-top: 6px; }
+  #linksStatus.ok { color: #1a7f37; }
+  button { margin-top: 8px; width: 100%; }
   @media (prefers-color-scheme: dark) { body { background: #2a2a2a; color: #eee; } #status { color: #aaa; } }
 </style>
 </head>
@@ -17,6 +20,8 @@
   <h1>Toolbelt Downloads</h1>
   <label><input type="checkbox" id="enabled"> Send downloads to Toolbelt</label>
   <label>Only files bigger than <input type="number" id="minSizeMB" min="0" step="1"> MB</label>
+  <button id="allLinks">Download All Links on This Page…</button>
+  <div id="linksStatus"></div>
   <div id="status">Checking Toolbelt…</div>
   <script src="popup.js"></script>
 </body>

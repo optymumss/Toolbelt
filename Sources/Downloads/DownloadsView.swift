@@ -333,8 +333,10 @@ struct DownloadRow: View {
 
 struct DownloadsSettingsTab: View {
     @ObservedObject var manager: DownloadManager
+    weak var module: DownloadsModule?
     @ObservedObject private var settings = SettingsStore.shared
     @State private var chromeReady = ChromeSetup.isInstalled
+    @State private var catchExtensions = Prefs.downloadCatchExtensions.joined(separator: ", ")
 
     var body: some View {
         Group {
@@ -351,7 +353,7 @@ struct DownloadsSettingsTab: View {
                         AtOnceControl(limit: $manager.queues[0].maxAtOnce)
                     }
                 }
-                Toggle("Sort into folders by type (Video, Music, Documents, Programs, Archives, Images)",
+                Toggle("Sort into a folder per type (see Categories below)",
                        isOn: settings.binding("downloads.sort", default: true))
                 Picker("Connections per download", selection: settings.binding("downloads.connections", default: 8)) {
                     ForEach([1, 2, 4, 8, 16], id: \.self) { Text("\($0)").tag($0) }
@@ -388,6 +390,40 @@ struct DownloadsSettingsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            CategoriesSection()
+
+            Section {
+                Toggle("Offer to download links to files when I copy them", isOn: Binding(
+                    get: { Prefs.downloadCatchClipboard },
+                    set: { on in
+                        Prefs.downloadCatchClipboard = on
+                        module?.refreshClipboardCatching()
+                    }))
+                LabeledContent("For files ending in") {
+                    TextField("", text: $catchExtensions, axis: .vertical)
+                        .lineLimit(1...3)
+                        .onSubmit { Prefs.downloadCatchExtensions = DownloadCategories.parseExtensions(catchExtensions) }
+                }
+                Button("Usual Extensions") {
+                    Prefs.downloadCatchExtensions = ClipboardLinks.defaultExtensions
+                    catchExtensions = Prefs.downloadCatchExtensions.joined(separator: ", ")
+                }
+            } header: {
+                Text("Copied links")
+            } footer: {
+                Text("Copy a link to a file (a video, a PDF, a zip…) anywhere and a small “Download?” box appears in the top-right corner for 15 seconds. Copy several links at once and it offers the list to tick. “Download Link from Clipboard” in the menu-bar menu does the same whenever you like.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent("Site Grabber") {
+                    Button("Open Site Grabber…") { module?.openGrabber() }
+                }
+            } footer: {
+                Text("Downloads all the pictures, videos or files of a site, or saves the whole site to read offline. Also in the menu-bar menu, and in the launcher: paste a web address and pick “Grab Files from…”.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section {
                 ForEach($manager.queues) { $queue in
                     QueueRow(queue: $queue, isFirst: queue.id == manager.queues.first?.id) {
@@ -415,7 +451,7 @@ struct DownloadsSettingsTab: View {
             } header: {
                 Text("Browser")
             } footer: {
-                Text("The Toolbelt extension sends Chrome's downloads here, adds “Download with Toolbelt” to the right-click menu, and puts a Download button on videos that can be downloaded (not on streamed or copy-protected ones). Its button in Chrome's toolbar can switch it off or skip small files.")
+                Text("The Toolbelt extension sends Chrome's downloads here, adds “Download with Toolbelt” and “Download All Links with Toolbelt” to the right-click menu, and puts a Download button on videos that can be downloaded (not on streamed or copy-protected ones). Its button in Chrome's toolbar can switch it off or skip small files.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -501,6 +537,100 @@ struct QueueRow: View {
                 .labelsHidden()
                 .fixedSize()
             }
+        }
+    }
+}
+
+/// 0.34: the file types, the extensions that make each one, and a folder of its own for any of them.
+struct CategoriesSection: View {
+    @State private var rules = Prefs.downloadCategories
+    @State private var texts: [String: String] = [:]
+
+    var body: some View {
+        Section {
+            ForEach(rules) { rule in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label(rule.name, systemImage: LinkPickerModel.symbol(for: rule.name)).font(.body.weight(.medium))
+                        Spacer()
+                        Text(folderText(rule)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Button("Folder…") { chooseFolder(for: rule.name) }
+                        if rule.folder != nil {
+                            Button("Usual") { change(rule.name) { $0.folder = nil } }
+                        }
+                        if !DownloadCategories.defaults.contains(where: { $0.name == rule.name }) {
+                            Button { rules.removeAll { $0.name == rule.name }; save() } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                    if rule.name != DownloadCategories.otherName {
+                        TextField("Extensions", text: Binding(
+                            get: { texts[rule.name] ?? rule.extensionsText },
+                            set: { texts[rule.name] = $0 }))
+                            .font(.caption)
+                            .onSubmit { commit(rule.name) }
+                    } else {
+                        Text("Everything that isn't in another category.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            HStack {
+                Button("Add Category") {
+                    var name = "New Category"
+                    var n = 2
+                    while rules.contains(where: { $0.name == name }) { name = "New Category \(n)"; n += 1 }
+                    rules.insert(CategoryRule(name: name, extensions: []), at: max(0, rules.count - 1))
+                    save()
+                }
+                Spacer()
+                Button("Usual Categories") {
+                    rules = DownloadCategories.defaults
+                    texts = [:]
+                    save()
+                }
+            }
+        } header: {
+            Text("Categories")
+        } footer: {
+            Text("A finished download goes to its category's own folder if it has one; otherwise into the downloads folder (inside a folder named after the category when sorting is on). Press Return after changing extensions. The first category with a file's extension wins.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func folderText(_ rule: CategoryRule) -> String {
+        let folder = DownloadCategories.folder(for: "x." + (rule.extensions.first ?? "unknownext"), base: Prefs.downloadFolder,
+                                               sortByType: Prefs.downloadSortByType, rules: rules)
+        return folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    }
+
+    private func change(_ name: String, _ edit: (inout CategoryRule) -> Void) {
+        guard let index = rules.firstIndex(where: { $0.name == name }) else { return }
+        edit(&rules[index])
+        save()
+    }
+
+    private func commit(_ name: String) {
+        guard let text = texts[name] else { return }
+        change(name) { $0.extensions = DownloadCategories.parseExtensions(text) }
+        texts[name] = nil
+    }
+
+    private func save() {
+        Prefs.downloadCategories = rules
+        rules = Prefs.downloadCategories
+    }
+
+    private func chooseFolder(for name: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = Prefs.downloadFolder
+        panel.prompt = "Choose"
+        NSApp.activate()
+        if panel.runModal() == .OK, let url = panel.url {
+            change(name) { $0.folder = url.path }
         }
     }
 }

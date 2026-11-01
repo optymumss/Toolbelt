@@ -14,6 +14,8 @@ final class DownloadsModule: ToolbeltModule {
     private(set) lazy var inbox = BrowserInbox { [weak self] request in self?.received(request) }
     private var window: NSWindow?
     private var badgeWatcher: AnyCancellable?
+    /// 0.34: notices copied links to files (only while "Offer to download copied links" is on).
+    private let clipboard = ClipboardWatcher()
 
     func start() {
         manager.onFinished = { [weak self] item in self?.notifier.finished(item) }
@@ -29,6 +31,48 @@ final class DownloadsModule: ToolbeltModule {
         badgeWatcher = manager.$items.sink { items in
             MenuBarBadge.shared.show(active: Self.isActive(items), progress: Self.progress(of: items))
         }
+        clipboard.onChange = { [weak self] text in self?.copied(text) }
+        refreshClipboardCatching()
+        LinkPickerWindows.registerTestHooks(manager: manager)
+        GrabberWindow.registerTestHooks(manager: manager)
+        LinkOfferPanel.registerTestHooks()
+        RealUseHooks.commands["catch-clipboard"] = { [weak self] value in
+            Prefs.downloadCatchClipboard = value == "on"
+            self?.refreshClipboardCatching()
+        }
+    }
+
+    /// Starts or stops watching the clipboard, following the setting.
+    func refreshClipboardCatching() {
+        if Prefs.downloadCatchClipboard { clipboard.start() } else { clipboard.stop() }
+    }
+
+    /// Something was copied: offer to download a link to a file, or to choose from several links.
+    func copied(_ text: String) {
+        switch ClipboardLinks.offer(for: text, extensions: Set(Prefs.downloadCatchExtensions)) {
+        case .none:
+            break
+        case .one(let url):
+            let link = FoundLink(url: url)
+            LinkOfferPanel.show(message: "Download \(link.name)?", detail: url.host ?? url.absoluteString, button: "Download") { [weak self] in
+                guard self?.manager.add(url.absoluteString) != nil else { return }
+                MenuBarBadge.shared.flash()
+            }
+        case .several(let urls):
+            LinkOfferPanel.show(message: "\(urls.count) links copied", detail: "Choose which to download", button: "Choose…") { [weak self] in
+                self?.chooseLinks(urls.map { FoundLink(url: $0) }, title: "\(urls.count) copied links")
+            }
+        }
+    }
+
+    /// Opens the list of links to tick.
+    func chooseLinks(_ links: [FoundLink], title: String, page: String? = nil, activate: Bool = true,
+                     headers: @escaping (URL) -> [String: String] = { _ in [:] }) {
+        LinkPickerWindows.show(LinkPickerModel(title: title, links: links, page: page, headers: headers), manager: manager, activate: activate)
+    }
+
+    func openGrabber(address: String? = nil) {
+        GrabberWindow.show(manager: manager, address: address)
     }
 
     /// Opens a page in Chrome (where the extension can start the download again), or the default browser.
@@ -54,6 +98,8 @@ final class DownloadsModule: ToolbeltModule {
         badgeWatcher = nil
         MenuBarBadge.shared.show(active: false, progress: nil)
         inbox.stop()
+        clipboard.stop()
+        LinkOfferPanel.close()
         manager.stopAll()
         window?.orderOut(nil)
     }
@@ -61,6 +107,14 @@ final class DownloadsModule: ToolbeltModule {
     /// A link from the Chrome extension: download it and show the list, without taking the focus from Chrome.
     /// From the video button the list stays hidden: progress shows next to the menu bar icon instead.
     func received(_ request: DownloadRequest) {
+        // "Download All Links with Toolbelt": choose from the page's links (without taking the focus from Chrome).
+        if request.links != nil {
+            let links = request.foundLinks
+            guard !links.isEmpty else { return }
+            let title = (request.title?.isEmpty == false ? request.title! : URL(string: request.url)?.host) ?? "Links"
+            chooseLinks(links, title: title, page: request.url, activate: false, headers: request.headers(for:))
+            return
+        }
         guard manager.add(request.url, name: request.name, headers: request.headers,
                           stream: request.kind == "hls", audio: request.audioUrl, page: request.referrer) != nil else { return }
         if request.quiet == true {
@@ -118,9 +172,12 @@ final class DownloadsModule: ToolbeltModule {
         window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Starts a download from the link on the clipboard, if there is one.
+    /// Starts a download from the link on the clipboard, or lists the links when there are several.
     func downloadFromClipboard() {
-        if let text = NSPasteboard.general.string(forType: .string), manager.add(text) != nil {
+        let links = ClipboardLinks.links(in: NSPasteboard.general.string(forType: .string) ?? "")
+        if links.count > 1 {
+            chooseLinks(links.map { FoundLink(url: $0) }, title: "\(links.count) copied links")
+        } else if let link = links.first, manager.add(link.absoluteString) != nil {
             open()
         } else {
             NSSound.beep()
@@ -128,7 +185,8 @@ final class DownloadsModule: ToolbeltModule {
     }
 
     func menuItems() -> [NSMenuItem] {
-        var list: [NSMenuItem] = [ActionMenuItem("Download Link from Clipboard") { [weak self] in self?.downloadFromClipboard() }]
+        var list: [NSMenuItem] = [ActionMenuItem("Download Link from Clipboard") { [weak self] in self?.downloadFromClipboard() },
+                                  ActionMenuItem("Site Grabber…") { [weak self] in self?.openGrabber() }]
         let active = manager.items.filter { $0.state == .downloading }
         let whenDone = NSMenuItem(title: "When Downloads Finish", action: nil, keyEquivalent: "")
         whenDone.submenu = NSMenu()
@@ -149,7 +207,7 @@ final class DownloadsModule: ToolbeltModule {
     }
 
     func settingsView() -> AnyView {
-        AnyView(DownloadsSettingsTab(manager: manager))
+        AnyView(DownloadsSettingsTab(manager: manager, module: self))
     }
 
     func willTerminate() {
@@ -182,6 +240,13 @@ final class DownloadsLauncherProvider: LauncherProvider {
             ) { [weak module] in
                 module?.manager.add(url.absoluteString)
                 module?.open()
+            })
+            results.append(LauncherResult(
+                id: "download:grab", title: "Grab Files from \(url.host ?? "This Site")…",
+                subtitle: "Site Grabber: pictures, videos, files, or the whole site", kind: "Download",
+                icon: .symbol("square.and.arrow.down.on.square"), score: 120
+            ) { [weak module] in
+                module?.openGrabber(address: url.absoluteString)
             })
         }
         guard query.count >= 2 else { return results }

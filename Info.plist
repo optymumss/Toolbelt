@@ -19,9 +19,9 @@
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Toolbelt notices Bluetooth devices connecting and disconnecting, for macros you set up to start then.</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.33</string>
+    <string>0.34</string>
     <key>CFBundleVersion</key>
-    <string>33</string>
+    <string>34</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSAppleEventsUsageDescription</key>
