@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Works out sums like "12.5 * (3 + 1) / 2", "2 ^ 10" or "17 % 5". Only numbers, + − × ÷ % ^ and brackets:
 /// nothing else is ever run.
-enum Calculator {
+enum MacroCalculator {
     static func evaluate(_ text: String) -> Double? {
         var parser = Parser(Array(text.replacingOccurrences(of: "×", with: "*").replacingOccurrences(of: "÷", with: "/")
             .replacingOccurrences(of: "−", with: "-")))

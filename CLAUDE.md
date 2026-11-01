@@ -40,7 +40,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   and treats false as a failure), `BrowserScript` (AppleScript + JS, pure), `FileActions`, `WindowFrame`,
   `KeyboardLayouts` (TIS), `SystemSounds`, `LargeText`, `AppHistory` (previous app), `Downloader`, `BrowserPart`.
   Steps `.readFile`, `.browserGet`, `.alert`, `.askFolder`/`.askFile`, `.askSeveral` (closures on `MacroRun` for tests).
-  `Automation/MacroExtras.swift` (0.32): `Calculator` (own parser, never NSExpression), `MacroInputs`, `PictureFilter`
+  `Automation/MacroExtras.swift` (0.32): `MacroCalculator` (own parser, never NSExpression), `MacroInputs`, `PictureFilter`
   (CG transforms, `contentBox` trim, OCR via `ImageText`), `ClipboardFilterHooks` (clipboard history's "Run Macro on
   It"), `PromptPanel` (non-modal NSPanel + continuation; all question closures on `MacroRun` are async).
   Steps `.calculate`, `.pictureFilter` (`MacroStep.picture`), `.runMacro` (`MacroRun.runMacro` closure + `depth`,

@@ -4499,15 +4499,15 @@ enum MacroExtraTests {
         let runner = ActionRunner(shortcuts: ShortcutCenter())
 
         // Calculations
-        checkEqual(Calculator.evaluate("12.5 * (3 + 1) / 2"), 25, "a sum with brackets")
-        checkEqual(Calculator.evaluate("2 ^ 3 ^ 2"), 512, "powers work right to left")
-        checkEqual(Calculator.evaluate("17 % 5"), 2, "remainder")
-        checkEqual(Calculator.evaluate("-3 + 5"), 2, "a minus sign at the start")
-        checkEqual(Calculator.evaluate("1,200 × 2"), 2400, "thousands commas and × are understood")
-        check(Calculator.evaluate("2 +") == nil && Calculator.evaluate("4 / 0") == nil && Calculator.evaluate("abc") == nil
-              && Calculator.evaluate("system(\"rm\")") == nil, "anything that isn't a sum is refused (nothing else is ever run)")
-        checkEqual(Calculator.format(42), "42", "whole numbers without .0")
-        checkEqual(Calculator.format(0.1 + 0.2), "0.3", "no long tails")
+        checkEqual(MacroCalculator.evaluate("12.5 * (3 + 1) / 2"), 25, "a sum with brackets")
+        checkEqual(MacroCalculator.evaluate("2 ^ 3 ^ 2"), 512, "powers work right to left")
+        checkEqual(MacroCalculator.evaluate("17 % 5"), 2, "remainder")
+        checkEqual(MacroCalculator.evaluate("-3 + 5"), 2, "a minus sign at the start")
+        checkEqual(MacroCalculator.evaluate("1,200 × 2"), 2400, "thousands commas and × are understood")
+        check(MacroCalculator.evaluate("2 +") == nil && MacroCalculator.evaluate("4 / 0") == nil && MacroCalculator.evaluate("abc") == nil
+              && MacroCalculator.evaluate("system(\"rm\")") == nil, "anything that isn't a sum is refused (nothing else is ever run)")
+        checkEqual(MacroCalculator.format(42), "42", "whole numbers without .0")
+        checkEqual(MacroCalculator.format(0.1 + 0.2), "0.3", "no long tails")
         let engine = MacroRun(runner: runner)
         var calc = MacroStep(kind: .calculate)
         calc.text = "%Price% * 1.2"

@@ -250,12 +250,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .alert: return "Show an alert with buttons"
             case .askFolder: return "Ask me to choose a folder"
             case .askFile: return "Ask me to choose a file"
-            case .calculate: return "%\(name.isEmpty ? "Result" : name)% = \(text)"
-        case .pictureFilter:
-            let filter = picture ?? .flipHorizontal
-            return filter == .readText ? "Read the clipboard picture's text → %\(name.isEmpty ? "Text" : name)%" : "Clipboard picture: \(filter.title)"
-        case .runMacro: return "Run macro “\(text)”" + (name.isEmpty ? "" : " → %\(name)%")
-        case .askSeveral: return "Ask me several things at once"
+            case .askSeveral: return "Ask me several things at once"
             case .calculate: return "Calculate"
             case .pictureFilter: return "Change the clipboard's picture"
             case .runMacro: return "Run another macro and wait for it"
@@ -315,6 +310,11 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case .alert: return "Alert “\(text.prefix(30))” → %\(name)%"
         case .askFolder: return "Choose a folder → %\(name)%"
         case .askFile: return "Choose a file → %\(name)%"
+        case .calculate: return "%\(name.isEmpty ? "Result" : name)% = \(text)"
+        case .pictureFilter:
+            let filter = picture ?? .flipHorizontal
+            return filter == .readText ? "Read the clipboard picture's text → %\(name.isEmpty ? "Text" : name)%" : "Clipboard picture: \(filter.title)"
+        case .runMacro: return "Run macro “\(text)”" + (name.isEmpty ? "" : " → %\(name)%")
         case .askSeveral: return "Ask \(MacroRun.fields(text2).map { "%\(MacroRun.variableName(for: $0))%" }.joined(separator: ", "))"
         }
     }

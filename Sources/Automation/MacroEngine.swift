@@ -207,11 +207,11 @@ final class MacroRun {
             for (field, answer) in zip(fields, answers) { set(Self.variableName(for: field), answer) }
         case .calculate:
             let sum = expand(step.text)
-            guard let value = Calculator.evaluate(sum) else {
+            guard let value = MacroCalculator.evaluate(sum) else {
                 failed(step, "“\(sum)” isn't a sum Toolbelt can work out")
                 return
             }
-            set(step.name.isEmpty ? "Result" : step.name, Calculator.format(value))
+            set(step.name.isEmpty ? "Result" : step.name, MacroCalculator.format(value))
         case .pictureFilter:
             guard let image = PictureFilter.clipboardImage() else {
                 failed(step, "there's no picture on the clipboard")
