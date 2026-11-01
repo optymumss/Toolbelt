@@ -56,6 +56,7 @@ enum ToolbeltTests {
         t.group("Rotate, edge swipes, TipSwipe, mouse wheel, screen corners, keys and Mac events", MoreBTTTests.run)
         t.group("Mouse actions, web search, Shortcuts, Bluetooth, Wi-Fi, Dock, Trash, disks", MoreActionTests.run)
         t.group("Presets, floating menus and menu-bar items", PresetAndMenuTests.run)
+        t.group("Macro editor: recording, switched-off steps, time limits, failures, copy/paste, undo, export", MacroEditorTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4080,5 +4081,119 @@ enum PresetAndMenuTests {
         saved.presetID = work.id
         let back = try? JSONDecoder().decode(GestureRule.self, from: JSONEncoder().encode(saved))
         checkEqual(back?.presetID, work.id, "a trigger's preset is saved")
+    }
+}
+
+@MainActor
+enum MacroEditorTests {
+    static func step(_ name: String, _ value: String) -> MacroStep {
+        var step = MacroStep(kind: .setVariable)
+        step.name = name
+        step.text = value
+        return step
+    }
+
+    static func script(_ text: String, timeout: Double? = nil, onFailure: FailureMode? = nil) -> MacroStep {
+        var step = MacroStep(kind: .script)
+        step.action = MacroAction(kind: .shell, value: text)
+        step.timeout = timeout
+        step.onFailure = onFailure
+        return step
+    }
+
+    static func run(_ steps: [MacroStep]) -> MacroRun {
+        let run = MacroRun(runner: ActionRunner(shortcuts: ShortcutCenter()))
+        var done = false
+        Task { await run.run(steps); done = true }
+        _ = DownloadTests.waitFor(15) { done }
+        return run
+    }
+
+    static func run() {
+        // Switched-off steps
+        var off = step("b", "2")
+        off.disabled = true
+        let first = run([step("a", "1"), off, step("c", "3")])
+        check(first.value(of: "a") == "1" && first.value(of: "c") == "3" && first.value(of: "b").isEmpty, "a step that's switched off is skipped")
+        checkEqual(first.log.count, 2, "and isn't in the list of what ran")
+
+        // Time limits and failures
+        let start = Date()
+        let timedOut = run([script("sleep 5", timeout: 0.5, onFailure: .stop), step("after", "yes")])
+        check(Date().timeIntervalSince(start) < 3, "a script is stopped when it runs out of time")
+        check(timedOut.value(of: "after").isEmpty, "…and “stop the macro” stops it")
+        checkEqual(timedOut.failures.count, 1, "the failure is noted")
+        let carryOn = run([script("exit 3"), step("after", "yes")])
+        checkEqual(carryOn.value(of: "after"), "yes", "a failing script carries on unless asked otherwise")
+        check(carryOn.failures.first?.contains("error 3") == true, "and says it ended with error 3")
+        var told: [String] = []
+        let notifyRun = MacroRun(runner: ActionRunner(shortcuts: ShortcutCenter()))
+        notifyRun.notify = { title, message in told.append(title + ": " + message) }
+        var done = false
+        Task { await notifyRun.run([script("exit 1", onFailure: .stopAndNotify), step("after", "yes")]); done = true }
+        _ = DownloadTests.waitFor(10) { done }
+        check(told.count == 1 && notifyRun.value(of: "after").isEmpty, "“stop and tell me” stops and shows a notification")
+        let saved = try? JSONDecoder().decode(MacroStep.self, from: JSONEncoder().encode(script("x", timeout: 3, onFailure: .stop)))
+        check(saved?.timeout == 3 && saved?.onFailure == .stop, "time limits and failure choices are saved")
+        let old = try? JSONDecoder().decode(MacroStep.self, from: Data(#"{"id":"5D3C1E2A-0000-4000-8000-000000000009","kind":"pause","action":{"kind":"system","value":"","keyCode":0,"modifiers":0},"name":"","text":"","text2":"","number":1,"filter":"uppercase","condition":{"left":"","test":"contains","right":""},"steps":[],"elseSteps":[]}"#.utf8))
+        check(old != nil && old?.isOn == true, "steps saved by earlier versions still load, switched on")
+
+        // Copy and paste
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("toolbelt-tests-steps"))
+        var outer = MacroStep(kind: .ifThen)
+        outer.steps = [step("x", "1")]
+        StepClipboard.copy([outer], to: pasteboard)
+        let pasted = StepClipboard.paste(from: pasteboard) ?? []
+        check(pasted.count == 1 && pasted[0].id != outer.id && pasted[0].steps.first?.id != outer.steps[0].id,
+              "copied steps paste as new copies (steps inside them too)")
+        check(pasteboard.string(forType: .string)?.isEmpty == false, "and as plain text elsewhere")
+
+        // Undo
+        var history = UndoHistory<[Int]>()
+        history.record([1])
+        history.record([1, 2])
+        checkEqual(history.undo(from: [1, 2, 3]), [1, 2], "undo goes back one change")
+        checkEqual(history.undo(from: [1, 2]), [1], "and another")
+        checkEqual(history.redo(from: [1]), [1, 2], "redo goes forward again")
+        history.record([9])
+        check(!history.canRedo, "a new change clears redo")
+
+        // Export and import
+        let group = MacroGroup(name: "Work")
+        let macro = Macro(name: "Hello", groupID: group.id, triggers: [MacroTrigger(kind: .hotKey)], steps: [step("a", "1")])
+        let data = MacroTransfer.export([macro], groups: [group, MacroGroup(name: "Unused")])
+        let imported = data.flatMap { MacroTransfer.importing($0, existingGroups: []) }
+        check(imported?.macros.count == 1 && imported?.macros[0].id != macro.id && imported?.macros[0].name == "Hello",
+              "an exported macro imports as a new copy")
+        checkEqual(imported?.newGroups.map(\.name), ["Work"], "with its group, and only the groups it's in")
+        checkEqual(imported?.macros[0].groupID, imported?.newGroups.first?.id, "in the new group")
+        let existing = MacroGroup(name: "work")
+        let again = data.flatMap { MacroTransfer.importing($0, existingGroups: [existing]) }
+        check(again?.newGroups.isEmpty == true && again?.macros[0].groupID == existing.id, "a group with the same name is used, not doubled")
+        check(MacroTransfer.importing(Data("nonsense".utf8), existingGroups: []) == nil, "anything else isn't imported")
+
+        // Used shortcuts
+        var hot = MacroTrigger(kind: .hotKey)
+        hot.keyCode = kVK_ANSI_V
+        hot.modifiers = cmdKey | shiftKey
+        let entries = UsedShortcuts.collect(commands: [("Clipboard history", Shortcut(keyCode: kVK_ANSI_V, modifiers: cmdKey | shiftKey))],
+                                            rules: [], macros: [Macro(name: "Mine", triggers: [hot])])
+        checkEqual(entries.count, 2, "commands and macros are listed")
+        checkEqual(UsedShortcuts.clashes(entries), ["⇧⌘V"], "two things on the same keys are a clash")
+
+        // Recording
+        var builder = RecordingBuilder()
+        builder.add(.typed("h"), at: 0)
+        builder.add(.typed("i"), at: 0.1)
+        builder.add(.keys(keyCode: kVK_Return, modifiers: 0), at: 0.2)
+        builder.add(.click(button: 0, at: CGPoint(x: 10, y: 20), count: 1), at: 3.2)
+        builder.add(.click(button: 0, at: CGPoint(x: 10, y: 20), count: 2), at: 3.3)
+        let kinds = builder.steps.map { $0.kind == .pause ? "pause \($0.number)" : $0.action.summary }
+        checkEqual(kinds, ["Type “hi”", "Press ↩", "pause 3.0", "Double-click at 10, 20"],
+                   "typing joins up, keys and clicks are steps, a wait becomes a pause, a double-click replaces its first click")
+        checkEqual(RecordingBuilder.event(keyCode: kVK_ANSI_A, flags: [], characters: "a"), .typed("a"), "a letter is typing")
+        checkEqual(RecordingBuilder.event(keyCode: kVK_ANSI_C, flags: .maskCommand, characters: "c"), .keys(keyCode: kVK_ANSI_C, modifiers: cmdKey),
+                   "⌘C is a shortcut")
+        checkEqual(RecordingBuilder.event(keyCode: kVK_Command, flags: .maskCommand, characters: nil), nil, "a modifier key alone is nothing")
     }
 }

@@ -152,6 +152,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 var check = MacroStep(kind: .ifThen)
                 check.condition = MacroCondition(left: "%Name%", test: .isEmpty, right: "")
                 check.steps = [MacroStep(kind: .stop)]
+                ask.color = .blue
+                ask.note = "Asked every time, so the greeting is personal."
+                var lookUp = MacroStep(kind: .script)
+                lookUp.action = MacroAction(kind: .shell, value: "grep -i \"$TB_Name\" ~/contacts.txt | head -1")
+                lookUp.name = "Contact"
+                lookUp.timeout = 5
+                lookUp.onFailure = .stopAndNotify
+                lookUp.color = .orange
+                var log = MacroStep(kind: .notify)
+                log.text = "Replied to %Name%"
+                log.disabled = true
                 var type = MacroStep(kind: .action)
                 type.action = MacroAction(kind: .typeText, value: "Hi %Name%,\n\nThanks for your message.")
                 var hotKey = MacroTrigger(kind: .hotKey)
@@ -162,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 morning.weekdays = [2, 3, 4, 5, 6]
                 automation.store.groups = [MacroGroup(name: "Email", scope: .only, apps: ["com.apple.mail"])]
                 automation.store.macros = [
-                    Macro(name: "Reply to email", groupID: automation.store.groups.first?.id, triggers: [hotKey, MacroTrigger(kind: .launcher)], steps: [ask, check, type]),
+                    Macro(name: "Reply to email", groupID: automation.store.groups.first?.id, triggers: [hotKey, MacroTrigger(kind: .launcher)], steps: [ask, check, lookUp, type, log]),
                     Macro(name: "Start the work day", triggers: [morning, MacroTrigger(kind: .menuBar)], steps: [
                         MacroStep(kind: .action, action: MacroAction(kind: .openApp, value: "/System/Applications/Calendar.app")),
                         MacroStep(kind: .action, action: .toolbelt(.layout(1))),

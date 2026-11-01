@@ -7,6 +7,10 @@ struct MacrosView: View {
     let module: AutomationModule
     @State private var selection: UUID?
     @State private var search = ""
+    @State private var history = UndoHistory<[Macro]>()
+    @State private var applyingHistory = false
+    @State private var showUsed = false
+    @State private var recording = false
 
     var body: some View {
         NavigationSplitView {
@@ -35,6 +39,36 @@ struct MacrosView: View {
                 }
             }
         } detail: {
+            detail
+        }
+        .toolbar {
+            ToolbarItemGroup {
+                Button { undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                    .disabled(!history.canUndo).keyboardShortcut("z", modifiers: .command).help("Undo the last change (⌘Z)")
+                Button { redo() } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
+                    .disabled(!history.canRedo).keyboardShortcut("z", modifiers: [.command, .shift]).help("Redo (⇧⌘Z)")
+                Button { record() } label: { Label(recording ? "Stop Recording" : "Record", systemImage: recording ? "stop.circle" : "record.circle") }
+                    .help(recording ? "Stop recording (or press \(MacroRecorder.stopKeys))"
+                                    : "Do a task yourself and Toolbelt writes the steps into this macro. Press \(MacroRecorder.stopKeys) to stop.")
+                Button { showUsed = true } label: { Label("Used Shortcuts", systemImage: "command") }
+                    .help("Every shortcut Toolbelt uses, and the ones that clash")
+                Menu {
+                    Button("Export This Macro…") { export(all: false) }.disabled(selection == nil)
+                    Button("Export All Macros…") { export(all: true) }
+                    Divider()
+                    Button("Import Macros…", action: importMacros)
+                } label: { Label("Share", systemImage: "square.and.arrow.up") }
+                .help("Save macros to a file, or bring them in from one")
+            }
+        }
+        .onChange(of: store.macros) { old, _ in
+            if applyingHistory { applyingHistory = false } else { history.record(old) }
+        }
+        .sheet(isPresented: $showUsed) { UsedShortcutsView(entries: module.usedShortcuts()) { showUsed = false } }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
             if let index = store.macros.firstIndex(where: { $0.id == selection }) {
                 let id = store.macros[index].id
                 MacroDetail(macro: $store.macros[index], groups: store.groups,
@@ -44,6 +78,7 @@ struct MacrosView: View {
                                 selection = nil
                                 DispatchQueue.main.async { MainActor.assumeIsolated { store.macros.removeAll { $0.id == id } } }
                             })
+                    .environment(\.tryStep, { step in module.tryStep(step) })
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "gearshape.2").font(.system(size: 36)).foregroundStyle(.tertiary)
@@ -52,7 +87,61 @@ struct MacrosView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+    }
+
+    private func undo() {
+        guard let previous = history.undo(from: store.macros) else { return }
+        applyingHistory = true
+        store.macros = previous
+    }
+
+    private func redo() {
+        guard let next = history.redo(from: store.macros) else { return }
+        applyingHistory = true
+        store.macros = next
+    }
+
+    /// Records into the chosen macro (or a new one), adding the steps at the end.
+    private func record() {
+        if recording {
+            module.recorder.stop()
+            return
         }
+        if selection == nil { newMacro() }
+        guard let id = selection else { return }
+        recording = module.recorder.start { steps in
+            recording = false
+            guard let index = store.macros.firstIndex(where: { $0.id == id }) else { return }
+            // A new macro's empty first step goes; recorded steps replace it.
+            if store.macros[index].steps.count == 1, store.macros[index].steps[0] == MacroStep(id: store.macros[index].steps[0].id, kind: .action) {
+                store.macros[index].steps = []
+            }
+            store.macros[index].steps += steps
+        }
+    }
+
+    private func export(all: Bool) {
+        let macros = all ? store.macros : store.macros.filter { $0.id == selection }
+        guard let data = MacroTransfer.export(macros, groups: store.groups) else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = (all ? "Toolbelt macros" : macros.first?.name ?? "Macro") + "." + MacroTransfer.fileExtension
+        NSApp.activate()
+        if panel.runModal() == .OK, let url = panel.url { try? data.write(to: url, options: .atomic) }
+    }
+
+    private func importMacros() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        NSApp.activate()
+        guard panel.runModal() == .OK else { return }
+        var added = 0
+        for url in panel.urls {
+            guard let data = try? Data(contentsOf: url), let found = MacroTransfer.importing(data, existingGroups: store.groups) else { continue }
+            store.groups += found.newGroups
+            store.macros += found.macros
+            added += found.macros.count
+        }
+        HUD.show(added == 0 ? "No macros found in that file" : "Imported \(added) macro\(added == 1 ? "" : "s")", symbol: "square.and.arrow.down")
     }
 
     struct MacroSection: Identifiable {
@@ -80,6 +169,45 @@ struct MacrosView: View {
         store.macros.append(macro)
         selection = macro.id
         search = ""
+    }
+}
+
+
+/// "Try" for a single step, handed down from the Macros window.
+private struct TryStepKey: EnvironmentKey {
+    static let defaultValue: ((MacroStep) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var tryStep: ((MacroStep) -> Void)? {
+        get { self[TryStepKey.self] }
+        set { self[TryStepKey.self] = newValue }
+    }
+}
+
+struct UsedShortcutsView: View {
+    let entries: [UsedShortcuts.Entry]
+    let close: () -> Void
+
+    var body: some View {
+        let clashes = UsedShortcuts.clashes(entries)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Shortcuts in use").font(.headline)
+            Text(clashes.isEmpty ? "No two things use the same keys." : "Orange: more than one thing uses these keys; only one of them will work.")
+                .font(.caption).foregroundStyle(clashes.isEmpty ? Color.secondary : Color.orange)
+            Table(entries) {
+                TableColumn("Keys") { entry in
+                    Text(entry.keys).foregroundStyle(clashes.contains(entry.keys) ? Color.orange : Color.primary)
+                }
+                .width(min: 90, ideal: 110)
+                TableColumn("What it does", value: \.owner)
+                TableColumn("Where", value: \.place).width(min: 90, ideal: 120)
+            }
+            .frame(minHeight: 280)
+            HStack { Spacer(); Button("Done", action: close).keyboardShortcut(.defaultAction) }
+        }
+        .padding()
+        .frame(width: 560, height: 420)
     }
 }
 
@@ -256,7 +384,9 @@ struct StepListEditor: View {
             ForEach($steps) { $step in
                 StepEditor(step: $step,
                            remove: { steps.removeAll { $0.id == step.id } },
-                           move: { offset in move(step.id, by: offset) })
+                           move: { offset in move(step.id, by: offset) },
+                           duplicate: { insert([step.renewingIDs()], after: step.id) },
+                           pasteBelow: { if let pasted = StepClipboard.paste() { insert(pasted, after: step.id) } })
             }
             Menu("Add Step") {
                 ForEach(MacroStep.Kind.allCases) { kind in
@@ -282,6 +412,11 @@ struct StepListEditor: View {
         return step
     }
 
+    private func insert(_ new: [MacroStep], after id: UUID) {
+        let index = steps.firstIndex { $0.id == id }.map { $0 + 1 } ?? steps.count
+        steps.insert(contentsOf: new, at: index)
+    }
+
     private func move(_ id: UUID, by offset: Int) {
         guard let index = steps.firstIndex(where: { $0.id == id }) else { return }
         let target = index + offset
@@ -294,20 +429,74 @@ struct StepEditor: View {
     @Binding var step: MacroStep
     let remove: () -> Void
     let move: (Int) -> Void
+    var duplicate: () -> Void = {}
+    var pasteBelow: () -> Void = {}
+    @Environment(\.tryStep) private var tryStep
+
+    static func color(_ color: StepColor?) -> Color {
+        switch color {
+        case .red: return .red
+        case .orange: return .orange
+        case .yellow: return .yellow
+        case .green: return .green
+        case .blue: return .blue
+        case .purple: return .purple
+        case .gray: return .gray
+        case nil: return .secondary
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
+                if step.color != nil { Circle().fill(Self.color(step.color)).frame(width: 9, height: 9) }
                 Text(step.kind.title).font(.subheadline.weight(.semibold))
+                if !step.isOn { Text("Off").font(.caption.weight(.semibold)).foregroundStyle(.orange) }
+                if let failure = step.onFailure, failure != .carryOn {
+                    Image(systemName: "exclamationmark.octagon").font(.caption).foregroundStyle(.secondary).help("If it fails: \(failure.title)")
+                }
                 Spacer()
                 Button { move(-1) } label: { Image(systemName: "chevron.up") }.buttonStyle(.borderless)
                 Button { move(1) } label: { Image(systemName: "chevron.down") }.buttonStyle(.borderless)
+                Menu {
+                    if let tryStep { Button("Try This Step") { tryStep(step) } }
+                    Button(step.isOn ? "Turn Off" : "Turn On") { step.disabled = step.isOn ? true : nil }
+                    Divider()
+                    Button("Duplicate", action: duplicate)
+                    Button("Copy") { StepClipboard.copy([step]) }
+                    Button("Paste Below", action: pasteBelow)
+                    Divider()
+                    Button(step.note == nil ? "Add Note" : "Remove Note") { step.note = step.note == nil ? "" : nil }
+                    Menu("Colour") {
+                        Button("None") { step.color = nil }
+                        ForEach(StepColor.allCases) { color in Button(color.title) { step.color = color } }
+                    }
+                    Menu("If It Fails") {
+                        ForEach(FailureMode.allCases) { mode in
+                            Button((step.onFailure ?? .carryOn) == mode ? "✓ " + mode.title : mode.title) { step.onFailure = mode == .carryOn ? nil : mode }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Try, turn off, duplicate, copy, note, colour, and what happens if it fails")
                 Button(action: remove) { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
+            if step.note != nil {
+                TextField("Note", text: Binding(get: { step.note ?? "" }, set: { step.note = $0 }), axis: .vertical)
+                    .font(.caption).lineLimit(1...4)
+            }
             fields
+                .disabled(!step.isOn)
+                .opacity(step.isOn ? 1 : 0.5)
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(step.color == nil ? Color.secondary.opacity(0.08) : Self.color(step.color).opacity(0.12)))
+        .overlay(alignment: .leading) {
+            if step.color != nil { RoundedRectangle(cornerRadius: 2).fill(Self.color(step.color)).frame(width: 3).padding(.vertical, 4) }
+        }
     }
 
     @ViewBuilder
@@ -324,7 +513,14 @@ struct StepEditor: View {
             TextEditor(text: $step.action.value)
                 .font(.system(.caption, design: .monospaced)).frame(minHeight: 50, maxHeight: 120)
             TextField("Keep the output in variable", text: $step.name)
-            Text("Variables reach shell scripts as $TB_Name.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Toggle("Give up after", isOn: Binding(get: { step.timeout != nil }, set: { step.timeout = $0 ? 10 : nil }))
+                if let timeout = step.timeout {
+                    Stepper(MacroRun.seconds(timeout), value: Binding(get: { timeout }, set: { step.timeout = $0 }), in: 1...3600, step: 1)
+                }
+            }
+            Text("Variables reach shell scripts as $TB_Name. A script that ends with an error, or runs out of time, has failed: choose what happens then in ⋯ → If It Fails.")
+                .font(.caption).foregroundStyle(.secondary)
         case .pause:
             Stepper("Pause for \(step.number.formatted()) s", value: $step.number, in: 0.1...3600, step: 0.5)
         case .setVariable:

@@ -120,6 +120,31 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
     }
 }
 
+enum StepColor: String, Codable, CaseIterable, Identifiable {
+    case red, orange, yellow, green, blue, purple, gray
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalizedFirst }
+}
+
+enum FailureMode: String, Codable, CaseIterable, Identifiable {
+    /// Carry on with the next step (the default).
+    case carryOn
+    /// Stop the macro.
+    case stop
+    /// Stop the macro and show a notification saying which step failed.
+    case stopAndNotify
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .carryOn: return "Carry on"
+        case .stop: return "Stop the macro"
+        case .stopAndNotify: return "Stop the macro and tell me"
+        }
+    }
+}
+
 /// One step of a macro. A flat struct (rather than an enum) so the editor can bind to every field.
 struct MacroStep: Identifiable, Codable, Equatable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
@@ -163,6 +188,17 @@ struct MacroStep: Identifiable, Codable, Equatable {
     var condition = MacroCondition()
     var steps: [MacroStep] = []
     var elseSteps: [MacroStep] = []
+    /// Switched off: skipped when the macro runs (kept, like Keyboard Maestro's "Disable Action").
+    var disabled: Bool? = nil
+    /// Your own note about the step, and a colour to pick it out.
+    var note: String? = nil
+    var color: StepColor? = nil
+    /// Scripts: seconds to wait before giving up (nil: no limit).
+    var timeout: Double? = nil
+    /// What happens when the step fails (a script ending with an error, or running out of time).
+    var onFailure: FailureMode? = nil
+
+    var isOn: Bool { disabled != true }
 
     /// In plain words, for the list.
     var summary: String {

@@ -21,7 +21,9 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    address the test app answers) with the clipboard kept, hiding the Dock, ejecting disks and emptying the Trash;
    and (0.28) a trigger in a preset staying off until an action switches to it, a floating menu shown by an
    action whose button runs and closes it, and a menu-bar item showing its script's output and running its
-   action when clicked. Each check confirms the action really
+   action when clicked;
+   and (0.29) recording typing into a macro and playing it back, a script that runs out of time stopping its
+   macro, a failing script carrying on, and a switched-off step being skipped. Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.

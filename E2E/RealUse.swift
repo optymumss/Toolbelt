@@ -509,7 +509,23 @@ final class RealUse: NSObject, NSApplicationDelegate {
             eventMacro("otherdisk", .diskMounted, text: "Something else"),
             eventMacro("idle", .idle, number: 1), eventMacro("back", .activeAgain, number: 1),
         ]
-        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro] + eventMacros, groups: []))
+        // 0.29: a script that runs out of time (stops the macro), one that fails (carries on), and a step switched off.
+        var slow = MacroStep(kind: .script)
+        slow.action = MacroAction(kind: .shell, value: "sleep 5")
+        slow.timeout = 1
+        slow.onFailure = .stop
+        var afterTimeout = MacroStep(kind: .action)
+        afterTimeout.action = mark("after-timeout")
+        var failing = MacroStep(kind: .script)
+        failing.action = MacroAction(kind: .shell, value: "exit 3")
+        var afterError = MacroStep(kind: .action)
+        afterError.action = mark("after-error")
+        var switchedOff = MacroStep(kind: .action)
+        switchedOff.action = mark("switched-off")
+        switchedOff.disabled = true
+        let timeoutMacro = Macro(name: "Test timeout", steps: [slow, afterTimeout])
+        let errorMacro = Macro(name: "Test error", steps: [failing, afterError, switchedOff])
+        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros, groups: []))
             .write(to: data.appendingPathComponent("macros.json"), options: .atomic)
 
         let snippets = [Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt")]
@@ -586,6 +602,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await moreTests()
             await actionTests()
             await panelTests()
+            await editorTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -849,6 +866,40 @@ final class RealUse: NSObject, NSApplicationDelegate {
             keyEvent(CGKeyCode(kVK_Escape), down: true, flags: 0)
             keyEvent(CGKeyCode(kVK_Escape), down: false, flags: 0)
         }
+    }
+
+    func command(_ text: String) {
+        DistributedNotificationCenter.default().postNotificationName(RealUseHooks.commandNotification, object: text, userInfo: nil,
+                                                                     deliverImmediately: true)
+    }
+
+    func runMacro(_ name: String) async -> Int? {
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
+        return await get("http://127.0.0.1:\(Self.webPort)/run_macro?name=\(encoded)&secret=\(Self.webSecret)")
+    }
+
+    func editorTests() async {
+        say("— 0.29: recording, time limits, failures, switched-off steps")
+        // Record typing into this window, then play it back.
+        await focus()
+        command("record-start:Recorded")
+        await pause(1)
+        await type("rec hello")
+        await pause(0.5)
+        command("record-stop")
+        let recorded = await waitUntil(5) { (self.toolbeltStatus()["recorded"] as? [String])?.contains { $0.contains("rec hello") } == true }
+        check("recording typing makes a “Type text” step", recorded, "recorded: \(toolbeltStatus()["recorded"] ?? "nothing")")
+        await focus()
+        _ = await runMacro("Recorded")
+        check("the recorded macro types it again", await waitUntil(5) { self.textView.string.contains("rec hello") },
+              "text box has “\(textView.string)”")
+
+        _ = await runMacro("Test timeout")
+        await pause(3)
+        check("a script that runs out of time stops the macro (as asked)", count("after-timeout") == 0, "the next step ran \(count("after-timeout")) times")
+        _ = await runMacro("Test error")
+        check("a script that fails carries on (the default)", await waitUntil(5) { self.count("after-error") == 1 }, "ran \(count("after-error")) times")
+        check("a step that's switched off doesn't run", count("switched-off") == 0, "ran \(count("switched-off")) times")
     }
 
     func macEventTests() async {
