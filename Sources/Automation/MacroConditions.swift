@@ -191,11 +191,12 @@ enum ScreenReader {
     }
 
     static func color(at point: CGPoint) async -> RGBColor? {
-        let file = await ScreenshotCapture.capture(rect: CGRect(x: point.x, y: point.y, width: 1, height: 1))
+        // A small square around the point (a single point is too small for screencapture to be reliable); its middle pixel.
+        let file = await ScreenshotCapture.capture(rect: CGRect(x: point.x - 2, y: point.y - 2, width: 5, height: 5))
         defer { if let file { try? FileManager.default.removeItem(at: file) } }
         guard let image = image(at: file) else { return nil }
         let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let color = bitmap.colorAt(x: 0, y: 0)?.usingColorSpace(.sRGB) else { return nil }
+        guard let color = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.sRGB) else { return nil }
         return RGBColor(red: Int((color.redComponent * 255).rounded()), green: Int((color.greenComponent * 255).rounded()),
                         blue: Int((color.blueComponent * 255).rounded()))
     }

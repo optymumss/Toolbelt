@@ -987,12 +987,18 @@ final class RealUse: NSObject, NSApplicationDelegate {
         let needleRect = topLeft(pattern, pattern.bounds.insetBy(dx: 20, dy: 20)).integral
         let needle = data.appendingPathComponent("needle.png").path
         let captured = run("/usr/sbin/screencapture", ["-x", "-R\(Int(needleRect.minX)),\(Int(needleRect.minY)),\(Int(needleRect.width)),\(Int(needleRect.height))", needle])
-        // A picture that isn't on screen: the same pattern turned upside down.
-        if let image = NSImage(contentsOfFile: needle) {
-            let flipped = NSImage(size: image.size, flipped: true) { rect in image.draw(in: rect); return true }
-            if let png = flipped.tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) })?.representation(using: .png, properties: [:]) {
-                try? png.write(to: data.appendingPathComponent("absent.png"))
+        // A picture that isn't on screen: grey blocks in another random order (drawn straight into a file).
+        if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 80, pixelsHigh: 80, bitsPerSample: 8, samplesPerPixel: 3,
+                                         hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            var seed: UInt32 = 977
+            for blockY in 0..<8 {
+                for blockX in 0..<8 {
+                    seed = seed &* 1_103_515_245 &+ 12345
+                    let grey = CGFloat((seed >> 16) & 0xFF) / 255
+                    for y in 0..<10 { for x in 0..<10 { bitmap.setColor(NSColor(deviceWhite: grey, alpha: 1), atX: blockX * 10 + x, y: blockY * 10 + y) } }
+                }
             }
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: data.appendingPathComponent("absent.png"))
         }
         let point = "\(Int(patchSpot.midX)),\(Int(patchSpot.midY))"
         let encoded = point.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? point
@@ -1003,7 +1009,9 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("condition: an app isn't running", count("cond-not-running-ok") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: a file exists", count("cond-file") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: the front window's title", count("cond-title") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
-        check("condition: the colour at a point (\(point))", count("cond-pixel") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        let seenColour = await ScreenReader.color(at: CGPoint(x: patchSpot.midX.rounded(.down), y: patchSpot.midY.rounded(.down)))
+        check("condition: the colour at a point (\(point))", count("cond-pixel") == 1,
+              "read \(seenColour?.hex ?? "nothing") there; markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: the screen shows a picture", captured && count("cond-image") == 1,
               "captured \(captured), markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: … and not a picture that isn't there", count("cond-absent-ok") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
