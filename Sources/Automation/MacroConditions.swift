@@ -14,7 +14,9 @@ struct ConditionWorld {
     var fileExists: (String) -> Bool = { _ in false }
     var modifiers: () -> NSEvent.ModifierFlags = { [] }
     /// The colour at a point (top-left based screen points).
-    var pixel: (CGPoint) async -> RGBColor? = { _ in nil }
+    /// The colour at a point (top-left based screen points): as macOS's standard sRGB, and as the screen's own
+    /// values (colour profiles can make these differ; either counts).
+    var pixel: (CGPoint) async -> [RGBColor] = { _ in [] }
     /// Where a picture (a PNG's path) is on screen, in points from the top left; nil if it isn't.
     var findOnScreen: (String) async -> CGPoint? = { _ in nil }
 
@@ -25,7 +27,7 @@ struct ConditionWorld {
             runningApps: { NSWorkspace.shared.runningApplications.flatMap { [$0.bundleIdentifier, $0.localizedName].compactMap { $0 } } },
             fileExists: { FileManager.default.fileExists(atPath: $0) },
             modifiers: { NSEvent.modifierFlags },
-            pixel: { point in await ScreenReader.color(at: point) },
+            pixel: { point in await ScreenReader.colors(at: point) },
             findOnScreen: { path in await ScreenReader.find(path) }
         )
     }
@@ -190,15 +192,21 @@ enum ScreenReader {
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
-    static func color(at point: CGPoint) async -> RGBColor? {
+    static func colors(at point: CGPoint) async -> [RGBColor] {
         // A small square around the point (a single point is too small for screencapture to be reliable); its middle pixel.
         let file = await ScreenshotCapture.capture(rect: CGRect(x: point.x - 2, y: point.y - 2, width: 5, height: 5))
         defer { if let file { try? FileManager.default.removeItem(at: file) } }
-        guard let image = image(at: file) else { return nil }
+        guard let image = image(at: file) else { return [] }
         let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let color = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.sRGB) else { return nil }
-        return RGBColor(red: Int((color.redComponent * 255).rounded()), green: Int((color.greenComponent * 255).rounded()),
-                        blue: Int((color.blueComponent * 255).rounded()))
+        guard let raw = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2) else { return [] }
+        func rgb(_ color: NSColor?) -> RGBColor? {
+            guard let color, color.numberOfComponents >= 3 else { return nil }
+            return RGBColor(red: Int((color.redComponent * 255).rounded()), green: Int((color.greenComponent * 255).rounded()),
+                            blue: Int((color.blueComponent * 255).rounded()))
+        }
+        // The screen's own values: the colour's components as captured, without converting them.
+        let own = raw.colorSpace.colorSpaceModel == .rgb ? rgb(raw) : nil
+        return [rgb(raw.usingColorSpace(.sRGB)), own].compactMap { $0 }
     }
 
     static func find(_ picture: String) async -> CGPoint? {

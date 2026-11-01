@@ -559,7 +559,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
                 when(.appNotRunning, right: "No Such App", yes: "cond-not-running-ok", no: "cond-not-running-wrong"),
                 when(.fileExists, data.appendingPathComponent("macros.json").path, yes: "cond-file", no: "cond-no-file"),
                 when(.windowTitleContains, right: "Second test window", yes: "cond-title", no: "cond-no-title"),
-                when(.pixelColorIs, "%Trigger%", right: "#FF00FF", yes: "cond-pixel", no: "cond-no-pixel"),
+                when(.pixelColorIs, "%Trigger%", right: "#C86432", yes: "cond-pixel", no: "cond-no-pixel"),
                 when(.screenShows, right: data.appendingPathComponent("needle.png").path, yes: "cond-image", no: "cond-no-image"),
                 when(.screenShows, right: data.appendingPathComponent("absent.png").path, yes: "cond-absent-wrong", no: "cond-absent-ok"),
             ]),
@@ -990,12 +990,20 @@ final class RealUse: NSObject, NSApplicationDelegate {
         // A picture that isn't on screen: grey blocks in another random order (drawn straight into a file).
         if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 80, pixelsHigh: 80, bitsPerSample: 8, samplesPerPixel: 3,
                                          hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            // Bytes written straight in (setColor with a grey colour does nothing on an RGB bitmap, leaving it black).
             var seed: UInt32 = 977
-            for blockY in 0..<8 {
-                for blockX in 0..<8 {
-                    seed = seed &* 1_103_515_245 &+ 12345
-                    let grey = CGFloat((seed >> 16) & 0xFF) / 255
-                    for y in 0..<10 { for x in 0..<10 { bitmap.setColor(NSColor(deviceWhite: grey, alpha: 1), atX: blockX * 10 + x, y: blockY * 10 + y) } }
+            if let bytes = bitmap.bitmapData {
+                for blockY in 0..<8 {
+                    for blockX in 0..<8 {
+                        seed = seed &* 1_103_515_245 &+ 12345
+                        let grey = UInt8((seed >> 16) & 0xFF)
+                        for y in 0..<10 {
+                            for x in 0..<10 {
+                                let offset = (blockY * 10 + y) * bitmap.bytesPerRow + (blockX * 10 + x) * 3
+                                bytes[offset] = grey; bytes[offset + 1] = grey; bytes[offset + 2] = grey
+                            }
+                        }
+                    }
                 }
             }
             try? bitmap.representation(using: .png, properties: [:])?.write(to: data.appendingPathComponent("absent.png"))
@@ -1009,9 +1017,9 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("condition: an app isn't running", count("cond-not-running-ok") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: a file exists", count("cond-file") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: the front window's title", count("cond-title") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
-        let seenColour = await ScreenReader.color(at: CGPoint(x: patchSpot.midX.rounded(.down), y: patchSpot.midY.rounded(.down)))
+        let seenColours = await ScreenReader.colors(at: CGPoint(x: patchSpot.midX.rounded(.down), y: patchSpot.midY.rounded(.down)))
         check("condition: the colour at a point (\(point))", count("cond-pixel") == 1,
-              "read \(seenColour?.hex ?? "nothing") there; markers: \(markers().filter { $0.hasPrefix("cond") })")
+              "read \(seenColours.map(\.hex)) there (sRGB, screen's own); markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: the screen shows a picture", captured && count("cond-image") == 1,
               "captured \(captured), markers: \(markers().filter { $0.hasPrefix("cond") })")
         check("condition: … and not a picture that isn't there", count("cond-absent-ok") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
@@ -1307,10 +1315,10 @@ final class RealUse: NSObject, NSApplicationDelegate {
     }
 }
 
-/// A pink square, for the “colour at a point” condition.
+/// A brown-orange square (#C86432, well inside what any screen shows), for the “colour at a point” condition.
 final class SolidView: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(srgbRed: 1, green: 0, blue: 1, alpha: 1).setFill()
+        NSColor(srgbRed: 200.0 / 255, green: 100.0 / 255, blue: 50.0 / 255, alpha: 1).setFill()
         bounds.fill()
     }
 }

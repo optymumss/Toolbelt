@@ -410,9 +410,9 @@ struct MacroCondition: Codable, Equatable {
             let wanted = ModifierNames.parse(right)
             return !wanted.isEmpty && world.modifiers().intersection(ModifierNames.all).isSuperset(of: wanted)
         case .pixelColorIs:
-            guard let point = ScreenPoint.parse(left), let wanted = RGBColor(hex: right),
-                  let seen = await world.pixel(point) else { return false }
-            return seen.isClose(to: wanted)
+            guard let point = ScreenPoint.parse(left), let wanted = RGBColor(hex: right) else { return false }
+            let seen = await world.pixel(point)
+            return seen.contains { $0.isClose(to: wanted) }
         case .screenShows, .screenDoesNotShow:
             let path = (right as NSString).expandingTildeInPath
             guard !path.isEmpty else { return false }

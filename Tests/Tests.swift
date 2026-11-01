@@ -4282,7 +4282,9 @@ enum MacroConditionTests {
         let folder = NSHomeDirectory()
         world.fileExists = { $0 == folder + "/report.pdf" }
         world.modifiers = { [.command, .option, .capsLock] }
-        world.pixel = { point in point == CGPoint(x: 10, y: 20) ? RGBColor(red: 250, green: 5, blue: 250) : RGBColor(red: 0, green: 0, blue: 0) }
+        world.pixel = { point in
+            point == CGPoint(x: 10, y: 20) ? [RGBColor(red: 250, green: 70, blue: 250), RGBColor(red: 250, green: 5, blue: 250)] : [RGBColor(red: 0, green: 0, blue: 0)]
+        }
         world.findOnScreen = { path in path.hasSuffix("button.png") ? CGPoint(x: 5, y: 5) : nil }
         let engine = MacroRun(runner: runner)
         engine.world = world
