@@ -132,7 +132,7 @@ final class Updater: ObservableObject {
         let lastCheck = Date(timeIntervalSince1970: Prefs.updateLastCheck)
         let next = max(Date().addingTimeInterval(120), lastCheck.addingTimeInterval(24 * 3600))
         let timer = Timer(fire: next, interval: 24 * 3600, repeats: true) { _ in
-            MainActor.assumeIsolated { Task { await Updater.shared.check(userAsked: false) } }
+            Task { @MainActor in await Updater.shared.check(userAsked: false) }
         }
         timer.tolerance = 600
         RunLoop.main.add(timer, forMode: .common)
