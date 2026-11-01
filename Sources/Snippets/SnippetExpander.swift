@@ -145,14 +145,17 @@ enum TextInserter {
         // Tells clipboard managers (including Toolbelt's own) not to record this.
         item.setString("", forType: transient)
         pb.writeObjects([item])
+        let ours = pb.changeCount
 
         press(CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
         for _ in 0..<result.cursorFromEnd {
             press(CGKeyCode(kVK_LeftArrow))
         }
 
-        // Give the app time to read the clipboard, then put back what was there.
+        // Give the app time to read the clipboard, then put back what was there, unless something new
+        // was copied meanwhile (putting the old clipboard back would lose that copy).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard pb.changeCount == ours else { return }
             pb.clearContents()
             if !saved.isEmpty { pb.writeObjects(saved) }
         }
