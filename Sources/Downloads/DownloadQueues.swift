@@ -227,6 +227,36 @@ struct DownloadRequest: Codable {
     var audioUrl: String?
     /// From the video button: download quietly (progress shows in the menu bar) instead of showing the list.
     var quiet: Bool?
+    /// 0.34, "Download All Links": the links on the page (`url` is the page), to choose from.
+    var links: [PageLink]?
+    /// The page's title, shown above the links.
+    var title: String?
+    /// Cookies for each site the links are on, so links that need you signed in still work.
+    var cookiesByHost: [String: String]?
+
+    struct PageLink: Codable, Equatable {
+        var url: String
+        var text: String?
+        /// "picture", "video" or "sound" when it's shown on the page as one.
+        var media: String?
+    }
+
+    /// The links as the list shows them (only web and FTP ones).
+    var foundLinks: [FoundLink] {
+        LinkSelection.unique((links ?? []).compactMap { link in
+            guard let url = DownloadManager.downloadableURL(from: link.url) else { return nil }
+            return FoundLink(url: LinkExtractor.withoutFragment(url), text: link.text ?? "", media: link.media.flatMap(FoundLink.MediaKind.init(rawValue:)))
+        })
+    }
+
+    /// The headers for one of the links: its own site's cookies, and the page as where it came from.
+    func headers(for url: URL) -> [String: String] {
+        var headers: [String: String] = [:]
+        if let host = url.host?.lowercased(), let cookies = cookiesByHost?[host], !cookies.isEmpty { headers["Cookie"] = cookies }
+        if let referrer, !referrer.isEmpty { headers["Referer"] = referrer }
+        if let userAgent, !userAgent.isEmpty { headers["User-Agent"] = userAgent }
+        return headers
+    }
 
     var headers: [String: String] {
         var headers: [String: String] = [:]

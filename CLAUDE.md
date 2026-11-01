@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32). Self-update from GitHub releases ✅ (v0.33).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32). Self-update from GitHub releases ✅ (v0.33). Download all links, site grabber, copied links, category folders ✅ (v0.34).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -86,6 +86,16 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 - Mac-event macro triggers (`SystemEvents.swift`): sleep/wake and disks from NSWorkspace, lock/unlock from
   distributed notifications, `PowerWatcher` (IOPS), `USBWatcher` (IOKit), `BluetoothWatcher` (IOBluetooth,
   needs NSBluetoothAlwaysUsageDescription), idle via `InputIdle` polled every 30 s (2 s while idle).
+- Download all links (0.34, `Downloads/LinkGrabber.swift`, pure): `CategoryRule`/`DownloadCategories` (Prefs.downloadCategories;
+  a category's own folder wins, else downloads folder [+ category name when sorting]; `DownloadItem.folder` overrides),
+  `LinkExtractor` (regex over tags; <base>, srcset, css url()), `FoundLink`/`LinkSelection` (kinds = categories + "Web
+  pages"; files ticked, pages not), `ClipboardLinks.offer`, `GrabTemplate`/`GrabSettings`/`SiteGrabber` (BFS with an
+  injected fetch; `explore` lists files, `mirror` saves an offline copy) and `OfflinePaths` (paths + link rewriting).
+  `LinkPickerView.swift`: `LinkPickerModel`/`LinkPickerWindows`, `GrabberModel`/`GrabberWindow` (URLSession fetch/save),
+  `LinkOfferPanel` (copied link → "Download?", 15 s). Chrome: video.js answers "collect-links" (top frame), background
+  `sendPageLinks` → native "links" message (cookiesByHost) → Bridge `handOverLinks` → inbox → `DownloadRequest.links`.
+  Test hooks: grab:<template> <depth> <url>, picker-kind/search/download/close, link-offer-accept, catch-clipboard:on|off;
+  status keys grabber, linkPicker, linkOffer. chrome.sh runs Toolbelt with TOOLBELT_E2E=1 to read linkPicker.
 - `Chrome/` — the Chrome extension (Manifest V3, loaded unpacked; its fixed ID comes from the `key`).
   `Bridge/main.swift` — `ToolbeltBridge`, the native-messaging helper Chrome starts; it writes requests into
   `<data>/inbox/`, which `BrowserInbox` watches. `build.sh` builds both into the app bundle.

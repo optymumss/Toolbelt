@@ -61,6 +61,7 @@ enum ToolbeltTests {
         t.group("Macro actions: apps, windows, files, browser, download, speech, sounds, volume, layouts, prompts", KMActionTests.run)
         t.group("Calculations, picture filters, sub-macros, palettes and the Macros window's lists", MacroExtraTests.run)
         t.group("Updating Toolbelt from GitHub: versions, releases, unpacking and swapping", UpdaterTests.run)
+        t.group("Downloading all links: links on a page, types, category folders, copied links, site grabber", LinkGrabberTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -1361,6 +1362,20 @@ enum DownloadsNextTests {
             return data == server.body
         }
         func done(_ ids: [UUID]) -> Bool { ids.allSatisfy { manager.item($0)?.state == .completed } }
+
+        // 0.34: a category with a folder of its own, and a download given its own folder
+        let savedCategories = Prefs.downloadCategories
+        var categories = DownloadCategories.defaults
+        categories[2].folder = folder.appendingPathComponent("My Documents").path
+        Prefs.downloadCategories = categories
+        if let pdf = manager.add(server.url("/files/manual.pdf")), let other = manager.add(server.url("/files/data.bin"), folder: folder.appendingPathComponent("Chosen")) {
+            check(DownloadTests.waitFor(30) { done([pdf.id, other.id]) }, "downloads finish")
+            checkEqual(manager.item(pdf.id)?.finalPath, folder.appendingPathComponent("My Documents/manual.pdf").path, "a PDF goes to the Documents category's own folder")
+            checkEqual(manager.item(other.id)?.finalPath, folder.appendingPathComponent("Chosen/data.bin").path, "a download given a folder goes there")
+        } else {
+            check(false, "downloads added")
+        }
+        Prefs.downloadCategories = savedCategories
 
         // Queues: one at a time
         manager.queues[0].maxAtOnce = 1
@@ -4737,5 +4752,217 @@ enum UpdaterTests {
         check(UpdateSwap.script(staged: staged, target: installed, pid: 42, relaunch: true).contains("kill -0 42")
               && UpdateSwap.script(staged: staged, target: installed, pid: 42, relaunch: true).contains("open "),
               "it waits for Toolbelt to quit, then opens the new one")
+    }
+}
+
+/// A pretend web site for the site grabber: address → (type, content).
+final class TestSite: @unchecked Sendable {
+    let pages: [String: (String, String)]
+    init(_ pages: [String: (String, String)]) { self.pages = pages }
+
+    func fetch(_ url: URL) -> SiteGrabber.Page? {
+        pages[url.absoluteString].map { SiteGrabber.Page(data: Data($0.1.utf8), mimeType: $0.0, url: url) }
+    }
+}
+
+final class ResultBox<T>: @unchecked Sendable {
+    var value: T?
+}
+
+@MainActor
+enum LinkGrabberTests {
+    static func run() {
+        extractor()
+        choosing()
+        categories()
+        copiedLinks()
+        offlinePaths()
+        grabber()
+        fromChrome()
+    }
+
+    static let page = URL(string: "https://example.com/docs/index.html")!
+    static let html = """
+    <html><head><base href="https://example.com/docs/"><link rel="stylesheet" href="style.css"><link rel=icon href=/fav.ico></head>
+    <body><!-- <a href="hidden.zip">x</a> -->
+    <a href="manual.pdf">The <b>manual</b></a> <a href='../setup.dmg'>Setup</a> <a href=about>About</a>
+    <a href="#top">top</a> <a href="mailto:a@b.c">mail</a> <a href="javascript:void(0)">js</a>
+    <a href="report.pdf?v=2&amp;x=1#p3">Report</a>
+    <img src="img/cat.jpg" alt="A cat" srcset="img/cat.jpg 1x, img/cat@2x.jpg 2x">
+    <video src="/media/clip.mp4" poster="/media/poster.png"></video>
+    <audio><source src="/media/song" type="audio/mpeg"></audio>
+    <a href="manual.pdf">again</a>
+    </body></html>
+    """
+
+    static func extractor() {
+        let found = LinkExtractor.links(in: html, page: page)
+        let addresses = found.map(\.url.absoluteString)
+        check(!addresses.contains { $0.contains("hidden") }, "links inside comments are skipped")
+        check(addresses.contains("https://example.com/docs/manual.pdf"), "links are read relative to the page's <base>")
+        check(addresses.contains("https://example.com/setup.dmg"), "../ links go up a folder")
+        check(addresses.contains("https://example.com/docs/report.pdf?v=2&x=1"), "&amp; is decoded and #parts dropped")
+        checkEqual(found.first { $0.url.lastPathComponent == "manual.pdf" }?.text, "The manual", "a link keeps its words")
+        checkEqual(addresses.filter { $0.hasSuffix("manual.pdf") }.count, 1, "each link is listed once")
+        check(!addresses.contains { $0.contains("mailto") || $0.contains("javascript") }, "mail and script links are skipped")
+        check(addresses.contains("https://example.com/docs/img/cat@2x.jpg"), "pictures in srcset are found")
+        check(addresses.contains("https://example.com/media/poster.png") && addresses.contains("https://example.com/media/clip.mp4"),
+              "videos and their posters are found")
+        checkEqual(LinkExtractor.cssLinks(in: "a{background:url('i/a.png')} @import \"b.css\"; b{src:url(f.woff)}",
+                                          base: URL(string: "https://x.com/s/main.css")!).map(\.absoluteString),
+                   ["https://x.com/s/i/a.png", "https://x.com/s/b.css", "https://x.com/s/f.woff"], "a stylesheet's pictures, fonts and imports")
+    }
+
+    static func choosing() {
+        let rules = DownloadCategories.defaults
+        let links = LinkExtractor.downloadable(LinkExtractor.links(in: html, page: page))
+        let kinds = Dictionary(uniqueKeysWithValues: links.map { ($0.name, LinkSelection.kind(of: $0, rules: rules)) })
+        checkEqual(kinds["song"], "Music", "a sound without an extension counts as music")
+        checkEqual(kinds["about"], LinkSelection.pagesKind, "a link without an extension is a web page")
+        checkEqual(kinds["setup.dmg"], "Programs", "a .dmg is a program")
+        checkEqual(kinds["cat.jpg"], "Images", "pictures are images")
+        checkEqual(LinkSelection.initiallyTicked(links).count, links.count - 1, "every file is ticked to begin with, web pages aren't")
+        checkEqual(LinkSelection.visible(links, kinds: ["Documents"], search: "", rules: rules).map(\.name), ["manual.pdf", "report.pdf"],
+                   "the Documents button shows only documents")
+        checkEqual(LinkSelection.visible(links, kinds: [], search: ".dmg", rules: rules).map(\.name), ["setup.dmg"], "searching .dmg shows that type")
+        checkEqual(LinkSelection.visible(links, kinds: [], search: "cat", rules: rules).count, 2, "searching words matches names")
+        checkEqual(LinkSelection.counts(links, rules: rules).map(\.kind), ["Video", "Music", "Documents", "Programs", "Images", LinkSelection.pagesKind],
+                   "the type buttons follow the categories' order")
+
+        let model = LinkPickerModel(title: "Test", links: links + links)
+        checkEqual(model.links.count, links.count, "the list has each link once")
+        model.toggleKind("Images")
+        checkEqual(model.visible.count, 4, "a type button filters the list")
+        model.tickShown(false)
+        checkEqual(model.chosen.count, 0, "Tick None unticks what's shown")
+        model.toggleKind("Images")
+        model.toggleKind("Programs")
+        checkEqual(model.chosen.map(\.name), ["setup.dmg"], "only ticked links that are shown get downloaded")
+    }
+
+    static func categories() {
+        let rules = DownloadCategories.defaults
+        checkEqual(rules.map(\.name), ["Video", "Music", "Documents", "Programs", "Archives", "Images", "Other"], "the usual categories")
+        checkEqual(DownloadCategories.parseExtensions("mp4, .MOV  mkv;webm *.mp4"), ["mp4", "mov", "mkv", "webm"], "extensions can be typed loosely")
+        var custom = rules
+        custom[2].folder = "/tmp/Docs"
+        let base = URL(fileURLWithPath: "/d")
+        checkEqual(DownloadCategories.folder(for: "a.pdf", base: base, sortByType: false, rules: custom).path, "/tmp/Docs",
+                   "a category's own folder is used")
+        checkEqual(DownloadCategories.folder(for: "a.mp4", base: base, sortByType: true, rules: custom).path, "/d/Video",
+                   "others go into a folder per category when sorting")
+        checkEqual(DownloadCategories.folder(for: "a.bin", base: base, sortByType: false, rules: custom).path, "/d",
+                   "or straight into the downloads folder when not")
+        var fonts = CategoryRule(name: "Fonts", extensions: ["ttf", "otf"])
+        fonts.folder = "~/Library/Fonts"
+        checkEqual(DownloadCategories.name(for: "x.TTF", in: [fonts] + rules), "Fonts", "a new category catches its extensions")
+        checkEqual(DownloadCategories.merged([CategoryRule(name: "Other", extensions: []), fonts]).map(\.name),
+                   ["Fonts", "Video", "Music", "Documents", "Programs", "Archives", "Images", "Other"], "missing usual categories come back; Other stays last")
+
+        let saved = Prefs.downloadCategories
+        Prefs.downloadCategories = [fonts] + custom
+        checkEqual(Prefs.downloadCategories.first, fonts, "categories are saved with their folders")
+        checkEqual(Prefs.downloadCategories[3].folder, "/tmp/Docs", "… all of them")
+        Prefs.downloadCategories = saved
+    }
+
+    static func copiedLinks() {
+        let extensions = Set(ClipboardLinks.defaultExtensions)
+        check(extensions.contains("zip") && extensions.contains("mp4") && extensions.contains("pdf") && !extensions.contains("jpg"),
+              "files, not pictures, are offered when copied")
+        checkEqual(ClipboardLinks.offer(for: "see https://x.com/a.zip now", extensions: extensions), .one(URL(string: "https://x.com/a.zip")!),
+                   "a copied link to a file is offered")
+        checkEqual(ClipboardLinks.offer(for: "https://x.com/page", extensions: extensions), .none, "a copied link to a web page isn't")
+        checkEqual(ClipboardLinks.offer(for: "plain words", extensions: extensions), .none, "nor plain text")
+        checkEqual(ClipboardLinks.offer(for: "https://x.com/a.zip\nhttps://x.com/b.mp3\n(https://x.com/c)", extensions: extensions),
+                   .several([URL(string: "https://x.com/a.zip")!, URL(string: "https://x.com/b.mp3")!, URL(string: "https://x.com/c")!]),
+                   "several copied links are offered as a list")
+        checkEqual(ClipboardLinks.links(in: "https://a.com/x.zip https://a.com/x.zip").count, 1, "each copied link once")
+    }
+
+    static func offlinePaths() {
+        let home = URL(string: "https://example.com/")!
+        func path(_ address: String, page: Bool = true) -> String { OfflinePaths.path(for: URL(string: address)!, isPage: page, home: home) }
+        checkEqual(path("https://example.com/"), "index.html", "the start page is index.html")
+        checkEqual(path("https://example.com/docs/"), "docs/index.html", "a folder's page is its index.html")
+        checkEqual(path("https://example.com/about"), "about.html", "pages get .html")
+        checkEqual(path("https://example.com/a.php?id=2"), "a.php_id=2.html", "pages with ?questions get their own file")
+        checkEqual(path("https://example.com/i/x.png?v=3", page: false), "i/x_v=3.png", "files keep their extension")
+        checkEqual(path("https://cdn.net/x.js", page: false), "_other/cdn.net/x.js", "files from other sites go in their own folder")
+        checkEqual(OfflinePaths.relative(from: "docs/a.html", to: "img/b.png"), "../img/b.png", "links between saved files go up and down folders")
+        checkEqual(OfflinePaths.relative(from: "index.html", to: "docs/a b.html"), "docs/a%20b.html", "… with spaces written for the web")
+        let saved: [URL: String] = [URL(string: "https://example.com/about")!: "about.html", URL(string: "https://example.com/i/x.png")!: "i/x.png"]
+        let out = OfflinePaths.rewrite(html: #"<base href="/"><a href="about#t">A</a> <img src='i/x.png'> <a href="/other">O</a> <a href="https://z.com/">Z</a><div style="background:url(i/x.png)">"#,
+                                       page: URL(string: "https://example.com/docs/p")!, savedAt: "docs/p.html", saved: saved)
+        check(out.contains(#"href="../about.html#t""#) && out.contains("src='../i/x.png'"), "saved pages link to each other's copies", out)
+        check(out.contains(#"href="https://example.com/other""#) && out.contains(#"href="https://z.com/""#),
+              "links to what wasn't saved still go to the web", out)
+        check(out.contains("url(../i/x.png)") && !out.contains("<base"), "pictures in styles point at their copies too", out)
+    }
+
+    static let site = TestSite([
+        "https://s.com/": ("text/html", #"<a href="/p1">1</a><a href="/p2">2</a><img src="/a.png"><a href="/f.zip">z</a><a href="https://other.com/x">x</a><link rel=stylesheet href="/s.css">"#),
+        "https://s.com/p1": ("text/html", #"<img src="/b.jpg"><a href="/p3">3</a><a href="/v.mp4">v</a>"#),
+        "https://s.com/p2": ("text/html", #"<img src="/a.png"><a href="/">home</a>"#),
+        "https://s.com/p3": ("text/html", #"<img src="/deep.png">"#),
+        "https://s.com/s.css": ("text/css", "body{background:url(bg.gif)}"),
+        "https://s.com/a.png": ("image/png", "PNG"), "https://s.com/b.jpg": ("image/jpeg", "JPG"),
+        "https://s.com/f.zip": ("application/zip", "ZIP"), "https://s.com/bg.gif": ("image/gif", "GIF"),
+        "https://s.com/v.mp4": ("video/mp4", "MP4"), "https://s.com/deep.png": ("image/png", "D"),
+    ])
+
+    static func explore(_ template: GrabTemplate, depth: Int? = nil) -> SiteGrabber.Result? {
+        let box = ResultBox<SiteGrabber.Result>()
+        let grabber = SiteGrabber(settings: GrabSettings(start: URL(string: "https://s.com/")!, template: template, depth: depth),
+                                  rules: DownloadCategories.defaults, fetch: { [site] in site.fetch($0) })
+        Task.detached { box.value = await grabber.explore() }
+        _ = DownloadTests.waitFor(10) { box.value != nil }
+        return box.value
+    }
+
+    static func grabber() {
+        let pictures = explore(.pictures)
+        checkEqual(pictures?.files.map(\.name), ["a.png", "b.jpg"], "all pictures: the start page's and one level down, once each")
+        checkEqual(pictures?.pages.count, 3, "other sites' pages aren't followed")
+        checkEqual(explore(.files, depth: 0)?.files.map(\.name), ["a.png", "f.zip"], "files on just the start page")
+        checkEqual(explore(.videos)?.files.map(\.name), ["v.mp4"], "all videos")
+        checkEqual(explore(.pictures, depth: 2)?.files.map(\.name), ["a.png", "b.jpg", "deep.png"], "more levels find more")
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-mirror-\(UUID().uuidString)")
+        let box = ResultBox<SiteGrabber.Result>()
+        let mirror = SiteGrabber(settings: GrabSettings(start: URL(string: "https://s.com/")!, template: .site),
+                                 rules: DownloadCategories.defaults, fetch: { [site] in site.fetch($0) })
+        Task.detached { [site] in
+            box.value = await mirror.mirror(into: folder, save: { url, destination in
+                guard let entry = site.pages[url.absoluteString] else { return nil }
+                try? Data(entry.1.utf8).write(to: destination)
+                return entry.0
+            })
+        }
+        _ = DownloadTests.waitFor(10) { box.value != nil }
+        let files = ((FileManager.default.enumerator(atPath: folder.path)?.allObjects as? [String]) ?? []).sorted()
+        checkEqual(box.value?.startFile, "index.html", "an offline copy starts at index.html")
+        check(["p3.html", "bg.gif", "deep.png", "f.zip", "s.css"].allSatisfy(files.contains), "it saves pages, pictures, styles and files", "\(files)")
+        let index = (try? String(contentsOf: folder.appendingPathComponent("index.html"), encoding: .utf8)) ?? ""
+        check(index.contains(#"href="p1.html""#) && index.contains(#"src="a.png""#) && index.contains(#"href="https://other.com/x""#),
+              "its links work offline (and other sites' still go to the web)", index)
+        let css = (try? String(contentsOf: folder.appendingPathComponent("s.css"), encoding: .utf8)) ?? ""
+        check(css.contains("url(bg.gif)"), "a stylesheet's pictures are saved and linked", css)
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    static func fromChrome() {
+        let json = #"{"url":"https://shop.com/list","title":"Shop","referrer":"https://shop.com/list","userAgent":"UA","links":[{"url":"https://shop.com/a.pdf","text":"A"},{"url":"https://cdn.com/p.jpg","media":"picture"},{"url":"https://shop.com/a.pdf#x"},{"url":"mailto:x@y.z"}],"cookiesByHost":{"shop.com":"s=1"}}"#
+        guard let request = try? JSONDecoder().decode(DownloadRequest.self, from: Data(json.utf8)) else {
+            check(false, "Chrome's list of links is read")
+            return
+        }
+        checkEqual(request.foundLinks.map(\.name), ["a.pdf", "p.jpg"], "Chrome's links are read, once each, web links only")
+        checkEqual(request.foundLinks.last?.media, .picture, "pictures are marked")
+        checkEqual(request.headers(for: URL(string: "https://shop.com/a.pdf")!)["Cookie"], "s=1", "each link gets its own site's cookies")
+        checkEqual(request.headers(for: URL(string: "https://cdn.com/p.jpg")!)["Cookie"], nil, "… and not another site's")
+        checkEqual(request.headers(for: URL(string: "https://cdn.com/p.jpg")!)["Referer"], "https://shop.com/list", "the page is sent as where they came from")
+        let old = #"{"url":"https://x.com/a.zip"}"#
+        checkEqual((try? JSONDecoder().decode(DownloadRequest.self, from: Data(old.utf8)))?.links, nil, "single downloads from Chrome still work")
     }
 }

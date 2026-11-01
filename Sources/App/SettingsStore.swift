@@ -209,6 +209,34 @@ enum Prefs {
         set { store.set(newValue, for: "downloads.notify") }
     }
 
+    /// 0.34: the download categories (extensions and an optional folder of their own each).
+    static var downloadCategories: [CategoryRule] {
+        get {
+            guard let stored = store.raw("downloads.categories") as? [[String: String]] else { return DownloadCategories.defaults }
+            return DownloadCategories.merged(stored.compactMap { entry in
+                guard let name = entry["name"] else { return nil }
+                let folder = entry["folder"].flatMap { $0.isEmpty ? nil : $0 }
+                return CategoryRule(name: name, extensions: DownloadCategories.parseExtensions(entry["extensions"] ?? ""), folder: folder)
+            })
+        }
+        set {
+            store.set(newValue.map { ["name": $0.name, "extensions": $0.extensionsText, "folder": $0.folder ?? ""] },
+                      for: "downloads.categories")
+        }
+    }
+
+    /// 0.34: offer to download links to files when they're copied.
+    static var downloadCatchClipboard: Bool {
+        get { store.value("downloads.catchClipboard", default: true) }
+        set { store.set(newValue, for: "downloads.catchClipboard") }
+    }
+
+    /// The extensions a copied link must end in to be offered.
+    static var downloadCatchExtensions: [String] {
+        get { (store.raw("downloads.catchExtensions") as? String).map(DownloadCategories.parseExtensions) ?? ClipboardLinks.defaultExtensions }
+        set { store.set(newValue.joined(separator: ", "), for: "downloads.catchExtensions") }
+    }
+
     /// Hand downloads from Chrome to Toolbelt (once the extension is set up).
     /// Trackpad and Magic Mouse gestures: below 1 easier to trigger, above 1 harder.
     static var gestureSensitivity: Double {

@@ -1,9 +1,28 @@
-# Toolbelt — v0.33
+# Toolbelt — v0.34
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.34: download everything on a page
+- **Download All Links with Toolbelt…**: right-click a page in Chrome (or click the Toolbelt button in Chrome's
+  toolbar → Download All Links on This Page…). Toolbelt lists every link, picture, video and sound on it. Files are
+  ticked, web pages aren't; buttons along the top show just Video, Music, Documents, Programs, Archives or
+  Pictures, and the search box finds names or types like `.pdf`. Select some text first to get only the links
+  in it. Links that need you signed in still download (each site's cookies go along).
+- **Site Grabber** (menu-bar menu → Downloads → Site Grabber…, or paste a web address in the launcher): all the
+  pictures on a site, all its videos and sound, every file on a page and the pages it links to, or **the whole
+  site to read offline** (its pages, pictures and files saved into Downloads/Sites, with the links between them
+  working without the internet). Choose how many levels of links to follow and how many files at most.
+- **Copied links:** copy a link to a file (a video, PDF, zip…) anywhere and a small "Download?" box appears in
+  the top-right corner. Copy several links and it offers the list to tick. Switch it off, or change the file
+  types, in Settings → Downloads → Copied links.
+- **A folder for each type of file:** Settings → Downloads → Categories. Change which extensions make a
+  Video, a Document and so on, give any category a folder of its own (say, Documents into iCloud Drive), or add
+  your own categories (Fonts, eBooks…).
+- The Chrome extension is now version 1.2: Chrome picks it up on its next start (or click Reload on its
+  Extensions page).
 
 ## What's new in 0.33: Toolbelt updates itself
 - **Check for Updates…** in the menu-bar menu, and **Settings → General → Updates**: Toolbelt asks its GitHub

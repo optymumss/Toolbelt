@@ -147,6 +147,25 @@ async function waitForFile(name, seconds) {
     const lockedText = await locked.evaluate(() => [...document.querySelectorAll("button")].map((b) => b.textContent).join(" | "));
     check(lockedText.includes("Copy-protected") && (await menuItems(locked)).length === 0,
       "copy-protected (DRM) streams offer no download", lockedText);
+
+    // 0.34: "Download All Links with Toolbelt" (what the right-click item and the popup's button do).
+    const linksPage = await browser.newPage();
+    await linksPage.goto(`${site}links.html`);
+    const control = await browser.newPage();
+    await control.goto(`chrome-extension://${extensionId}/popup.html`);
+    const sent = await control.evaluate(async (url) => {
+      const [tab] = await chrome.tabs.query({ url });
+      return new Promise((resolve) => chrome.runtime.sendMessage({ type: "page-links", tabId: tab.id }, resolve));
+    }, `${site}links.html`);
+    check(sent && sent.ok && sent.count === 4, "the page's links are handed to Toolbelt", JSON.stringify(sent));
+    const statusFile = path.join(process.env.TOOLBELT_DATA_DIR || "", "e2e-status.json");
+    let picker = "";
+    for (let i = 0; i < 40 && !picker.startsWith("4 shown"); i += 1) {
+      await sleep(250);
+      try { picker = JSON.parse(fs.readFileSync(statusFile, "utf8")).linkPicker || ""; } catch {}
+    }
+    check(picker === "4 shown, 3 ticked: report.zip,guide.pdf,pic.png",
+      "Toolbelt lists them to tick: files ticked, web pages not", picker);
   } catch (error) {
     check(false, "the Chrome test ran", String(error));
   } finally {

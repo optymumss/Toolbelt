@@ -23,7 +23,8 @@ func readMessage() -> [String: Any]? {
     let header = input.readData(ofLength: 4)
     guard header.count == 4 else { return nil }
     let length = header.withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self))) }
-    guard length > 0, length < 1_000_000 else { return nil }
+    // A page's links can be long (Chrome allows up to 64 MB this way).
+    guard length > 0, length < 64_000_000 else { return nil }
     let body = input.readData(ofLength: length)
     return (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
 }
@@ -60,6 +61,31 @@ func handOver(_ message: [String: Any]) -> [String: Any] {
     // A streamed video picked from the video button's list of sizes.
     if message["kind"] as? String == "hls" { request["kind"] = "hls" }
     if message["quiet"] as? Bool == true { request["quiet"] = true }
+    return writeToInbox(request)
+}
+
+/// "Download All Links with Toolbelt": the page's links, to choose from in Toolbelt.
+func handOverLinks(_ message: [String: Any]) -> [String: Any] {
+    guard let page = message["url"] as? String, let links = message["links"] as? [[String: Any]] else {
+        return ["ok": false, "error": "No links"]
+    }
+    var request: [String: Any] = ["url": page]
+    request["links"] = links.prefix(5000).compactMap { link -> [String: String]? in
+        guard let url = link["url"] as? String, let scheme = URL(string: url)?.scheme?.lowercased(),
+              ["http", "https", "ftp"].contains(scheme) else { return nil }
+        var entry = ["url": url]
+        if let text = link["text"] as? String, !text.isEmpty { entry["text"] = String(text.prefix(200)) }
+        if let media = link["media"] as? String, ["picture", "video", "sound"].contains(media) { entry["media"] = media }
+        return entry
+    }
+    for key in ["title", "referrer", "userAgent"] {
+        if let value = message[key] as? String, !value.isEmpty { request[key] = value }
+    }
+    if let cookies = message["cookiesByHost"] as? [String: String] { request["cookiesByHost"] = cookies }
+    return writeToInbox(request)
+}
+
+func writeToInbox(_ request: [String: Any]) -> [String: Any] {
     let inbox = dataFolder().appendingPathComponent("inbox", isDirectory: true)
     do {
         try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
@@ -98,6 +124,7 @@ while let message = readMessage() {
     switch message["type"] as? String {
     case "ping": send(["ok": true, "version": 1])
     case "download": send(handOver(message))
+    case "links": send(handOverLinks(message))
     default: send(["ok": false, "error": "Unknown message"])
     }
 }

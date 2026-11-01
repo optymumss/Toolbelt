@@ -43,6 +43,8 @@ struct DownloadItem: Identifiable, Codable, Equatable {
     var audioURL: URL? = nil
     /// The web page it was started from, to start it again there if its link stops working.
     var pageURL: URL? = nil
+    /// 0.34: a folder chosen for this download (the site grabber's), instead of its category's.
+    var folder: String? = nil
 
     var isStream: Bool { kind == "hls" }
 
@@ -52,7 +54,7 @@ struct DownloadItem: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers, nameIsFixed
-        case kind, audioURL, pageURL
+        case kind, audioURL, pageURL, folder
     }
 
     var progress: Double? {
@@ -106,7 +108,7 @@ enum DownloadCategory: String, CaseIterable {
     case images = "Images"
     case other = "Other"
 
-    private static let extensions: [DownloadCategory: Set<String>] = [
+    static let extensions: [DownloadCategory: Set<String>] = [
         .video: ["mp4", "mov", "m4v", "mkv", "avi", "webm", "wmv", "flv", "mpg", "mpeg"],
         .music: ["mp3", "m4a", "aac", "flac", "wav", "aiff", "aif", "ogg", "opus", "wma"],
         .documents: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "md", "pages", "numbers", "key", "csv", "epub", "odt", "ods"],
