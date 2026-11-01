@@ -784,6 +784,8 @@ final class RealUse: NSObject, NSApplicationDelegate {
         var inTrash: NSURL?
         try? FileManager.default.trashItem(at: file, resultingItemURL: &inTrash)
         let trashed = (inTrash as URL?).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        // Like a person: Finder takes a moment to notice something new in the Trash.
+        await pause(2)
         await press(CGKeyCode(kVK_ANSI_C), Self.testMods)
         let emptied = trashed ? await waitUntil(40) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
         check("empty the Trash", emptied,

@@ -154,7 +154,7 @@ if [ "$CRASHES_AFTER" -gt "$CRASHES_BEFORE" ]; then
     head -80 "$HOME/Library/Logs/DiagnosticReports/$report"
     failed=1
 fi
-if [ "$failed" -ne 0 ]; then
+if true; then
     echo "Toolbelt's log:"
     log show --last 15m --predicate 'process == "Toolbelt"' --style compact 2>/dev/null | grep -i "toolbelt:\|finder" | tail -40
 fi
