@@ -292,7 +292,7 @@ final class MacroRun {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        RunLoop.current.perform(inModes: [.modalPanel]) { alert.window.makeFirstResponder(field) }
+        Self.focusSoon(field, in: alert.window)
         return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
     }
 
@@ -303,6 +303,17 @@ final class MacroRun {
         for button in buttons { alert.addButton(withTitle: button) }
         let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         return buttons.indices.contains(index) ? buttons[index] : (buttons.first ?? "OK")
+    }
+
+    /// Puts the cursor in `field` a moment after an alert has opened (its modal loop runs only modal-panel timers).
+    private static func focusSoon(_ field: NSTextField, in window: NSWindow) {
+        let timer = Timer(timeInterval: 0.15, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                window.makeKeyAndOrderFront(nil)
+                window.makeFirstResponder(field)
+            }
+        }
+        RunLoop.current.add(timer, forMode: .modalPanel)
     }
 
     static func askForPath(_ prompt: String, _ folder: Bool) -> String? {
@@ -330,9 +341,7 @@ final class MacroRun {
         for (box, next) in zip(boxes, boxes.dropFirst()) { box.nextKeyView = next }
         alert.window.initialFirstResponder = boxes.first
         // The alert picks its own first responder as it opens: put the cursor in the first box once it's showing.
-        if let first = boxes.first {
-            RunLoop.current.perform(inModes: [.modalPanel]) { alert.window.makeFirstResponder(first) }
-        }
+        if let first = boxes.first { Self.focusSoon(first, in: alert.window) }
         return alert.runModal() == .alertFirstButtonReturn ? boxes.map(\.stringValue) : nil
     }
 
