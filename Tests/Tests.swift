@@ -4286,24 +4286,26 @@ enum MacroConditionTests {
         world.findOnScreen = { path in path.hasSuffix("button.png") ? CGPoint(x: 5, y: 5) : nil }
         let engine = MacroRun(runner: runner)
         engine.world = world
-        func truth(_ left: String = "", _ test: MacroCondition.Test, _ right: String = "") -> Bool {
+        func truth(_ left: String, _ test: MacroCondition.Test, _ right: String = "") -> Bool {
             AutomationTests.truth(engine, MacroCondition(left: left, test: test, right: right))
         }
-        check(truth(.windowTitleContains, "invoice"), "the front window's title contains (ignoring capitals)")
-        check(!truth(.windowTitleContains, "Calendar"), "… and not when it doesn't")
-        check(truth(.appRunning, "Mail") && truth(.appRunning, "com.apple.mail"), "an app is running (by name or identifier)")
-        check(truth(.appNotRunning, "Notes") && !truth(.appNotRunning, "safari"), "an app is not running")
+        /// Tests with no left side (about the Mac).
+        func fact(_ test: MacroCondition.Test, _ right: String = "") -> Bool { truth("", test, right) }
+        check(fact(.windowTitleContains, "invoice"), "the front window's title contains (ignoring capitals)")
+        check(!fact(.windowTitleContains, "Calendar"), "… and not when it doesn't")
+        check(fact(.appRunning, "Mail") && fact(.appRunning, "com.apple.mail"), "an app is running (by name or identifier)")
+        check(fact(.appNotRunning, "Notes") && !fact(.appNotRunning, "safari"), "an app is not running")
         check(truth("~/report.pdf", .fileExists) && truth("~/other.pdf", .fileMissing), "a file exists / doesn't (~ is your home folder)")
         check(!truth("", .fileExists), "no path is never a file that exists")
-        check(truth(.modifiersHeld, "⌘⌥") && truth(.modifiersHeld, "cmd"), "keys held down (other held keys don't matter)")
-        check(!truth(.modifiersHeld, "⌘⇧") && !truth(.modifiersHeld, ""), "… but every key named must be held")
+        check(fact(.modifiersHeld, "⌘⌥") && fact(.modifiersHeld, "cmd"), "keys held down (other held keys don't matter)")
+        check(!fact(.modifiersHeld, "⌘⇧") && !fact(.modifiersHeld, ""), "… but every key named must be held")
         check(truth("10,20", .pixelColorIs, "#FF00FF") && !truth("11,20", .pixelColorIs, "#FF00FF"), "the colour at a point")
         check(!truth("10,20", .pixelColorIs, "pink"), "a colour that isn't one is never true")
-        check(truth(.screenShows, "~/button.png") && truth(.screenDoesNotShow, "~/other.png"), "the screen shows a picture / doesn't")
-        check(truth(.frontAppIs, "Safari"), "the earlier tests still work (the app in front)")
+        check(fact(.screenShows, "~/button.png") && fact(.screenDoesNotShow, "~/other.png"), "the screen shows a picture / doesn't")
+        check(fact(.frontAppIs, "Safari"), "the earlier tests still work (the app in front)")
         check(truth("abc", .contains, "B"), "and text tests too")
         engine.set("Who", "Mail")
-        check(truth(.appRunning, "%Who%"), "variables are filled in first")
+        check(fact(.appRunning, "%Who%"), "variables are filled in first")
 
         // Pause until
         let titleNow = Box("Loading…")
