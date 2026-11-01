@@ -38,6 +38,7 @@ final class AutomationModule: ToolbeltModule {
 
     let web = WebServer()
     let panels = PanelController()
+    let recorder = MacroRecorder()
 
     /// Starts, restarts or stops the web server to match Settings.
     func updateWebServer() {
@@ -64,6 +65,11 @@ final class AutomationModule: ToolbeltModule {
         ActionRunner.runMacro = { [weak self] name in self?.run(named: name) }
         ActionRunner.toggleFloatingMenu = { [weak self] name in self?.panels.toggle(named: name) }
         panels.start(runner: runner)
+        RealUseHooks.commands["record-start"] = { [weak self] name in self?.startTestRecording(into: name) }
+        RealUseHooks.commands["record-stop"] = { [weak self] _ in self?.recorder.stop() }
+        RealUseHooks.extraStatus["recorded"] = { [weak self] in
+            self?.store.macro(named: "Recorded")?.steps.map(\.summary) ?? []
+        }
         RealUseHooks.extraStatus["floatingMenus"] = { [weak self] in self?.panels.showingFrames ?? [:] }
         RealUseHooks.extraStatus["menuBarItems"] = { [weak self] in self?.panels.menuBarStatus ?? [] }
         arm()
@@ -94,6 +100,30 @@ final class AutomationModule: ToolbeltModule {
     }
 
     // MARK: Running
+
+    /// Runs one step on its own (the ⋯ → Try This Step button).
+    func tryStep(_ step: MacroStep) {
+        let run = MacroRun(runner: runner)
+        Task { await run.run([step]) }
+    }
+
+    /// Every shortcut in use: Toolbelt's commands, triggers and macros.
+    func usedShortcuts() -> [UsedShortcuts.Entry] {
+        let commands = ShortcutAction.allCases.compactMap { action in
+            runner.shortcuts.shortcut(for: action).map { (title: action.title, shortcut: $0) }
+        }
+        return UsedShortcuts.collect(commands: commands, rules: gestures?.store.rules ?? [], macros: store.macros)
+    }
+
+    /// For the real-use tests: record into the macro with this name (made if it doesn't exist), and stop.
+    func startTestRecording(into name: String) {
+        if store.macro(named: name) == nil { store.macros.append(Macro(name: name)) }
+        recorder.start { [weak self] steps in
+            guard let self, let index = self.store.macros.firstIndex(where: { $0.name == name }) else { return }
+            self.store.macros[index].steps += steps
+            RealUseHooks.writeStatus()
+        }
+    }
 
     func run(named name: String, trigger: String = "") {
         guard let macro = store.macro(named: name) else { return }

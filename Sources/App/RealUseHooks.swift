@@ -18,6 +18,10 @@ enum RealUseHooks {
     private static var takenShortcuts: () -> [String] = { [] }
     /// More things for the status file, from the modules (floating menus, menu-bar items, the preset in use).
     static var extraStatus: [String: () -> Any] = [:]
+    /// Commands the test app can send ("record-start:Name"), registered by the modules.
+    static var commands: [String: (String) -> Void] = [:]
+    static let commandNotification = Notification.Name("local.personal.toolbelt.e2e.command")
+    private static var commandObserver: NSObjectProtocol?
 
     static func start(takenShortcuts: @escaping () -> [String] = { [] }) {
         guard isOn else { return }
@@ -26,6 +30,11 @@ enum RealUseHooks {
         observer = DistributedNotificationCenter.default().addObserver(forName: touchNotification, object: nil, queue: .main) { note in
             guard let text = note.object as? String, let frames = parseFrames(text) else { return }
             MultitouchReader.shared.injectForTesting(frames)
+        }
+        commandObserver = DistributedNotificationCenter.default().addObserver(forName: commandNotification, object: nil, queue: .main) { note in
+            guard let text = note.object as? String else { return }
+            let parts = text.split(separator: ":", maxSplits: 1).map(String.init)
+            MainActor.assumeIsolated { commands[parts[0]]?(parts.count > 1 ? parts[1] : "") }
         }
         // Permissions can arrive a moment after launch: write the status again shortly.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { writeStatus() }

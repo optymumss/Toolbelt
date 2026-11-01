@@ -11,6 +11,9 @@ final class MacroRun {
     var ask: (_ prompt: String, _ options: [String]?) -> String? = MacroRun.askPerson
     var notify: (_ title: String, _ message: String) -> Void = MacroRun.postNotification
     private var stopped = false
+    /// Every step that ran, in order (switched-off steps are skipped), and the ones that failed.
+    private(set) var log: [String] = []
+    private(set) var failures: [String] = []
     /// Loops can't run forever by mistake.
     static let loopLimit = 1000
 
@@ -71,8 +74,10 @@ final class MacroRun {
     // MARK: Running
 
     func run(_ steps: [MacroStep]) async {
-        for step in steps {
+        for step in steps where step.isOn {
             if stopped { return }
+            log.append(step.summary)
+            if log.count > 500 { log.removeFirst() }
             await run(step)
         }
     }
@@ -95,10 +100,13 @@ final class MacroRun {
             var environment: [String: String] = [:]
             for (name, value) in variables { environment["TB_" + name] = value }
             environment["TB_Clipboard"] = value(of: "Clipboard")
-            let output: String = await withCheckedContinuation { continuation in
-                ActionRunner.runScript(tool, arguments, environment: environment) { continuation.resume(returning: $0) }
+            let result = await Self.runProcess(tool, arguments, environment: environment, timeout: step.timeout)
+            if !step.name.isEmpty { set(step.name, result.output) }
+            if result.timedOut {
+                failed(step, "it took longer than \(Self.seconds(step.timeout ?? 0))")
+            } else if result.status != 0 {
+                failed(step, "it ended with error \(result.status)")
             }
-            if !step.name.isEmpty { set(step.name, output) }
         case .pause:
             try? await Task.sleep(nanoseconds: UInt64(max(0, min(step.number, 3600)) * 1_000_000_000))
         case .setVariable:
@@ -143,6 +151,56 @@ final class MacroRun {
             }
         case .stop:
             stopped = true
+        }
+    }
+
+    /// A step failed: carry on, stop, or stop and say so, as the step asks.
+    private func failed(_ step: MacroStep, _ reason: String) {
+        failures.append("\(step.summary): \(reason)")
+        switch step.onFailure ?? .carryOn {
+        case .carryOn: break
+        case .stop: stopped = true
+        case .stopAndNotify:
+            stopped = true
+            notify("Macro stopped", "“\(step.summary)” failed: \(reason).")
+        }
+    }
+
+    static func seconds(_ value: Double) -> String { value == 1 ? "1 second" : "\(value.formatted()) seconds" }
+
+    /// Runs a script in the background; gives up after `timeout` seconds (nil: no limit).
+    nonisolated static func runProcess(_ tool: String, _ arguments: [String], environment extra: [String: String],
+                                       timeout: Double?) async -> (output: String, status: Int32, timedOut: Bool) {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = arguments
+            var environment = ProcessInfo.processInfo.environment
+            environment["TOOLBELT_DATA_DIR"] = SettingsStore.folder.path
+            for (key, value) in extra { environment[key] = value }
+            process.environment = environment
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            final class Flag: @unchecked Sendable { var timedOut = false }
+            let flag = Flag()
+            process.terminationHandler = { finished in
+                let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                continuation.resume(returning: (text.trimmingCharacters(in: .whitespacesAndNewlines), finished.terminationStatus, flag.timedOut))
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(returning: ("", -1, false))
+                return
+            }
+            if let timeout, timeout > 0 {
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                    guard process.isRunning else { return }
+                    flag.timedOut = true
+                    process.terminate()
+                }
+            }
         }
     }
 

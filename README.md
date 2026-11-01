@@ -1,9 +1,21 @@
-# Toolbelt — v0.28
+# Toolbelt — v0.29
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.29: the Macros window works like Keyboard Maestro's editor
+- **Record:** click Record, do the task (typing, shortcuts, clicks, switching apps), then press ⌃⌥⌘. (full
+  stop). Toolbelt writes the steps into the macro, with pauses where you waited. Needs Input Monitoring.
+- **Each step's ⋯ menu:** Try This Step, Turn Off / On (a switched-off step is kept but skipped), Duplicate,
+  Copy, Paste Below, Add Note, Colour, and **If It Fails**: carry on, stop the macro, or stop and tell you.
+- **Scripts can give up** after a number of seconds; a script that ends with an error or runs out of time
+  counts as failed.
+- **Undo and Redo** (⌘Z, ⇧⌘Z) for any change in the Macros window.
+- **Share:** export one macro or all of them to a file, and import macro files (from yourself or others).
+- **Used Shortcuts:** every shortcut Toolbelt uses, from its own commands, triggers and macros, with clashes
+  in orange.
 
 ## What's new in 0.28: floating menus, menu-bar items and presets
 - **Floating menus** (Settings → Automation): your own panels of buttons that stay above other windows,
