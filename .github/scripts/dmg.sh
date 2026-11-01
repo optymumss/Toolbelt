@@ -11,8 +11,16 @@ failed=0
 pass() { echo "✓ $1"; }
 fail() { echo "✗ $1"; failed=1; }
 
-hdiutil verify -quiet "$DMG" && pass "the disk image isn't damaged" || fail "the disk image is damaged"
-if ! hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"; then
+if hdiutil verify -quiet "$DMG"; then
+    pass "the disk image isn't damaged"
+else
+    fail "the disk image is damaged"
+    # Say why, so a failure can be looked into.
+    ls -l "$DMG"; df -h "$(dirname "$DMG")"
+    hdiutil verify "$DMG" 2>&1 | tail -20
+    hdiutil imageinfo "$DMG" 2>&1 | head -30
+fi
+if ! hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"; then
     echo "✗ the disk image couldn't be opened"
     exit 1
 fi
