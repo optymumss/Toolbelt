@@ -9,6 +9,7 @@ struct MacroAction: Codable, Equatable, Hashable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
         case toolbelt, openApp, open, pressKeys, typeText, system, menuItem, resolution, audioOutput
         case setClipboard, pasteNamed, macro, shell, appleScript, javaScript, showHUD
+        case mouse, webSearch, runShortcut
 
         var id: String { rawValue }
 
@@ -30,6 +31,9 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .appleScript: return "Run an AppleScript"
             case .javaScript: return "Run a JavaScript"
             case .showHUD: return "Show an on-screen message"
+            case .mouse: return "Use the mouse (click, scroll, drag…)"
+            case .webSearch: return "Search the web for the selected text"
+            case .runShortcut: return "Run a shortcut from the Shortcuts app"
             }
         }
     }
@@ -63,6 +67,9 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .appleScript: return "AppleScript"
         case .javaScript: return "JavaScript"
         case .showHUD: return "Show “\(value.prefix(30))”"
+        case .mouse: return MouseCommand(text: value).summary
+        case .webSearch: return "Search the web for the selection"
+        case .runShortcut: return "Run shortcut “\(value)”"
         }
     }
 }
@@ -84,6 +91,7 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
     case brightnessUp, brightnessDown, lockScreen, sleepDisplay, sleep, toggleDarkMode
     case closeWindow, quitApp, hideApp, fullScreen, newTab, closeTab, back, forward
     case muteMicrophone, spotlight, launchpad, siri, keyboardBrightnessUp, keyboardBrightnessDown
+    case toggleBluetooth, toggleWiFi, toggleDockHiding, emptyTrash, ejectDisks, screenSaver, emojiPicker
 
     var id: String { rawValue }
 
@@ -119,6 +127,13 @@ enum SystemControl: String, CaseIterable, Identifiable, Codable {
         case .siri: return "Siri"
         case .keyboardBrightnessUp: return "Keyboard light up"
         case .keyboardBrightnessDown: return "Keyboard light down"
+        case .toggleBluetooth: return "Bluetooth on / off"
+        case .toggleWiFi: return "Wi-Fi on / off"
+        case .toggleDockHiding: return "Hide / show the Dock"
+        case .emptyTrash: return "Empty the Trash"
+        case .ejectDisks: return "Eject all disks"
+        case .screenSaver: return "Start the screen saver"
+        case .emojiPicker: return "Emoji & symbols"
         }
     }
 }
@@ -172,6 +187,15 @@ final class ActionRunner {
             Self.runScript("/usr/bin/osascript", ["-l", "JavaScript", "-e", action.value])
         case .showHUD:
             HUD.show(Placeholders.render(action.value).text)
+        case .mouse:
+            guard PermissionGate.ensure(.accessibility, to: "click and scroll for you") else { return }
+            MouseDriver.perform(MouseCommand(text: action.value), flags: Self.flags(fromCarbon: action.modifiers))
+        case .webSearch:
+            guard PermissionGate.ensure(.accessibility, to: "copy the selected text") else { return }
+            WebSearch.searchSelection(template: action.value)
+        case .runShortcut:
+            guard !action.value.isEmpty else { return }
+            Self.runScript("/usr/bin/shortcuts", ["run", action.value])
         }
     }
 
@@ -256,6 +280,15 @@ final class ActionRunner {
             NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/System/Applications/Siri.app"), configuration: NSWorkspace.OpenConfiguration())
         case .keyboardBrightnessUp: KeyboardLight.change(by: 1.0 / 16)
         case .keyboardBrightnessDown: KeyboardLight.change(by: -1.0 / 16)
+        case .toggleBluetooth: BluetoothPower.toggle()
+        case .toggleWiFi: WiFiPower.toggle()
+        case .toggleDockHiding: keys(kVK_ANSI_D, [.maskCommand, .maskAlternate]) // macOS's own ⌥⌘D
+        case .emptyTrash: Trash.empty()
+        case .ejectDisks: Disks.ejectAll()
+        case .screenSaver:
+            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/System/Library/CoreServices/ScreenSaverEngine.app"),
+                                               configuration: NSWorkspace.OpenConfiguration())
+        case .emojiPicker: keys(kVK_Space, [.maskCommand, .maskControl]) // macOS's own ⌃⌘Space
         }
     }
 
@@ -443,6 +476,16 @@ struct ActionEditor: View {
                 TextField("Macro name", text: $action.value)
             case .showHUD:
                 TextField("Message (placeholders like {date} work)", text: $action.value)
+            case .mouse:
+                MouseActionEditor(action: $action)
+            case .webSearch:
+                TextField("Search address, %s for the text (empty for Google)", text: $action.value)
+                Text("Copies the selected text in the app in front, then opens the search. Your clipboard is put back.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .runShortcut:
+                TextField("Shortcut name, as in the Shortcuts app", text: $action.value)
+                Text("For example a shortcut that turns a Focus (like Do Not Disturb) on or off: make it once in the Shortcuts app.")
+                    .font(.caption).foregroundStyle(.secondary)
             case .shell, .appleScript, .javaScript:
                 TextEditor(text: $action.value)
                     .font(.system(.caption, design: .monospaced))

@@ -1,9 +1,20 @@
-# Toolbelt — v0.26
+# Toolbelt — v0.27
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.27: more actions (like BetterTouchTool)
+Any trigger or macro can now also:
+- **Use the mouse:** click, double-click, right-click or middle-click (where the pointer is, or at a place
+  you pick), move the pointer, scroll, or drag from one place to another.
+- **Search the web for the selected text** (Google, or any search site you give with %s). Your
+  clipboard is put back afterwards.
+- **Run a shortcut from the Shortcuts app.** For turning a Focus such as Do Not Disturb on or off, make a
+  small shortcut for it once in the Shortcuts app (macOS doesn't let other apps switch Focus directly).
+- New Mac controls: Bluetooth on / off, Wi-Fi on / off, hide / show the Dock, empty the Trash (macOS asks
+  once to let Toolbelt control Finder), eject all disks, start the screen saver, emoji & symbols.
 
 ## What's new in 0.26: more BetterTouchTool triggers, the Hyper key and changing keys
 In the Triggers window (and Settings → Gestures):

@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -30,6 +30,10 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   from `launcherProvider` (see `ClipboardLauncherProvider`).
 - `Sources/Actions/` — `MacroAction` and `ActionRunner`: everything a gesture or macro can do. Gestures and
   Automation share it, so every trigger can run every action.
+  `MoreActions.swift`: `MouseCommand` (saved as text in `value`: "rightClick 300,200", top-left screen points; no
+  place = the pointer) and `MouseDriver` (events marked `ownEventMarker`), `WebSearch` (⌘C, restore clipboard,
+  %s template), `BluetoothPower` (IOBluetooth's private power call via dlsym), `WiFiPower` (CoreWLAN), `Trash`
+  (Finder AppleScript), `Disks` (ejectable volumes).
 - `Sources/Automation/` — macros: `MacroModel` (macros, groups, triggers, steps), `MacroEngine` (`MacroRun`:
   variables, conditions, loops), `SystemHelpers` (menu items by name, resolution, sound output, other
   keyboards, Wi-Fi), `AutomationModule` (watches only the triggers macros use), `MacroEditor` (the Macros window).

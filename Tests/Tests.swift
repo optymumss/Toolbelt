@@ -54,6 +54,7 @@ enum ToolbeltTests {
         t.group("Triggers: key up, long hold, repeat, left/right keys and more gestures", MoreTriggerTests.run)
         t.group("Real-use test helpers: pretend trackpad touches", RealUseHelperTests.run)
         t.group("Rotate, edge swipes, TipSwipe, mouse wheel, screen corners, keys and Mac events", MoreBTTTests.run)
+        t.group("Mouse actions, web search, Shortcuts, Bluetooth, Wi-Fi, Dock, Trash, disks", MoreActionTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -3997,5 +3998,38 @@ enum MoreBTTTests {
         let gestures: [Gesture] = [.wheel(button: 3, direction: "L"), .screenSpot(.bottomRight), .touch(.trackpad, .tipSwipeUp, fingers: 4)]
         let back = (try? JSONDecoder().decode([Gesture].self, from: JSONEncoder().encode(gestures))) ?? []
         checkEqual(back, gestures, "new triggers save and load")
+    }
+}
+
+@MainActor
+enum MoreActionTests {
+    static func run() {
+        let click = MouseCommand(text: "rightClick 300,200")
+        checkEqual(click.kind, .rightClick, "a saved mouse action is read back: right-click…")
+        checkEqual(click.at, CGPoint(x: 300, y: 200), "…at 300, 200")
+        checkEqual(click.text, "rightClick 300,200", "and written out the same")
+        checkEqual(MouseCommand(text: "click").at, nil, "no place means where the pointer is")
+        let drag = MouseCommand(text: "drag 100,100 400,300")
+        checkEqual(drag.to, CGPoint(x: 400, y: 300), "a drag has where it ends")
+        checkEqual(MouseCommand(text: "scrollDown 12").lines, 12, "scrolls have a number of lines")
+        checkEqual(MouseCommand(text: "scrollDown").text, "scrollDown 5", "five lines unless set")
+        checkEqual(MouseCommand(text: "nonsense").kind, .click, "anything unreadable is a plain click")
+        checkEqual(MouseCommand(text: "doubleClick 10,20").summary, "Double-click at 10, 20", "described in plain words")
+        checkEqual(MacroAction(kind: .mouse, value: "click").summary, "Click where the pointer is", "and in action lists")
+
+        checkEqual(WebSearch.url(for: "swift & you", template: "")?.absoluteString, "https://www.google.com/search?q=swift%20%26%20you",
+                   "the selection goes into a Google search, made safe for a web address")
+        checkEqual(WebSearch.url(for: " cats ", template: "https://duckduckgo.com/?q=%s")?.absoluteString, "https://duckduckgo.com/?q=cats",
+                   "any search site with %s")
+        checkEqual(WebSearch.url(for: "   ", template: ""), nil, "nothing selected: no search")
+
+        let controls: [SystemControl] = [.toggleBluetooth, .toggleWiFi, .toggleDockHiding, .emptyTrash, .ejectDisks, .screenSaver, .emojiPicker]
+        check(controls.allSatisfy { SystemControl.allCases.contains($0) }, "the new Mac controls are offered")
+        let kinds: [MacroAction.Kind] = [.mouse, .webSearch, .runShortcut]
+        check(kinds.allSatisfy { MacroAction.Kind.allCases.contains($0) }, "the new actions are offered")
+        check(!Disks.ejectable.contains { $0.path == "/" }, "the Mac's own disk is never ejected")
+        let saved = [MacroAction(kind: .mouse, value: "drag 1,2 3,4"), MacroAction(kind: .runShortcut, value: "Focus"), .system(.ejectDisks)]
+        let back = (try? JSONDecoder().decode([MacroAction].self, from: JSONEncoder().encode(saved))) ?? []
+        checkEqual(back, saved, "new actions save and load")
     }
 }
