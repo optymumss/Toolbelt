@@ -1232,14 +1232,15 @@ final class RealUse: NSObject, NSApplicationDelegate {
         await pause(2)
         toolbelt?.activate()
         await pause(1.5)
-        await type("Sam")
+        // Lowercase: the typing helper only knows unshifted keys.
+        await type("sam")
         await pause(0.3)
         await press(CGKeyCode(kVK_Tab), [])
         await pause(0.3)
-        await type("Home")
+        await type("home")
         await pause(0.3)
         await press(CGKeyCode(kVK_Return), [])
-        check("several questions at once, each into its own variable", await waitUntil(5) { self.count("asked-Sam-Home") == 1 },
+        check("several questions at once, each into its own variable", await waitUntil(5) { self.count("asked-sam-home") == 1 },
               "markers: \(markers().filter { $0.hasPrefix("asked") })")
         await focus()
 

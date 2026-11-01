@@ -292,8 +292,7 @@ final class MacroRun {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        Self.focusSoon(field, in: alert.window)
-        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+        return Self.run(alert, focusing: field) == .alertFirstButtonReturn ? field.stringValue : nil
     }
 
     static func showAlert(_ message: String, _ buttons: [String]) -> String {
@@ -305,15 +304,18 @@ final class MacroRun {
         return buttons.indices.contains(index) ? buttons[index] : (buttons.first ?? "OK")
     }
 
-    /// Puts the cursor in `field` a moment after an alert has opened (its modal loop runs only modal-panel timers).
-    private static func focusSoon(_ field: NSTextField, in window: NSWindow) {
-        let timer = Timer(timeInterval: 0.15, repeats: false) { _ in
-            MainActor.assumeIsolated {
-                window.makeKeyAndOrderFront(nil)
-                window.makeFirstResponder(field)
-            }
+    /// Runs an alert with the cursor in `field`: the alert chooses its own first responder whenever its window
+    /// becomes key (as it opens, and again when you switch to it), so it's put back each time.
+    private static func run(_ alert: NSAlert, focusing field: NSTextField) -> NSApplication.ModalResponse {
+        let window = alert.window
+        let focus = { MainActor.assumeIsolated { _ = window.makeFirstResponder(field) } }
+        let observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: nil) { _ in
+            focus()
         }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        let timer = Timer(timeInterval: 0.15, repeats: false) { _ in focus() }
         RunLoop.current.add(timer, forMode: .modalPanel)
+        return alert.runModal()
     }
 
     static func askForPath(_ prompt: String, _ folder: Bool) -> String? {
@@ -341,8 +343,8 @@ final class MacroRun {
         for (box, next) in zip(boxes, boxes.dropFirst()) { box.nextKeyView = next }
         alert.window.initialFirstResponder = boxes.first
         // The alert picks its own first responder as it opens: put the cursor in the first box once it's showing.
-        if let first = boxes.first { Self.focusSoon(first, in: alert.window) }
-        return alert.runModal() == .alertFirstButtonReturn ? boxes.map(\.stringValue) : nil
+        guard let first = boxes.first else { return alert.runModal() == .alertFirstButtonReturn ? [] : nil }
+        return Self.run(alert, focusing: first) == .alertFirstButtonReturn ? boxes.map(\.stringValue) : nil
     }
 
     static func postNotification(_ title: String, _ message: String) {
