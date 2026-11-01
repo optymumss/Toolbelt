@@ -252,6 +252,8 @@ final class PromptPanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         super.init()
         panel.title = "Toolbelt"
         panel.level = .floating
+        // A panel normally hides when Toolbelt isn't the app in front; a question must stay until answered.
+        panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.delegate = self
 

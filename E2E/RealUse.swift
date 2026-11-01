@@ -1174,7 +1174,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
 
         // Apps
         await focus()
-        _ = run("/usr/bin/open", ["-a", "Finder"])
+        activateFinder()
         _ = await waitUntil(5) { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" }
         _ = await runMacro("Test app back")
         check("apps: switch back to the app used before", await waitUntil(5) { self.isFront && self.count("app-back") == 1 },
@@ -1373,6 +1373,11 @@ final class RealUse: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setData(png, forType: .png)
     }
 
+    /// Brings Finder to the front without opening a Finder window (which would stay over the screenshots taken later).
+    func activateFinder() {
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.activate()
+    }
+
     func kmExtraTests() async {
         say("— 0.32: calculations, sub-macros, tokens, pictures, clipboard filters, palettes, questions that don't block")
         _ = await runMacro("Test sub")
@@ -1407,7 +1412,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
         await focus()
         func palette() -> [Double]? { (toolbeltStatus()["floatingMenus"] as? [String: [Double]])?["Test palette"] }
         check("a palette shows while its app is in front", await waitUntil(5) { palette() != nil }, "menus: \(toolbeltStatus()["floatingMenus"] ?? "none")")
-        _ = run("/usr/bin/open", ["-a", "Finder"])
+        activateFinder()
         _ = await waitUntil(5) { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" }
         check("… and goes away when another app is in front", await waitUntil(5) { palette() == nil }, "menus: \(toolbeltStatus()["floatingMenus"] ?? "none")")
         await focus()
