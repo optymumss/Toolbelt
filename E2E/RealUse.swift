@@ -635,6 +635,9 @@ final class RealUse: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(copied, forType: .string)
         let history = data.appendingPathComponent("history.json")
         check("clipboard history keeps a copy", await waitUntil(6) { (try? String(contentsOf: history, encoding: .utf8))?.contains(copied) ?? false })
+        // Right after the macro typed (which pastes and then puts the old clipboard back): the copy stays.
+        check("a copy made just after typing isn't overwritten", NSPasteboard.general.string(forType: .string) == copied,
+              "clipboard now has “\(NSPasteboard.general.string(forType: .string) ?? "")”")
 
         await panelTest("⌘⇧V opens the clipboard history", key: CGKeyCode(kVK_ANSI_V), mods: [.leftShift, .leftCommand])
         await panelTest("⌥Space opens the launcher", key: CGKeyCode(kVK_Space), mods: [.leftOption])
