@@ -19,7 +19,6 @@ else
     ls -l "$DMG"; df -h "$(dirname "$DMG")"
     hdiutil verify "$DMG" 2>&1 | tail -20
     hdiutil imageinfo "$DMG" 2>&1 | head -30
-    xxd "$DMG" | head -4; tail -c 512 "$DMG" | xxd | head -4
 fi
 if ! hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"; then
     echo "✗ the disk image couldn't be opened"
