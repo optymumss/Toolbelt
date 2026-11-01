@@ -378,10 +378,10 @@ enum LargeText {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.title = "Toolbelt large text"
-        let box = NSVisualEffectView(frame: NSRect(origin: .zero, size: frame.size))
-        box.material = .hudWindow
-        box.state = .active
+        // Dark in light and dark mode alike, like macOS's own large type, so the white text is always readable.
+        let box = NSView(frame: NSRect(origin: .zero, size: frame.size))
         box.wantsLayer = true
+        box.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.78).cgColor
         box.layer?.cornerRadius = 24
         label.frame = NSRect(x: 40, y: 30, width: size.width, height: size.height)
         box.addSubview(label)

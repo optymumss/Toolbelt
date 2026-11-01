@@ -1257,6 +1257,13 @@ final class RealUse: NSObject, NSApplicationDelegate {
         if let png = picture.tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) })?.representation(using: .png, properties: [:]) {
             try? png.write(to: data.appendingPathComponent("desk.png"))
         }
+        let originalDesktop = NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
+        defer {
+            // Put the desktop back, so the screenshots taken later don't show the test picture.
+            if let originalDesktop {
+                for screen in NSScreen.screens { try? NSWorkspace.shared.setDesktopImageURL(originalDesktop, for: screen, options: [:]) }
+            }
+        }
         _ = await runMacro("Test desktop")
         check("change the desktop picture", await waitUntil(5) {
             self.count("desktop-set") == 1 && NSScreen.main.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }?.lastPathComponent == "desk.png"
