@@ -307,14 +307,22 @@ final class MacroRun {
     /// Runs an alert with the cursor in `field`: the alert chooses its own first responder whenever its window
     /// becomes key (as it opens, and again when you switch to it), so it's put back each time.
     private static func run(_ alert: NSAlert, focusing field: NSTextField) -> NSApplication.ModalResponse {
+        // Laid out first, so the box is in the window and can be its starting point.
+        alert.layout()
         let window = alert.window
-        let focus = { MainActor.assumeIsolated { _ = window.makeFirstResponder(field) } }
+        window.initialFirstResponder = field
+        // Moved there a moment after AppKit's own changes (as it opens, and whenever it becomes key again).
+        let focusSoon = {
+            let timer = Timer(timeInterval: 0.1, repeats: false) { _ in
+                MainActor.assumeIsolated { _ = window.makeFirstResponder(field) }
+            }
+            RunLoop.current.add(timer, forMode: .modalPanel)
+        }
         let observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: nil) { _ in
-            focus()
+            focusSoon()
         }
         defer { NotificationCenter.default.removeObserver(observer) }
-        let timer = Timer(timeInterval: 0.15, repeats: false) { _ in focus() }
-        RunLoop.current.add(timer, forMode: .modalPanel)
+        focusSoon()
         return alert.runModal()
     }
 
