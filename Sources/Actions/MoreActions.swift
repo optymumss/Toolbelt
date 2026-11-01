@@ -283,11 +283,19 @@ enum WiFiPower {
 
 enum Trash {
     /// Through Finder, so it's the same as Finder → Empty Trash. macOS asks once to let Toolbelt control Finder.
-    @MainActor
+    /// Runs in the background: Finder may need to start, and macOS may be asking for permission.
     static func empty() {
-        var error: NSDictionary?
-        NSAppleScript(source: "tell application \"Finder\" to empty trash")?.executeAndReturnError(&error)
-        if let error { NSLog("Toolbelt: couldn't empty the Trash: \(error)") }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application \"Finder\" to empty trash"]
+        let errors = Pipe()
+        process.standardError = errors
+        process.standardOutput = FileHandle.nullDevice
+        process.terminationHandler = { finished in
+            let text = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            if finished.terminationStatus != 0 { NSLog("Toolbelt: couldn't empty the Trash: \(text)") }
+        }
+        do { try process.run() } catch { NSLog("Toolbelt: couldn't empty the Trash: \(error)") }
     }
 }
 

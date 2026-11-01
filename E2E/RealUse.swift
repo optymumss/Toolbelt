@@ -177,10 +177,15 @@ final class RealUse: NSObject, NSApplicationDelegate {
         scroll.documentView = textView
         window.contentView?.addSubview(scroll)
         window.center()
+        homeFrame = window.frame
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(textView)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    /// Where the window starts; it's put back exactly here after the window-moving tests (the mouse
+    /// actions' places are worked out from it).
+    var homeFrame = NSRect.zero
 
     /// Brings this app and its text box to the front, and empties the text box.
     func focus(clear: Bool = true) async {
@@ -695,12 +700,24 @@ final class RealUse: NSObject, NSApplicationDelegate {
         return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// For failures: the pad's place on screen, and the window that's really at a point.
+    func whereIs(_ point: CGPoint) -> String {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        let top = list.first { info in
+            guard let bounds = (info[kCGWindowBounds as String] as? [String: Any]).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }) else { return false }
+            return bounds.contains(point) && (info[kCGWindowAlpha as String] as? Double ?? 1) > 0
+        }
+        let owner = top?[kCGWindowOwnerName as String] as? String ?? "nothing"
+        let layer = top?[kCGWindowLayer as String] as? Int ?? -1
+        return "at \(Int(point.x)),\(Int(point.y)) the top window is \(owner)'s (layer \(layer)); pad \(padPoint(0)) to \(padPoint(1)), window \(window.frame)"
+    }
+
     func actionTests() async {
         say("— 0.27: mouse actions, web search, Dock, disks, Trash")
         await focus()
         pad.log = []
         await press(CGKeyCode(kVK_ANSI_A), Self.testMods)
-        check("click at a place", await waitUntil(3) { self.pad.log.contains("left 1") }, "the pad saw \(pad.log)")
+        check("click at a place", await waitUntil(3) { self.pad.log.contains("left 1") }, "the pad saw \(pad.log); \(whereIs(padPoint(0.2)))")
         await pause(0.6)
         pad.log = []
         await press(CGKeyCode(kVK_ANSI_S), Self.testMods)
@@ -716,7 +733,8 @@ final class RealUse: NSObject, NSApplicationDelegate {
         moveMouse(to: padPoint(0.5))
         await pause(0.2)
         await press(CGKeyCode(kVK_ANSI_G), Self.testMods)
-        check("scroll where the pointer is", await waitUntil(3) { self.pad.log.contains { $0.hasPrefix("scroll") } }, "the pad saw \(pad.log)")
+        check("scroll where the pointer is", await waitUntil(3) { self.pad.log.contains { $0.hasPrefix("scroll") } },
+              "the pad saw \(pad.log); pointer at \(MouseDriver.pointer); \(whereIs(MouseDriver.pointer))")
         pad.log = []
         await press(CGKeyCode(kVK_ANSI_H), Self.testMods)
         check("drag from one place to another", await waitUntil(3) { self.pad.log.contains("drop") } && pad.dragDistance > 150,
@@ -767,7 +785,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
         try? FileManager.default.trashItem(at: file, resultingItemURL: &inTrash)
         let trashed = (inTrash as URL?).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         await press(CGKeyCode(kVK_ANSI_C), Self.testMods)
-        let emptied = trashed ? await waitUntil(10) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
+        let emptied = trashed ? await waitUntil(25) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
         check("empty the Trash", emptied, "put in the Trash: \(trashed)")
     }
 
@@ -870,7 +888,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
         await press(CGKeyCode(kVK_ANSI_9), Self.testMods)
         let right = await waitUntil(3) { abs(self.window.frame.maxX - visible.maxX) < 20 && abs(self.window.frame.width - visible.width / 2) < 30 }
         check("a trigger running “Right half” moves the window", right, "window \(window.frame), screen \(visible)")
-        window.center()
+        window.setFrame(homeFrame, display: true)
     }
 
     func mouseTests() async {
