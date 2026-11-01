@@ -13,11 +13,10 @@ struct ConditionWorld {
     var runningApps: () -> [String] = { [] }
     var fileExists: (String) -> Bool = { _ in false }
     var modifiers: () -> NSEvent.ModifierFlags = { [] }
-    /// The colour at a point (top-left based screen points).
     /// The colour at a point (top-left based screen points): as macOS's standard sRGB, and as the screen's own
     /// values (colour profiles can make these differ; either counts).
     var pixel: (CGPoint) async -> [RGBColor] = { _ in [] }
-    /// Where a picture (a PNG's path) is on screen, in points from the top left; nil if it isn't.
+    /// Where a picture (a PNG's path) is on screen (its middle, in points from the top left); nil if it isn't.
     var findOnScreen: (String) async -> CGPoint? = { _ in nil }
 
     static var live: ConditionWorld {
@@ -218,7 +217,8 @@ enum ScreenReader {
         let scale = Double(shot.width) / screen.width // pixels per point (2 on Retina screens)
         return await Task.detached(priority: .userInitiated) { () -> CGPoint? in
             guard let spot = ImageFinder.find(needle, in: haystack) else { return nil }
-            return CGPoint(x: Double(spot.x) / scale, y: Double(spot.y) / scale)
+            // The picture's middle, in points.
+            return CGPoint(x: (Double(spot.x) + Double(needle.width) / 2) / scale, y: (Double(spot.y) + Double(needle.height) / 2) / scale)
         }.value
     }
 }

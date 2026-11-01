@@ -432,6 +432,12 @@ struct StepListEditor: View {
         case .pauseUntil:
             step.condition = MacroCondition(left: "", test: .windowTitleContains, right: "")
             step.timeout = 30
+        case .readFile: step.name = "Text"
+        case .browserGet: step.text2 = BrowserPart.url.rawValue; step.name = "PageAddress"
+        case .alert: step.text = "Carry on?"; step.text2 = "Yes\nNo"; step.name = "Button"
+        case .askFolder: step.text = "Save where?"; step.name = "Folder"
+        case .askFile: step.text = "Which file?"; step.name = "File"
+        case .askSeveral: step.text = "Meeting"; step.text2 = "Name\nTime\nPlace"
         default: break
         }
         return step
@@ -583,6 +589,29 @@ struct StepEditor: View {
         case .repeatWhile:
             ConditionEditor(condition: $step.condition)
             AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
+        case .readFile:
+            TextField("File, e.g. ~/Desktop/notes.txt or %Trigger%", text: $step.text)
+            TextField("Keep the text in variable", text: $step.name)
+        case .browserGet:
+            Picker("Get", selection: $step.text2) {
+                ForEach(BrowserPart.allCases) { Text("The page's \($0.title)").tag($0.rawValue) }
+            }
+            if step.text2 == BrowserPart.js.rawValue { TextField("JavaScript, e.g. document.querySelector('h1').innerText", text: $step.text) }
+            TextField("Keep it in variable", text: $step.name)
+            Text("From the browser in front (Safari or Chrome); needs its “Allow JavaScript from Apple Events”.").font(.caption).foregroundStyle(.secondary)
+        case .alert:
+            TextField("Message (variables: %Name%)", text: $step.text)
+            TextEditor(text: $step.text2).frame(minHeight: 36, maxHeight: 70)
+            Text("One button per line; the first is the default (Return).").font(.caption).foregroundStyle(.secondary)
+            TextField("Keep the button clicked in variable", text: $step.name)
+        case .askFolder, .askFile:
+            TextField("Message", text: $step.text)
+            TextField("Keep the path in variable", text: $step.name)
+        case .askSeveral:
+            TextField("Title", text: $step.text)
+            TextEditor(text: $step.text2).frame(minHeight: 40, maxHeight: 90)
+            Text("One question per line; each answer goes into a variable named after it (spaces become _). Cancelling stops the macro.")
+                .font(.caption).foregroundStyle(.secondary)
         case .pauseUntil:
             ConditionEditor(condition: $step.condition)
             Stepper("Give up after \(MacroRun.seconds(step.timeout ?? 60))",

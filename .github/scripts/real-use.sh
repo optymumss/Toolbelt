@@ -99,21 +99,25 @@ for executable in "$APP/Contents/MacOS/Toolbelt" "$E2E/Contents/MacOS/ToolbeltE2
     defaults write "$APPROVALS" "$executable" -date "3024-01-01 00:00:00 +0000"
 done
 killall -HUP replayd 2>/dev/null
-# Toolbelt may control Finder (for "Empty the Trash"), as if you'd clicked OK when macOS asked.
-FINDER_REQ="$(codesign -d -r- /System/Library/CoreServices/Finder.app 2>&1 | sed -n 's/^designated => //p')"
-FINDER_HEX=""
-if [ -n "$FINDER_REQ" ] && echo "$FINDER_REQ" | csreq -r- -b /tmp/finder-req.bin 2>/dev/null; then
-    FINDER_HEX="$(xxd -p /tmp/finder-req.bin | tr -d '\n')"
-fi
-FINDER_ID="NULL"
-[ -n "$FINDER_HEX" ] && FINDER_ID="X'$FINDER_HEX'"
-for db in "$SYSTEM_DB" "$USER_DB"; do
-    for client in "local.personal.toolbelt|0" "/usr/bin/osascript|1"; do
-        sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified) VALUES ('kTCCServiceAppleEvents', '${client%|*}', ${client#*|}, 2, 3, 1, NULL, 0, 'com.apple.finder', $FINDER_ID, 0, $(date +%s));" \
-            || echo "Couldn't save the Finder permission in $db"
+# Toolbelt may control Finder (for "Empty the Trash") and Chrome (the browser actions), as if you'd
+# clicked OK when macOS asked.
+allow_control() { # bundle ID, app path
+    local req hex id="NULL"
+    req="$(codesign -d -r- "$2" 2>&1 | sed -n 's/^designated => //p')"
+    if [ -n "$req" ] && echo "$req" | csreq -r- -b /tmp/target-req.bin 2>/dev/null; then
+        hex="$(xxd -p /tmp/target-req.bin | tr -d '\n')"
+        [ -n "$hex" ] && id="X'$hex'"
+    fi
+    for db in "$SYSTEM_DB" "$USER_DB"; do
+        for client in "local.personal.toolbelt|0" "/usr/bin/osascript|1"; do
+            sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified) VALUES ('kTCCServiceAppleEvents', '${client%|*}', ${client#*|}, 2, 3, 1, NULL, 0, '$1', $id, 0, $(date +%s));" \
+                || echo "Couldn't save the permission to control $1 in $db"
+        done
     done
-done
-echo "Finder permission rows: $(sqlite3 "$USER_DB" "SELECT client, auth_value FROM access WHERE service='kTCCServiceAppleEvents';" 2>&1 | tr '\n' ' ')"
+}
+allow_control com.apple.finder /System/Library/CoreServices/Finder.app
+[ -d "/Applications/Google Chrome.app" ] && allow_control com.google.Chrome "/Applications/Google Chrome.app"
+echo "Control permission rows: $(sqlite3 "$USER_DB" "SELECT client, auth_value FROM access WHERE service='kTCCServiceAppleEvents';" 2>&1 | tr '\n' ' ')"
 # Make the test app the handler for its toolbelte2e: links (the web-search test's search site).
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$E2E"
 # Make macOS read the database again.

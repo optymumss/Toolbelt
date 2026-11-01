@@ -1,9 +1,27 @@
-# Toolbelt — v0.30
+# Toolbelt — v0.31
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.31: many more actions (like Keyboard Maestro's)
+- **Apps:** switch back to the app used before, quit or hide an app, hide every other app, show all.
+- **Front window:** move and resize to an exact place, minimise, close all the app's windows.
+- **Mouse:** click counted from the front window's corner, while holding ⌃⌥⇧⌘, or on a picture found on
+  screen (Screen Recording).
+- **Files:** copy or move into a folder, rename, move to the Trash, write or add text to a file, and a
+  step that reads a text file into a variable.
+- **Mac:** restart, shut down, log out (macOS asks first), set the volume exactly, volume and brightness
+  up or down a little, change the desktop picture, switch keyboard layout.
+- **Say text out loud, play a sound, show text large** in the middle of the screen.
+- **Safari / Chrome:** open an address in a new tab, click a link or a button by its text, fill in a form
+  field, run JavaScript, and a step that reads the page's address, title, selected text or text. Needs the
+  browser's "Allow JavaScript from Apple Events" (Safari: Develop menu; Chrome: View → Developer).
+- **Download a file** into a folder.
+- **New steps that ask you:** an alert with your own buttons, choose a folder, choose a file, and several
+  questions in one window (each answer goes into its own variable).
+- In a macro, these actions are waited for, and one that doesn't work counts as the step failing.
 
 ## What's new in 0.30: more triggers and conditions for macros
 - **New triggers:** the clipboard changes (optionally only when the copied text contains something; what

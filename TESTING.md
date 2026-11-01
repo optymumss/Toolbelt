@@ -27,7 +27,13 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    and (0.30) Toolbelt-starts and clipboard triggers (a macro's own copy not starting it again), a second
    window coming to the front and being renamed, conditions (an app running, a file existing, the window's
    title, the colour of a pink square, a pattern found on screen and an upside-down one not found, ⇧ held),
-   and "Pause until" waiting for a file and giving up after its time. Each check confirms the action really
+   and "Pause until" waiting for a file and giving up after its time;
+   and (0.31) files written, added to, copied, renamed, read and trashed, switching back to the previous app,
+   hiding / quitting / closing all of Calculator's windows, moving, resizing and minimising the front window,
+   a click counted from the window's corner and one on a picture found on screen, speech, large text, an alert
+   answered with Return, several questions typed in, the volume, the desktop picture, the keyboard layout, a
+   download from Toolbelt's web server, and Chrome (opened with JavaScript from Apple Events on) filling in a
+   form, clicking its button and a link, and reading the page's title and address. Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.
