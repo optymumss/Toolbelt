@@ -1291,8 +1291,18 @@ final class RealUse: NSObject, NSApplicationDelegate {
         <button onclick="document.title='sent '+document.getElementsByName('email')[0].value">Send</button></form>
         <a href="#next">Next page</a>
         """.utf8).write(to: page)
-        _ = run("/usr/bin/open", ["-na", chromeApp.path, "--args", "--user-data-dir=\(profile.path)", "--no-first-run",
-                                  "--no-default-browser-check", "about:blank"])
+        // Chrome's own program, started in the background (not waited for); no keychain or first-run windows.
+        let chrome = Process()
+        chrome.executableURL = chromeApp.appendingPathComponent("Contents/MacOS/Google Chrome")
+        chrome.arguments = ["--user-data-dir=\(profile.path)", "--no-first-run", "--no-default-browser-check",
+                            "--use-mock-keychain", "--password-store=basic", "about:blank"]
+        chrome.standardOutput = FileHandle.nullDevice
+        chrome.standardError = FileHandle.nullDevice
+        do { try chrome.run() } catch {
+            check("Chrome starts (for the browser actions)", false, "\(error)")
+            return
+        }
+        defer { if chrome.isRunning { chrome.terminate() } }
         _ = await waitUntil(15) { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty }
         await pause(4)
         _ = await get("http://127.0.0.1:\(Self.webPort)/run_macro?name=Test%20browser&input=\(page.absoluteString.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")&secret=\(Self.webSecret)")

@@ -292,6 +292,7 @@ final class MacroRun {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
+        RunLoop.current.perform(inModes: [.modalPanel]) { alert.window.makeFirstResponder(field) }
         return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
     }
 
@@ -328,6 +329,10 @@ final class MacroRun {
         alert.accessoryView = grid
         for (box, next) in zip(boxes, boxes.dropFirst()) { box.nextKeyView = next }
         alert.window.initialFirstResponder = boxes.first
+        // The alert picks its own first responder as it opens: put the cursor in the first box once it's showing.
+        if let first = boxes.first {
+            RunLoop.current.perform(inModes: [.modalPanel]) { alert.window.makeFirstResponder(first) }
+        }
         return alert.runModal() == .alertFirstButtonReturn ? boxes.map(\.stringValue) : nil
     }
 
