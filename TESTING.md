@@ -8,13 +8,24 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
 3. **Disk image** — `package.sh` packs `Toolbelt.dmg`; `.github/scripts/dmg.sh` opens it, checks the app,
    the Applications shortcut, the Chrome helper and the signature are inside, and starts the app from it.
    On `main` the DMG is attached to the GitHub release for its version.
-4. **Battery check** — `.github/scripts/energy.sh` leaves the app idle with every module on (and again
+4. **Real-use tests** — `.github/scripts/real-use.sh` builds a test app (`E2E/RealUse.swift`), gives it
+   and Toolbelt their permissions on GitHub's Mac, and lets it use Toolbelt like a person: shortcuts
+   (plain, held, long hold, quick release, repeat, right ⌘ only, keyboard layout), conditions and
+   activation groups, ⌥ double tap, typed sequences, mouse button 4, right-button drawings, pretend
+   trackpad touches (GitHub's Macs have no trackpad), snippets, a macro, the clipboard history,
+   the launcher, the web server, window moves and a screenshot. Each check confirms the action really
+   happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
+   of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
+   only made after both pass.
+5. **Battery check** — `.github/scripts/energy.sh` leaves the app idle with every module on (and again
    after opening every Settings tab) and fails if it uses more than 1% of a CPU core or wakes the
    processor more than 15 times a second.
-5. **Screenshots** — `.github/scripts/screenshots.sh` opens every screen, fails if the app crashes, and
+6. **Screenshots** — `.github/scripts/screenshots.sh` opens every screen, fails if the app crashes, and
    publishes the pictures to the `ci-screenshots` branch, where they're checked by eye.
 
-Some things need a person: they depend on hardware or on permissions a test machine can't grant.
+Some things need a person: they depend on hardware a test machine doesn't have (a real trackpad,
+Force Click, a Magic Mouse, brightness and keyboard light, a microphone, Wi-Fi, a second display,
+sleep and lock).
 They're marked **Manual** below and are in the checklist that comes with each release.
 
 ## Feature → test

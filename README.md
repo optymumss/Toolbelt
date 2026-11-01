@@ -1,9 +1,16 @@
-# Toolbelt — v0.24
+# Toolbelt — v0.25
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.25: tested like a person uses it
+Nothing changes on your Mac: this version adds tests. Before each release, GitHub's Mac now starts the
+real Toolbelt and uses it with pretend key presses, mouse clicks and trackpad touches: shortcuts held,
+tapped and repeated, snippets, macros, the clipboard, the launcher, window moves, screenshots and the web
+server. It then uses it nonstop for 20 minutes to check it never crashes, misses a trigger or keeps using
+more memory. A release is only made when all of that passes.
 
 ## What's new in 0.24: key up, long hold, repeat, left/right keys, more trackpad gestures
 In the Triggers window:

@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -75,3 +75,11 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
      fails if it crashes, and publishes screenshots to the `ci-screenshots` branch. Fetch them
      (`git fetch origin ci-screenshots`, then `git show FETCH_HEAD:<name>.png`) and look at them.
      Add a `TOOLBELT_SHOW` case and a screenshot for each new window or panel.
+  4. runs `.github/scripts/real-use.sh` — builds `E2E/RealUse.swift` (with all sources except App.swift)
+     into `ToolbeltE2E.app`, writes TCC grants for both apps (SIP is off on GitHub's Macs), opens it with
+     `open` (so each app is its own "responsible process"), and it starts Toolbelt with `TOOLBELT_E2E=1`
+     and drives it with CGEvents and pretend touches (`RealUseHooks`, a distributed notification into
+     `MultitouchReader.injectForTesting`). Actions are checked through shell actions writing to
+     `markers.txt`, the test window's text and frame, and Toolbelt's windows. Every PR; `stability 20`
+     on full runs. Add a real-use check for each new trigger or action. Test shortcuts use ⌃⌥⇧
+     (⌃⌥⌘ + digits are saved layouts).
