@@ -287,13 +287,18 @@ enum Trash {
     static func empty() {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", "tell application \"Finder\" to empty trash"]
+        // Waits for Finder to start if it isn't running, and for it to finish.
+        process.arguments = ["-e", "with timeout of 120 seconds", "-e", "tell application \"Finder\" to empty trash", "-e", "end timeout"]
         let errors = Pipe()
         process.standardError = errors
         process.standardOutput = FileHandle.nullDevice
         process.terminationHandler = { finished in
             let text = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            if finished.terminationStatus != 0 { NSLog("Toolbelt: couldn't empty the Trash: \(text)") }
+            if finished.terminationStatus != 0 {
+                NSLog("Toolbelt: couldn't empty the Trash: \(text)")
+            } else {
+                NSLog("Toolbelt: Finder emptied the Trash")
+            }
         }
         do { try process.run() } catch { NSLog("Toolbelt: couldn't empty the Trash: \(error)") }
     }

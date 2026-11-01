@@ -156,7 +156,7 @@ if [ "$CRASHES_AFTER" -gt "$CRASHES_BEFORE" ]; then
 fi
 if [ "$failed" -ne 0 ]; then
     echo "Toolbelt's log:"
-    log show --last 15m --predicate 'process == "Toolbelt"' --style compact 2>/dev/null | grep -i "toolbelt:" | tail -30
+    log show --last 15m --predicate 'process == "Toolbelt"' --style compact 2>/dev/null | grep -i "toolbelt:\|finder" | tail -40
 fi
 rm -rf "$DATA_DIR"
 exit "$failed"
