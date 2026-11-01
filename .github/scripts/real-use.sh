@@ -159,4 +159,13 @@ if true; then
     log show --last 15m --predicate 'process == "Toolbelt"' --style compact 2>/dev/null | grep -i "toolbelt:\|finder" | tail -40
 fi
 rm -rf "$DATA_DIR"
+
+# Take back the permissions given above, so later steps (the screenshots) see the Mac as it was. Left in
+# place, macOS asks to confirm Toolbelt's screen recording over the screenshots.
+for db in "$SYSTEM_DB" "$USER_DB"; do
+    sudo sqlite3 "$db" "DELETE FROM access WHERE client IN ('local.personal.toolbelt', 'local.toolbelt.e2e', '$APP/Contents/MacOS/Toolbelt', '$E2E/Contents/MacOS/ToolbeltE2E');" 2>/dev/null
+done
+sudo killall tccd 2>/dev/null
+killall tccd 2>/dev/null
+pkill -x Toolbelt 2>/dev/null
 exit "$failed"
