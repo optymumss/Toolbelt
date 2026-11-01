@@ -18,7 +18,10 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    quitting puts the keys back), screen lock and unlock, a disk appearing and ejected, and idle / used again;
    and (0.27) click, double-, right- and middle-click at a place, scroll, drag and moving the pointer (on a
    pad in the test window that notes what it gets), searching the web for selected text (to a test search
-   address the test app answers) with the clipboard kept, hiding the Dock, ejecting disks and emptying the Trash. Each check confirms the action really
+   address the test app answers) with the clipboard kept, hiding the Dock, ejecting disks and emptying the Trash;
+   and (0.28) a trigger in a preset staying off until an action switches to it, a floating menu shown by an
+   action whose button runs and closes it, and a menu-bar item showing its script's output and running its
+   action when clicked. Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.

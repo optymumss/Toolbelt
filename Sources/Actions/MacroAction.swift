@@ -10,6 +10,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case toolbelt, openApp, open, pressKeys, typeText, system, menuItem, resolution, audioOutput
         case setClipboard, pasteNamed, macro, shell, appleScript, javaScript, showHUD
         case mouse, webSearch, runShortcut
+        case floatingMenu, switchPreset
 
         var id: String { rawValue }
 
@@ -34,6 +35,8 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .mouse: return "Use the mouse (click, scroll, drag…)"
             case .webSearch: return "Search the web for the selected text"
             case .runShortcut: return "Run a shortcut from the Shortcuts app"
+            case .floatingMenu: return "Show / hide a floating menu"
+            case .switchPreset: return "Switch to a preset of triggers"
             }
         }
     }
@@ -70,6 +73,8 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .mouse: return MouseCommand(text: value).summary
         case .webSearch: return "Search the web for the selection"
         case .runShortcut: return "Run shortcut “\(value)”"
+        case .floatingMenu: return "Show / hide floating menu “\(value)”"
+        case .switchPreset: return value.isEmpty ? "Switch to the next preset" : "Switch to preset “\(value)”"
         }
     }
 }
@@ -145,6 +150,8 @@ final class ActionRunner {
     /// Set by the modules that own these things.
     static var pasteNamedClipboard: ((String) -> Void)?
     static var runMacro: ((String) -> Void)?
+    static var toggleFloatingMenu: ((String) -> Void)?
+    static var switchPreset: ((String) -> Void)?
 
     init(shortcuts: ShortcutCenter) {
         self.shortcuts = shortcuts
@@ -196,6 +203,10 @@ final class ActionRunner {
         case .runShortcut:
             guard !action.value.isEmpty else { return }
             Self.runScript("/usr/bin/shortcuts", ["run", action.value])
+        case .floatingMenu:
+            Self.toggleFloatingMenu?(action.value)
+        case .switchPreset:
+            Self.switchPreset?(action.value)
         }
     }
 
@@ -482,6 +493,10 @@ struct ActionEditor: View {
                 TextField("Search address, %s for the text (empty for Google)", text: $action.value)
                 Text("Copies the selected text in the app in front, then opens the search. Your clipboard is put back.")
                     .font(.caption).foregroundStyle(.secondary)
+            case .floatingMenu:
+                TextField("Floating menu name (Settings → Automation)", text: $action.value)
+            case .switchPreset:
+                TextField("Preset name (empty: the next one in turn)", text: $action.value)
             case .runShortcut:
                 TextField("Shortcut name, as in the Shortcuts app", text: $action.value)
                 Text("For example a shortcut that turns a Focus (like Do Not Disturb) on or off: make it once in the Shortcuts app.")

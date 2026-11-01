@@ -361,6 +361,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
     static let webPort = 12399
     static let webSecret = "e2e-secret-4821"
     static let frontCondition = ConditionGroup(mode: .all, items: [.rule(ConditionRule(field: .appID, op: .is, value: "local.toolbelt.e2e"))])
+    let workPreset = TriggerPreset(name: "Work")
     let frontGroup = ActivationGroup(name: "Test app in front", condition: RealUse.frontCondition)
     let neverGroup = ActivationGroup(name: "Never", condition: ConditionGroup(mode: .all, items: [.rule(ConditionRule(field: .appName, op: .is, value: "No such app"))]))
 
@@ -454,7 +455,18 @@ final class RealUse: NSObject, NSApplicationDelegate {
             rule(shortcut(kVK_ANSI_Z), .system(.ejectDisks)),
             rule(shortcut(kVK_ANSI_X), .system(.toggleDockHiding)),
             rule(shortcut(kVK_ANSI_C), mark("trashpressed")) { $0.moreActions = [.system(.emptyTrash)] },
+            // 0.28: presets, a floating menu.
+            rule(shortcut(kVK_ANSI_Q), mark("work")) { $0.presetID = self.workPreset.id },
+            rule(shortcut(kVK_ANSI_W), MacroAction(kind: .switchPreset, value: "Work")),
+            rule(shortcut(kVK_ANSI_E), MacroAction(kind: .floatingMenu, value: "Test menu")),
         ]
+        try JSONEncoder().encode([workPreset]).write(to: data.appendingPathComponent("presets.json"), options: .atomic)
+        Prefs.activePreset = nil
+        let menu = FloatingMenu(name: "Test menu", buttons: [FloatingButton(title: "Press me", actions: [mark("floatbutton")])],
+                                x: 300, y: 250, columns: 1, closeAfterClick: true)
+        let item = MenuBarItem(title: "E2E", script: "echo E2E-$((6*7))", every: 5, actions: [mark("menubar")])
+        try JSONEncoder().encode(PanelStore.Saved(menus: [menu], menuBarItems: [item]))
+            .write(to: data.appendingPathComponent("panels.json"), options: .atomic)
         try JSONEncoder().encode(rules).write(to: data.appendingPathComponent("gestures.json"), options: .atomic)
         try JSONEncoder().encode([frontGroup, neverGroup]).write(to: data.appendingPathComponent("trigger-groups.json"), options: .atomic)
 
@@ -573,6 +585,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await moduleTests()
             await moreTests()
             await actionTests()
+            await panelTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -793,6 +806,49 @@ final class RealUse: NSObject, NSApplicationDelegate {
                 + "Finder running: \(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty ? "no" : "yes"); "
                 + "the Trash holds \((try? FileManager.default.contentsOfDirectory(atPath: NSHomeDirectory() + "/.Trash"))?.count ?? -1) items, "
                 + "the file is at \((inTrash as URL?)?.path ?? "?")")
+    }
+
+    func click(_ point: CGPoint) async {
+        moveMouse(to: point)
+        await pause(0.1)
+        mouse(.leftMouseDown, at: point, button: .left)
+        await pause(0.05)
+        mouse(.leftMouseUp, at: point, button: .left)
+    }
+
+    func panelTests() async {
+        say("— 0.28: presets, floating menus, menu-bar items")
+        await focus()
+        await press(CGKeyCode(kVK_ANSI_Q), Self.testMods)
+        await pause(1)
+        check("a trigger in the Work preset is off while Work isn't in use", count("work") == 0, "ran \(count("work")) times")
+        await press(CGKeyCode(kVK_ANSI_W), Self.testMods)
+        let switched = await waitUntil(3) { self.toolbeltStatus()["activePreset"] as? String == "Work" }
+        check("an action switches to the Work preset", switched, "preset now “\(toolbeltStatus()["activePreset"] ?? "")”")
+        await pause(0.5)
+        await press(CGKeyCode(kVK_ANSI_Q), Self.testMods)
+        check("… and then the Work trigger works", await waitUntil(3) { self.count("work") == 1 }, "ran \(count("work")) times")
+
+        func menuFrame() -> [Double]? { (toolbeltStatus()["floatingMenus"] as? [String: [Double]])?["Test menu"] }
+        await press(CGKeyCode(kVK_ANSI_E), Self.testMods)
+        let shown = await waitUntil(3) { menuFrame() != nil }
+        check("an action shows a floating menu", shown, "status: \(toolbeltStatus()["floatingMenus"] ?? "none")")
+        if let frame = menuFrame(), frame.count == 4 {
+            await click(CGPoint(x: frame[0] + frame[2] / 2, y: frame[1] + frame[3] / 2))
+            check("clicking its button runs the button's action", await waitUntil(3) { self.count("floatbutton") == 1 },
+                  "ran \(count("floatbutton")) times; \(whereIs(CGPoint(x: frame[0] + frame[2] / 2, y: frame[1] + frame[3] / 2)))")
+            check("… and it closes after the click", await waitUntil(3) { menuFrame() == nil }, "still showing")
+        }
+
+        func menuBarItem() -> [String: Any]? { (toolbeltStatus()["menuBarItems"] as? [[String: Any]])?.first }
+        let titled = await waitUntil(10) { menuBarItem()?["title"] as? String == "E2E-42" }
+        check("a menu-bar item shows its script's output", titled, "item: \(menuBarItem().map { "\($0)" } ?? "none")")
+        if let frame = menuBarItem()?["frame"] as? [Double], frame.count == 4 {
+            await click(CGPoint(x: frame[0] + frame[2] / 2, y: frame[1] + frame[3] / 2))
+            check("clicking the menu-bar item runs its action", await waitUntil(3) { self.count("menubar") == 1 }, "ran \(count("menubar")) times")
+            keyEvent(CGKeyCode(kVK_Escape), down: true, flags: 0)
+            keyEvent(CGKeyCode(kVK_Escape), down: false, flags: 0)
+        }
     }
 
     func macEventTests() async {

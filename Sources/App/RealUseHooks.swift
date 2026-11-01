@@ -16,6 +16,8 @@ enum RealUseHooks {
     private static var observer: NSObjectProtocol?
     /// Toolbelt's shortcuts that couldn't be registered because something else has them.
     private static var takenShortcuts: () -> [String] = { [] }
+    /// More things for the status file, from the modules (floating menus, menu-bar items, the preset in use).
+    static var extraStatus: [String: () -> Any] = [:]
 
     static func start(takenShortcuts: @escaping () -> [String] = { [] }) {
         guard isOn else { return }
@@ -30,13 +32,15 @@ enum RealUseHooks {
     }
 
     static func writeStatus() {
-        let status: [String: Any] = [
+        guard isOn else { return }
+        var status: [String: Any] = [
             "pid": Int(ProcessInfo.processInfo.processIdentifier),
             "accessibility": Permission.accessibility.isGranted,
             "inputMonitoring": Permission.inputMonitoring.isGranted,
             "screenRecording": Permission.screenRecording.isGranted,
             "takenShortcuts": takenShortcuts(),
         ]
+        for (key, value) in extraStatus { status[key] = value() }
         if let data = try? JSONSerialization.data(withJSONObject: status, options: [.sortedKeys]) {
             try? data.write(to: SettingsStore.folder.appendingPathComponent("e2e-status.json"), options: .atomic)
         }

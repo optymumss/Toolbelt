@@ -55,6 +55,7 @@ enum ToolbeltTests {
         t.group("Real-use test helpers: pretend trackpad touches", RealUseHelperTests.run)
         t.group("Rotate, edge swipes, TipSwipe, mouse wheel, screen corners, keys and Mac events", MoreBTTTests.run)
         t.group("Mouse actions, web search, Shortcuts, Bluetooth, Wi-Fi, Dock, Trash, disks", MoreActionTests.run)
+        t.group("Presets, floating menus and menu-bar items", PanelTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4031,5 +4032,53 @@ enum MoreActionTests {
         let saved = [MacroAction(kind: .mouse, value: "drag 1,2 3,4"), MacroAction(kind: .runShortcut, value: "Focus"), .system(.ejectDisks)]
         let back = (try? JSONDecoder().decode([MacroAction].self, from: JSONEncoder().encode(saved))) ?? []
         checkEqual(back, saved, "new actions save and load")
+    }
+}
+
+@MainActor
+enum PanelTests {
+    static func run() {
+        let work = TriggerPreset(name: "Work"), home = TriggerPreset(name: "Home")
+        var inWork = GestureRule(gesture: .mouseButton(5), action: .system(.mute))
+        inWork.presetID = work.id
+        let everywhere = GestureRule(gesture: .mouseButton(6), action: .system(.mute))
+        check(TriggerPreset.allows(everywhere, active: nil) && TriggerPreset.allows(everywhere, active: home.id),
+              "a trigger in no preset always works")
+        check(TriggerPreset.allows(inWork, active: work.id), "a trigger in Work works while Work is in use")
+        check(!TriggerPreset.allows(inWork, active: home.id) && !TriggerPreset.allows(inWork, active: nil), "…and not otherwise")
+
+        let store = GestureStore()
+        store.presets = [work, home]
+        store.activePreset = nil
+        store.switchPreset(named: "home")
+        checkEqual(store.activePreset, home.id, "switching to a preset by name (any case)")
+        store.switchPreset(named: "")
+        checkEqual(store.activePreset, work.id, "no name: the next preset in turn, round to the first")
+        checkEqual(Prefs.activePreset, work.id, "the preset in use is remembered")
+        checkEqual(GestureStore().presets.map(\.name), ["Work", "Home"], "presets are saved")
+        store.presets = []
+        store.activePreset = nil
+
+        checkEqual(MenuBarItem.shown("21.5 °C\nmore", fallback: "★"), "21.5 °C", "a menu-bar item shows its script's first line")
+        checkEqual(MenuBarItem.shown("   \n", fallback: "★"), "★", "or its title when the script prints nothing")
+        checkEqual(MenuBarItem.shown(String(repeating: "x", count: 80), fallback: "").count, 40, "at most 40 characters")
+
+        let panels = PanelStore()
+        let menu = FloatingMenu(name: "Favourites", buttons: [FloatingButton(title: "Mute", symbol: "speaker.slash", actions: [.system(.mute)])])
+        panels.menus = [menu]
+        panels.menuBarItems = [MenuBarItem(title: "★", script: "date", every: 30)]
+        let reloaded = PanelStore()
+        checkEqual(reloaded.menus, [menu], "floating menus are saved")
+        checkEqual(reloaded.menuBarItems.first?.script, "date", "menu-bar items are saved")
+        panels.menus = []
+        panels.menuBarItems = []
+
+        let kinds: [MacroAction.Kind] = [.floatingMenu, .switchPreset]
+        check(kinds.allSatisfy { MacroAction.Kind.allCases.contains($0) }, "the floating-menu and preset actions are offered")
+        checkEqual(MacroAction(kind: .switchPreset, value: "").summary, "Switch to the next preset", "described in plain words")
+        var saved = GestureRule(gesture: .mouseButton(7), action: .system(.mute))
+        saved.presetID = work.id
+        let back = try? JSONDecoder().decode(GestureRule.self, from: JSONEncoder().encode(saved))
+        checkEqual(back?.presetID, work.id, "a trigger's preset is saved")
     }
 }

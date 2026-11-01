@@ -1,9 +1,21 @@
-# Toolbelt — v0.27
+# Toolbelt — v0.28
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.28: floating menus, menu-bar items and presets
+- **Floating menus** (Settings → Automation): your own panels of buttons that stay above other windows,
+  anywhere on screen (drag one by its background). Each button runs an action. Show or hide one from any
+  trigger with "Show / hide a floating menu", for example by pushing the pointer into a screen corner.
+  It can close after a click, open at the pointer, or appear when Toolbelt starts.
+- **Menu-bar items** (Settings → Automation): your own items in the menu bar. A fixed title, or the first
+  line a shell script prints, refreshed every so often (for example `date +%H:%M`, a temperature, a to-do
+  count). Clicking one runs its action.
+- **Presets** (top of the Triggers window): named sets of triggers, such as Work and Home. Put a trigger in
+  a preset under its settings; it then only works while that preset is in use. Triggers in no preset
+  always work. Switch from the Triggers window or with the action "Switch to a preset of triggers".
 
 ## What's new in 0.27: more actions (like BetterTouchTool)
 Any trigger or macro can now also:
