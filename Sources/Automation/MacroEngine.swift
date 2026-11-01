@@ -10,6 +10,10 @@ final class MacroRun {
     /// Asks for text or a choice; the tests answer instead of a person.
     var ask: (_ prompt: String, _ options: [String]?) -> String? = MacroRun.askPerson
     var notify: (_ title: String, _ message: String) -> Void = MacroRun.postNotification
+    /// What conditions ask about the Mac; the tests give their own answers.
+    var world: ConditionWorld = .live
+    /// How often "Pause until" looks again (screen tests look less often: each look takes a screenshot).
+    var pauseCheckEvery: Double = 0.25
     private var stopped = false
     /// Every step that ran, in order (switched-off steps are skipped), and the ones that failed.
     private(set) var log: [String] = []
@@ -133,7 +137,8 @@ final class MacroRun {
         case .notify:
             notify(expand(step.text2.isEmpty ? "Toolbelt" : step.text2), expand(step.text))
         case .ifThen:
-            await run(isTrue(step.condition) ? step.steps : step.elseSteps)
+            let yes = await isTrue(step.condition)
+            await run(yes ? step.steps : step.elseSteps)
         case .repeatTimes:
             for index in 0..<min(Int(step.number), Self.loopLimit) {
                 if stopped { return }
@@ -144,13 +149,24 @@ final class MacroRun {
             // Each loop counts from the start, whatever an earlier loop left in %Index%.
             variables["Index"] = "0"
             var count = 0
-            while isTrue(step.condition), count < Self.loopLimit, !stopped {
+            while count < Self.loopLimit, !stopped, await isTrue(step.condition) {
                 count += 1
                 variables["Index"] = String(count)
                 await run(step.steps)
             }
         case .stop:
             stopped = true
+        case .pauseUntil:
+            let limit = step.timeout ?? 60
+            let start = Date()
+            let every = step.condition.test.readsScreen ? max(1, pauseCheckEvery) : pauseCheckEvery
+            while !stopped, !(await isTrue(step.condition)) {
+                if Date().timeIntervalSince(start) >= limit {
+                    failed(step, "it waited \(Self.seconds(limit)) and it didn't happen")
+                    return
+                }
+                try? await Task.sleep(nanoseconds: UInt64(every * 1_000_000_000))
+            }
         }
     }
 
@@ -204,9 +220,8 @@ final class MacroRun {
         }
     }
 
-    func isTrue(_ condition: MacroCondition) -> Bool {
-        condition.isTrue(left: expand(condition.left), right: expand(condition.right),
-                         frontApp: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    func isTrue(_ condition: MacroCondition) async -> Bool {
+        await condition.isTrue(left: expand(condition.left), right: expand(condition.right), world: world)
     }
 
     // MARK: Asking and telling

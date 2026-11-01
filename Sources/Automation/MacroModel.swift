@@ -37,6 +37,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case powerConnected, powerDisconnected, batteryBelow
         case usbConnected, usbDisconnected, bluetoothConnected, bluetoothDisconnected, diskMounted, diskUnmounted
         case idle, activeAgain
+        case clipboardChanged, toolbeltStarts, atLogin, windowChanged, windowTitleChanged, calledByMacro
 
         var id: String { rawValue }
 
@@ -75,6 +76,12 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             case .diskUnmounted: return "Disk ejected"
             case .idle: return "Not used for a while (idle)"
             case .activeAgain: return "Used again after being idle"
+            case .clipboardChanged: return "Clipboard changes"
+            case .toolbeltStarts: return "Toolbelt starts"
+            case .atLogin: return "At login"
+            case .windowChanged: return "Front window changes"
+            case .windowTitleChanged: return "Front window's title changes"
+            case .calledByMacro: return "Run by another macro"
             }
         }
     }
@@ -115,6 +122,9 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             return kind == .idle ? "Idle for \(number) minute\(number == 1 ? "" : "s")" : "Used again after \(number) idle minute\(number == 1 ? "" : "s")"
         case .usbConnected, .usbDisconnected, .bluetoothConnected, .bluetoothDisconnected, .diskMounted, .diskUnmounted:
             return text.isEmpty ? kind.title : kind.title + " (“\(text)”)"
+        case .clipboardChanged: return text.isEmpty ? "Clipboard changes" : "Copied text containing “\(text)”"
+        case .windowChanged: return text.isEmpty ? kind.title : "Front window changes (title contains “\(text)”)"
+        case .windowTitleChanged: return text.isEmpty ? kind.title : "Front window's title changes to one containing “\(text)”"
         default: return kind.title
         }
     }
@@ -150,6 +160,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
         case action, script, pause, setVariable, setClipboard, textFilter, askInput, pickFromList, notify
         case ifThen, repeatTimes, repeatWhile, stop
+        case pauseUntil
 
         var id: String { rawValue }
 
@@ -168,6 +179,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .repeatTimes: return "Repeat a number of times"
             case .repeatWhile: return "Repeat while…"
             case .stop: return "Stop the macro"
+            case .pauseUntil: return "Pause until…"
             }
         }
 
@@ -193,7 +205,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
     /// Your own note about the step, and a colour to pick it out.
     var note: String? = nil
     var color: StepColor? = nil
-    /// Scripts: seconds to wait before giving up (nil: no limit).
+    /// Scripts: seconds to wait before giving up (nil: no limit). Pause until: how long to wait (nil: a minute).
     var timeout: Double? = nil
     /// What happens when the step fails (a script ending with an error, or running out of time).
     var onFailure: FailureMode? = nil
@@ -216,6 +228,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case .repeatTimes: return "Repeat \(Int(number)) times"
         case .repeatWhile: return "Repeat while \(condition.summary)"
         case .stop: return "Stop"
+        case .pauseUntil: return "Pause until \(condition.summary)"
         }
     }
 }
@@ -278,6 +291,8 @@ enum TextFilter: String, Codable, CaseIterable, Identifiable {
 struct MacroCondition: Codable, Equatable {
     enum Test: String, Codable, CaseIterable, Identifiable {
         case equals, notEquals, contains, notContains, isEmpty, isNotEmpty, matches, greaterThan, lessThan, frontAppIs
+        case windowTitleContains, appRunning, appNotRunning, fileExists, fileMissing, modifiersHeld
+        case pixelColorIs, screenShows, screenDoesNotShow
 
         var id: String { rawValue }
 
@@ -293,10 +308,50 @@ struct MacroCondition: Codable, Equatable {
             case .greaterThan: return "is more than"
             case .lessThan: return "is less than"
             case .frontAppIs: return "(the app in front) is"
+            case .windowTitleContains: return "(the front window's title) contains"
+            case .appRunning: return "(this app) is running"
+            case .appNotRunning: return "(this app) is not running"
+            case .fileExists: return "(this file or folder) exists"
+            case .fileMissing: return "(this file or folder) doesn't exist"
+            case .modifiersHeld: return "(these keys) are held down"
+            case .pixelColorIs: return "(the screen at x,y) has the colour"
+            case .screenShows: return "(the screen) shows the picture"
+            case .screenDoesNotShow: return "(the screen) doesn't show the picture"
             }
         }
 
         var needsValue: Bool { self != .isEmpty && self != .isNotEmpty }
+
+        /// Whether the left field is used: tests about the Mac (the app in front, running apps, keys,
+        /// the screen) have no "left" text, except the point for a pixel's colour.
+        var usesLeft: Bool {
+            switch self {
+            case .frontAppIs, .windowTitleContains, .appRunning, .appNotRunning, .modifiersHeld, .screenShows, .screenDoesNotShow: return false
+            default: return true
+            }
+        }
+
+        /// Whether the answer depends on the screen (needs Screen Recording).
+        var readsScreen: Bool { self == .pixelColorIs || self == .screenShows || self == .screenDoesNotShow }
+
+        var leftPlaceholder: String {
+            switch self {
+            case .fileExists, .fileMissing: return "Path, e.g. ~/Desktop/report.pdf"
+            case .pixelColorIs: return "x,y from the top left, e.g. 200,300"
+            default: return "Text or %Variable%"
+            }
+        }
+
+        var rightPlaceholder: String {
+            switch self {
+            case .frontAppIs, .appRunning, .appNotRunning: return "App name"
+            case .windowTitleContains: return "Part of the title"
+            case .modifiersHeld: return "e.g. ⌘⌥ or command option"
+            case .pixelColorIs: return "Colour, e.g. #FF8800"
+            case .screenShows, .screenDoesNotShow: return "Picture file (PNG)"
+            default: return "Value"
+            }
+        }
     }
 
     /// Usually a variable, like %Clipboard%.
@@ -305,10 +360,22 @@ struct MacroCondition: Codable, Equatable {
     var right = ""
 
     var summary: String {
-        test == .frontAppIs ? "the app in front is \(right)" : "\(left) \(test.title)\(test.needsValue ? " “\(right)”" : "")"
+        switch test {
+        case .frontAppIs: return "the app in front is \(right)"
+        case .windowTitleContains: return "the front window's title contains “\(right)”"
+        case .appRunning: return "\(right) is running"
+        case .appNotRunning: return "\(right) is not running"
+        case .fileExists: return "\(left) exists"
+        case .fileMissing: return "\(left) doesn't exist"
+        case .modifiersHeld: return "\(ModifierNames.display(ModifierNames.parse(right))) held down"
+        case .pixelColorIs: return "the screen at \(left) is \(right)"
+        case .screenShows: return "the screen shows \((right as NSString).lastPathComponent)"
+        case .screenDoesNotShow: return "the screen doesn't show \((right as NSString).lastPathComponent)"
+        default: return "\(left) \(test.title)\(test.needsValue ? " “\(right)”" : "")"
+        }
     }
 
-    /// `left` and `right` have already had their variables filled in.
+    /// `left` and `right` have already had their variables filled in. Only the text tests and the app in front.
     func isTrue(left: String, right: String, frontApp: String?) -> Bool {
         switch test {
         case .equals: return left == right
@@ -322,8 +389,44 @@ struct MacroCondition: Codable, Equatable {
         case .lessThan: return (Double(left) ?? 0) < (Double(right) ?? 0)
         case .frontAppIs:
             guard let frontApp else { return false }
-            return frontApp == right || AppNames.name(of: frontApp).localizedCaseInsensitiveCompare(right) == .orderedSame
+            return Self.sameApp(frontApp, right)
+        default: return false
         }
+    }
+
+    /// Every test, asking `world` about the Mac when the test needs it.
+    func isTrue(left: String, right: String, world: ConditionWorld) async -> Bool {
+        switch test {
+        case .windowTitleContains:
+            guard let title = world.windowTitle() else { return false }
+            return right.isEmpty || title.localizedCaseInsensitiveContains(right)
+        case .appRunning, .appNotRunning:
+            let running = world.runningApps().contains { Self.sameApp($0, right) }
+            return running == (test == .appRunning)
+        case .fileExists, .fileMissing:
+            let exists = !left.isEmpty && world.fileExists((left as NSString).expandingTildeInPath)
+            return exists == (test == .fileExists)
+        case .modifiersHeld:
+            let wanted = ModifierNames.parse(right)
+            return !wanted.isEmpty && world.modifiers().intersection(ModifierNames.all).isSuperset(of: wanted)
+        case .pixelColorIs:
+            guard let point = ScreenPoint.parse(left), let wanted = RGBColor(hex: right) else { return false }
+            let seen = await world.pixel(point)
+            return seen.contains { $0.isClose(to: wanted) }
+        case .screenShows, .screenDoesNotShow:
+            let path = (right as NSString).expandingTildeInPath
+            guard !path.isEmpty else { return false }
+            let found = await world.findOnScreen(path) != nil
+            return found == (test == .screenShows)
+        default:
+            return isTrue(left: left, right: right, frontApp: world.frontApp())
+        }
+    }
+
+    /// `app` is a bundle ID or an app's name; `wanted` is either.
+    static func sameApp(_ app: String, _ wanted: String) -> Bool {
+        app == wanted || app.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+            || AppNames.name(of: app).localizedCaseInsensitiveCompare(wanted) == .orderedSame
     }
 }
 

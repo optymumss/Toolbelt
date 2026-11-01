@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -41,6 +41,11 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   `MacroTools`: `StepClipboard` (copy/paste steps), `MacroTransfer` (.toolbeltmacros export/import with new ids),
   `UsedShortcuts`, `UndoHistory`, `RecordingBuilder` (pure) + `MacroRecorder` (listen-only tap, stop ⌃⌥⌘.).
   `MacroStep` has `disabled`, `note`, `color`, `timeout`, `onFailure`; `MacroRun.runProcess` enforces timeouts.
+  `MacroConditions.swift`: `ConditionWorld` (what conditions ask about the Mac; `.live`, or made-up answers in tests;
+  `MacroRun.isTrue` is async), `ModifierNames`, `RGBColor`, `GrayImage` + `ImageFinder` (pure picture search),
+  `ScreenReader` (screencapture), `WindowChangeTracker` (pure) + `FrontWindowWatcher` (AXObserver, no polling),
+  `ClipboardWatcher` (0.5 s, only while a macro uses it), `LoginTime` (utmpx console login). `.pauseUntil` uses
+  `timeout` (default 60 s) and `onFailure`. Clipboard-triggered macros don't re-trigger from their own copies.
   Test mode: `RealUseHooks.commands` ("record-start:Name", "record-stop") via a distributed notification.
   `WebServer` (BetterTouchTool-style HTTP API + button page; `WebAPI` is the testable part), off by default,
   shared secret required, 127.0.0.1 only unless "other devices" is on.

@@ -165,6 +165,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 log.disabled = true
                 var type = MacroStep(kind: .action)
                 type.action = MacroAction(kind: .typeText, value: "Hi %Name%,\n\nThanks for your message.")
+                var waitForReply = MacroStep(kind: .pauseUntil)
+                waitForReply.condition = MacroCondition(left: "", test: .windowTitleContains, right: "Re:")
+                waitForReply.timeout = 30
+                var replyWindow = MacroTrigger(kind: .windowChanged)
+                replyWindow.text = "Re:"
                 var hotKey = MacroTrigger(kind: .hotKey)
                 hotKey.keyCode = 14 // E
                 hotKey.modifiers = 0x1000 | 0x0800 | 0x0100 // ⌃⌥⌘
@@ -173,12 +178,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 morning.weekdays = [2, 3, 4, 5, 6]
                 automation.store.groups = [MacroGroup(name: "Email", scope: .only, apps: ["com.apple.mail"])]
                 automation.store.macros = [
-                    Macro(name: "Reply to email", groupID: automation.store.groups.first?.id, triggers: [hotKey, MacroTrigger(kind: .launcher)], steps: [ask, check, lookUp, type, log]),
+                    Macro(name: "Reply to email", groupID: automation.store.groups.first?.id, triggers: [hotKey, replyWindow, MacroTrigger(kind: .launcher)], steps: [ask, check, lookUp, waitForReply, type, log]),
                     Macro(name: "Start the work day", triggers: [morning, MacroTrigger(kind: .menuBar)], steps: [
                         MacroStep(kind: .action, action: MacroAction(kind: .openApp, value: "/System/Applications/Calendar.app")),
                         MacroStep(kind: .action, action: .toolbelt(.layout(1))),
                     ]),
                 ]
+                automation.selectOnOpen = automation.store.macros.first?.id
                 automation.open()
             case "settings-gestures":
                 // A few example gestures, one opened for editing.

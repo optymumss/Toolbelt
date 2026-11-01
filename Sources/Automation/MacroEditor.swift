@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Macros window: macros by group on the left (with search), the chosen macro on the right.
 struct MacrosView: View {
@@ -13,6 +14,15 @@ struct MacrosView: View {
     @State private var recording = false
 
     var body: some View {
+        content.onAppear {
+            if let wanted = module.selectOnOpen {
+                selection = wanted
+                module.selectOnOpen = nil
+            }
+        }
+    }
+
+    private var content: some View {
         NavigationSplitView {
             List(selection: $selection) {
                 ForEach(sections) { section in
@@ -356,6 +366,18 @@ struct TriggerEditor: View {
         case .idle, .activeAgain:
             Stepper("After \(trigger.number) minute\(trigger.number == 1 ? "" : "s") without a key press, click or mouse move",
                     value: $trigger.number, in: 1...240)
+        case .clipboardChanged:
+            TextField("Only when the copied text contains (empty for any copy)", text: $trigger.text)
+            Text("What was copied is in %Trigger%. Copies the macro makes itself don't start it again.").font(.caption).foregroundStyle(.secondary)
+        case .windowChanged, .windowTitleChanged:
+            TextField("Only when the title contains (empty for any)", text: $trigger.text)
+            Text("The window's title is in %Trigger%. Needs Accessibility.").font(.caption).foregroundStyle(.secondary)
+        case .toolbeltStarts:
+            Text("Each time Toolbelt opens, including at login if it opens then.").font(.caption).foregroundStyle(.secondary)
+        case .atLogin:
+            Text("When Toolbelt opens within three minutes of logging in (turn on “Open Toolbelt when you log in” in General).").font(.caption).foregroundStyle(.secondary)
+        case .calledByMacro:
+            Text("Marks a macro meant to be run by others: use a “Do something → Run a macro” step.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -407,6 +429,9 @@ struct StepListEditor: View {
         case .pickFromList: step.text = "Pick one"; step.text2 = "First\nSecond"; step.name = "Choice"
         case .notify: step.text = "Done"
         case .repeatTimes: step.number = 3
+        case .pauseUntil:
+            step.condition = MacroCondition(left: "", test: .windowTitleContains, right: "")
+            step.timeout = 30
         default: break
         }
         return step
@@ -558,6 +583,11 @@ struct StepEditor: View {
         case .repeatWhile:
             ConditionEditor(condition: $step.condition)
             AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
+        case .pauseUntil:
+            ConditionEditor(condition: $step.condition)
+            Stepper("Give up after \(MacroRun.seconds(step.timeout ?? 60))",
+                    value: Binding(get: { step.timeout ?? 60 }, set: { step.timeout = $0 }), in: 1...3600, step: 5)
+            Text("Giving up counts as the step failing (⋯ → If it fails).").font(.caption).foregroundStyle(.secondary)
         case .stop:
             EmptyView()
         }
@@ -568,17 +598,31 @@ struct ConditionEditor: View {
     @Binding var condition: MacroCondition
 
     var body: some View {
-        HStack {
-            if condition.test != .frontAppIs {
-                TextField("Text or %Variable%", text: $condition.left)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                if condition.test.usesLeft {
+                    TextField(condition.test.leftPlaceholder, text: $condition.left)
+                }
+                Picker("", selection: $condition.test) {
+                    ForEach(MacroCondition.Test.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                if condition.test.needsValue {
+                    TextField(condition.test.rightPlaceholder, text: $condition.right)
+                }
+                if condition.test == .screenShows || condition.test == .screenDoesNotShow {
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.png, .jpeg, .tiff]
+                        NSApp.activate()
+                        if panel.runModal() == .OK, let url = panel.url { condition.right = url.path }
+                    }
+                }
             }
-            Picker("", selection: $condition.test) {
-                ForEach(MacroCondition.Test.allCases) { Text($0.title).tag($0) }
-            }
-            .labelsHidden()
-            .fixedSize()
-            if condition.test.needsValue {
-                TextField(condition.test == .frontAppIs ? "App name" : "Value", text: $condition.right)
+            if condition.test.readsScreen {
+                Text("Looks at the screen, which needs Screen Recording. Take the picture with Toolbelt's screenshot (area) so it matches the screen's sharpness.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

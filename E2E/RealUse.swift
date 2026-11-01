@@ -525,7 +525,47 @@ final class RealUse: NSObject, NSApplicationDelegate {
         switchedOff.disabled = true
         let timeoutMacro = Macro(name: "Test timeout", steps: [slow, afterTimeout])
         let errorMacro = Macro(name: "Test error", steps: [failing, afterError, switchedOff])
-        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros, groups: []))
+        // 0.30: new triggers, “Pause until” and conditions about the Mac.
+        func markStep(_ name: String) -> MacroStep {
+            var step = MacroStep(kind: .action)
+            step.action = mark(name)
+            return step
+        }
+        func when(_ test: MacroCondition.Test, _ left: String = "", right: String = "", yes: String, no: String) -> MacroStep {
+            var step = MacroStep(kind: .ifThen)
+            step.condition = MacroCondition(left: left, test: test, right: right)
+            step.steps = [markStep(yes)]
+            step.elseSteps = [markStep(no)]
+            return step
+        }
+        var copied = eventMacro("copied", .clipboardChanged, text: "e2e-copy")
+        var copyAgain = MacroStep(kind: .setClipboard)
+        copyAgain.text = "e2e-copy made by the macro"
+        copied.steps.append(copyAgain) // its own copy mustn't start it again
+        var waitForFile = MacroStep(kind: .pauseUntil)
+        waitForFile.condition = MacroCondition(left: data.appendingPathComponent("go.txt").path, test: .fileExists)
+        waitForFile.timeout = 15
+        var waitTooLong = MacroStep(kind: .pauseUntil)
+        waitTooLong.condition = MacroCondition(left: "/no/such/file", test: .fileExists)
+        waitTooLong.timeout = 1
+        waitTooLong.onFailure = .stop
+        let newMacros = [
+            eventMacro("started", .toolbeltStarts), eventMacro("login", .atLogin), copied,
+            eventMacro("window", .windowChanged, text: "Second test window"), eventMacro("title", .windowTitleChanged, text: "Renamed"),
+            Macro(name: "Test pause until", steps: [waitForFile, markStep("paused-done")]),
+            Macro(name: "Test give up", steps: [waitTooLong, markStep("gave-up-wrongly")]),
+            Macro(name: "Test conditions", steps: [
+                when(.appRunning, right: "Finder", yes: "cond-running", no: "cond-not-running"),
+                when(.appNotRunning, right: "No Such App", yes: "cond-not-running-ok", no: "cond-not-running-wrong"),
+                when(.fileExists, data.appendingPathComponent("macros.json").path, yes: "cond-file", no: "cond-no-file"),
+                when(.windowTitleContains, right: "Second test window", yes: "cond-title", no: "cond-no-title"),
+                when(.pixelColorIs, "%Trigger%", right: "#C86432", yes: "cond-pixel", no: "cond-no-pixel"),
+                when(.screenShows, right: data.appendingPathComponent("needle.png").path, yes: "cond-image", no: "cond-no-image"),
+                when(.screenShows, right: data.appendingPathComponent("absent.png").path, yes: "cond-absent-wrong", no: "cond-absent-ok"),
+            ]),
+            Macro(name: "Test held", steps: [when(.modifiersHeld, right: "⇧", yes: "cond-held", no: "cond-not-held")]),
+        ]
+        try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros + newMacros, groups: []))
             .write(to: data.appendingPathComponent("macros.json"), options: .atomic)
 
         let snippets = [Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt")]
@@ -603,6 +643,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await actionTests()
             await panelTests()
             await editorTests()
+            await conditionTests()
             await macEventTests()
         }
         check("Toolbelt is still running at the end", toolbelt.map { !$0.isTerminated } ?? false, "it quit or crashed")
@@ -902,6 +943,110 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("a step that's switched off doesn't run", count("switched-off") == 0, "ran \(count("switched-off")) times")
     }
 
+    func conditionTests() async {
+        say("— 0.30: new triggers, “Pause until”, conditions about the Mac")
+        check("Toolbelt starts (trigger)", await waitUntil(3) { self.count("started") == 1 }, "ran \(count("started")) times")
+        check("… and “at login” doesn't run long after logging in", count("login") == 0, "ran \(count("login")) times")
+
+        await focus()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("something else", forType: .string)
+        await pause(1.5)
+        check("a copy without the text doesn't start the clipboard macro", count("copied") == 0, "ran \(count("copied")) times")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("invoice e2e-copy 2041", forType: .string)
+        check("the clipboard changes (to text containing e2e-copy)", await waitUntil(4) { self.count("copied") == 1 }, "ran \(count("copied")) times")
+        await pause(2.5)
+        check("… and the macro's own copy doesn't start it again", count("copied") == 1, "ran \(count("copied")) times")
+
+        // A second window: in front, then renamed. It also holds a pink square and a pattern for the screen tests.
+        let second = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        second.title = "Second test window"
+        second.isReleasedWhenClosed = false
+        let patch = SolidView(frame: NSRect(x: 20, y: 60, width: 80, height: 80))
+        let pattern = PatternView(frame: NSRect(x: 160, y: 40, width: 120, height: 120))
+        second.contentView?.addSubview(patch)
+        second.contentView?.addSubview(pattern)
+        second.setFrameTopLeftPoint(NSPoint(x: window.frame.minX + 40, y: window.frame.maxY - 40))
+        second.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        check("the front window changes", await waitUntil(4) { self.count("window") == 1 }, "ran \(count("window")) times")
+        await pause(0.5)
+        second.title = "Renamed test window"
+        check("the front window's title changes", await waitUntil(4) { self.count("title") == 1 }, "ran \(count("title")) times")
+        check("… a window or title not matching doesn't run them", count("window") == 1, "window macro ran \(count("window")) times")
+        second.title = "Second test window"
+        await pause(0.5)
+
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        func topLeft(_ view: NSView, _ rect: NSRect) -> NSRect {
+            let frame = second.convertToScreen(view.convert(rect, to: nil))
+            return NSRect(x: frame.minX, y: screenHeight - frame.maxY, width: frame.width, height: frame.height)
+        }
+        let patchSpot = topLeft(patch, patch.bounds)
+        let needleRect = topLeft(pattern, pattern.bounds.insetBy(dx: 20, dy: 20)).integral
+        let needle = data.appendingPathComponent("needle.png").path
+        let captured = run("/usr/sbin/screencapture", ["-x", "-R\(Int(needleRect.minX)),\(Int(needleRect.minY)),\(Int(needleRect.width)),\(Int(needleRect.height))", needle])
+        // A picture that isn't on screen: grey blocks in another random order (drawn straight into a file).
+        if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 80, pixelsHigh: 80, bitsPerSample: 8, samplesPerPixel: 3,
+                                         hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            // Bytes written straight in (setColor with a grey colour does nothing on an RGB bitmap, leaving it black).
+            var seed: UInt32 = 977
+            if let bytes = bitmap.bitmapData {
+                for blockY in 0..<8 {
+                    for blockX in 0..<8 {
+                        seed = seed &* 1_103_515_245 &+ 12345
+                        let grey = UInt8((seed >> 16) & 0xFF)
+                        for y in 0..<10 {
+                            for x in 0..<10 {
+                                let offset = (blockY * 10 + y) * bitmap.bytesPerRow + (blockX * 10 + x) * 3
+                                bytes[offset] = grey; bytes[offset + 1] = grey; bytes[offset + 2] = grey
+                            }
+                        }
+                    }
+                }
+            }
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: data.appendingPathComponent("absent.png"))
+        }
+        let point = "\(Int(patchSpot.midX)),\(Int(patchSpot.midY))"
+        let encoded = point.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? point
+        _ = await get("http://127.0.0.1:\(Self.webPort)/run_macro?name=Test%20conditions&input=\(encoded)&secret=\(Self.webSecret)")
+        let done = await waitUntil(25) { self.markers().contains { $0.hasPrefix("cond-absent") } }
+        check("conditions ran", done, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        check("condition: an app is running (Finder)", count("cond-running") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        check("condition: an app isn't running", count("cond-not-running-ok") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        check("condition: a file exists", count("cond-file") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        check("condition: the front window's title", count("cond-title") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        let seenColours = await ScreenReader.colors(at: CGPoint(x: patchSpot.midX.rounded(.down), y: patchSpot.midY.rounded(.down)))
+        check("condition: the colour at a point (\(point))", count("cond-pixel") == 1,
+              "read \(seenColours.map(\.hex)) there (sRGB, screen's own); markers: \(markers().filter { $0.hasPrefix("cond") })")
+        check("condition: the screen shows a picture", captured && count("cond-image") == 1,
+              "captured \(captured), markers: \(markers().filter { $0.hasPrefix("cond") })")
+        check("condition: … and not a picture that isn't there", count("cond-absent-ok") == 1, "markers: \(markers().filter { $0.hasPrefix("cond") })")
+        second.close()
+
+        // A key held down: hold ⇧ while the macro checks.
+        flagsEvent(CGKeyCode(kVK_Shift), flags: CGEventFlags.maskShift.rawValue)
+        await pause(0.3)
+        _ = await runMacro("Test held")
+        let held = await waitUntil(5) { self.count("cond-held") + self.count("cond-not-held") > 0 }
+        flagsEvent(CGKeyCode(kVK_Shift), flags: 0)
+        check("condition: a key is held down (⇧)", held && count("cond-held") == 1, "held \(count("cond-held")), not held \(count("cond-not-held"))")
+
+        // Pause until a file appears.
+        let go = data.appendingPathComponent("go.txt")
+        try? FileManager.default.removeItem(at: go)
+        _ = await runMacro("Test pause until")
+        await pause(2)
+        check("“Pause until” waits", count("paused-done") == 0, "ran \(count("paused-done")) times before the file was made")
+        FileManager.default.createFile(atPath: go.path, contents: Data("go".utf8))
+        check("… and carries on when it happens", await waitUntil(5) { self.count("paused-done") == 1 }, "ran \(count("paused-done")) times")
+        _ = await runMacro("Test give up")
+        await pause(3)
+        check("“Pause until” gives up after its time (and stops, as asked)", count("gave-up-wrongly") == 0, "the next step ran \(count("gave-up-wrongly")) times")
+        await focus()
+    }
+
     func macEventTests() async {
         say("— 0.26: the Mac's own events")
         DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.apple.screenIsLocked"), object: nil, userInfo: nil,
@@ -1166,6 +1311,29 @@ final class RealUse: NSObject, NSApplicationDelegate {
                   "grew by \(growth / 1024) MB")
         } else {
             check("memory measured", false, "only \(samples.count) samples")
+        }
+    }
+}
+
+/// A brown-orange square (#C86432, well inside what any screen shows), for the “colour at a point” condition.
+final class SolidView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(srgbRed: 200.0 / 255, green: 100.0 / 255, blue: 50.0 / 255, alpha: 1).setFill()
+        bounds.fill()
+    }
+}
+
+/// Blocks of different greys, for the “screen shows a picture” condition.
+final class PatternView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        var seed: UInt32 = 3
+        let size: CGFloat = 10
+        for row in 0..<Int(bounds.height / size) {
+            for column in 0..<Int(bounds.width / size) {
+                seed = seed &* 1_103_515_245 &+ 12345
+                NSColor(white: CGFloat((seed >> 16) & 0xFF) / 255, alpha: 1).setFill()
+                NSRect(x: CGFloat(column) * size, y: CGFloat(row) * size, width: size, height: size).fill()
+            }
         }
     }
 }

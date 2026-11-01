@@ -17,6 +17,11 @@ final class AutomationModule: ToolbeltModule {
     let power = PowerWatcher()
     let usb = USBWatcher()
     let bluetooth = BluetoothWatcher()
+    let clipboard = ClipboardWatcher()
+    let frontWindow = FrontWindowWatcher()
+    /// Macros started by a clipboard change that are still running: their own copies don't start them again.
+    private var clipboardRuns = 0
+    private var announcedStart = false
     private var powerState: (onAC: Bool, percent: Int?)?
     private var batteryChecks: [UUID: BatteryThreshold] = [:]
     private var idleTrackers: [UUID: IdleTracker] = [:]
@@ -74,6 +79,17 @@ final class AutomationModule: ToolbeltModule {
         RealUseHooks.extraStatus["menuBarItems"] = { [weak self] in self?.panels.menuBarStatus ?? [] }
         arm()
         updateWebServer()
+        if !announcedStart {
+            announcedStart = true
+            let atLogin = LoginTime.isAtLogin(started: Date(), loggedIn: LoginTime.current())
+            // A moment later, so every module is ready for what the macro does.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.simpleEvent(.toolbeltStarts)
+                    if atLogin { self?.simpleEvent(.atLogin) }
+                }
+            }
+        }
     }
 
     func stop() {
@@ -83,6 +99,9 @@ final class AutomationModule: ToolbeltModule {
         disarm()
         gestures?.updateListening()
     }
+
+    /// A macro to show when the Macros window opens (used for the screenshots).
+    var selectOnOpen: UUID?
 
     func open() {
         if editor == nil {
@@ -130,19 +149,24 @@ final class AutomationModule: ToolbeltModule {
         run(macro, trigger: trigger)
     }
 
-    func run(_ macro: Macro, trigger: String = "") {
+    func run(_ macro: Macro, trigger: String = "", done: (() -> Void)? = nil) {
         history.append(macro.name)
         if history.count > 50 { history.removeFirst() }
         let run = MacroRun(runner: runner, trigger: trigger)
         lastRun = run
-        Task { await run.run(macro.steps) }
+        Task {
+            await run.run(macro.steps)
+            done?()
+        }
     }
 
     /// A trigger happened: run the macro if it (and its group) apply in the app in front.
     /// `app` is the app the trigger is about when it's the one coming to the front (otherwise the app in front).
-    private func fire(_ macro: Macro, value: String = "", app: String? = nil) {
-        guard running, store.isActive(macro, in: app ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier) else { return }
-        run(macro, trigger: value)
+    @discardableResult
+    private func fire(_ macro: Macro, value: String = "", app: String? = nil, done: (() -> Void)? = nil) -> Bool {
+        guard running, store.isActive(macro, in: app ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier) else { return false }
+        run(macro, trigger: value, done: done)
+        return true
     }
 
     /// Macros, and their triggers of one kind, that can currently run.
@@ -213,6 +237,15 @@ final class AutomationModule: ToolbeltModule {
 
         armSystemEvents()
 
+        if !triggers([.clipboardChanged]).isEmpty {
+            clipboard.onChange = { [weak self] text in self?.clipboardChanged(text) }
+            clipboard.start()
+        }
+        if !triggers([.windowChanged, .windowTitleChanged]).isEmpty {
+            frontWindow.onChange = { [weak self] change, title in self?.frontWindowChanged(change, title: title) }
+            frontWindow.start()
+        }
+
         // `ToolbeltBridge run "Name"` in Terminal drops a request here.
         let inbox = Self.terminalFolder
         try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
@@ -238,6 +271,8 @@ final class AutomationModule: ToolbeltModule {
         power.stop()
         usb.stop()
         bluetooth.stop()
+        clipboard.stop()
+        frontWindow.stop()
         idleTimer?.invalidate()
         idleTimer = nil
         terminalInbox?.stop()
@@ -345,6 +380,25 @@ final class AutomationModule: ToolbeltModule {
     func appEvent(_ kind: MacroTrigger.Kind, bundleID: String?, name: String?) {
         for (macro, trigger) in triggers([kind]) where trigger.text.isEmpty || trigger.text == bundleID {
             fire(macro, value: name ?? bundleID ?? "", app: kind == .appActivated ? bundleID : nil)
+        }
+    }
+
+    /// Something was copied. Copies made by a macro this started don't start it again (that would never end).
+    func clipboardChanged(_ text: String) {
+        guard clipboardRuns == 0 else { return }
+        for (macro, trigger) in triggers([.clipboardChanged]) where trigger.text.isEmpty || text.localizedCaseInsensitiveContains(trigger.text) {
+            let started = fire(macro, value: text) { [weak self] in
+                // The last copy a macro makes is noticed up to half a second later: wait that out before listening again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { MainActor.assumeIsolated { self?.clipboardRuns -= 1 } }
+            }
+            if started { clipboardRuns += 1 }
+        }
+    }
+
+    func frontWindowChanged(_ change: WindowChangeTracker.Change, title: String) {
+        let kind: MacroTrigger.Kind = change == .window ? .windowChanged : .windowTitleChanged
+        for (macro, trigger) in triggers([kind]) where trigger.text.isEmpty || title.localizedCaseInsensitiveContains(trigger.text) {
+            fire(macro, value: title)
         }
     }
 

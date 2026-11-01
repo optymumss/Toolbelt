@@ -1,9 +1,21 @@
-# Toolbelt — v0.29
+# Toolbelt — v0.30
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.30: more triggers and conditions for macros
+- **New triggers:** the clipboard changes (optionally only when the copied text contains something; what
+  was copied is in %Trigger%), Toolbelt starts, at login, the front window changes, the front window's title
+  changes (both optionally only for titles containing some text), and "Run by another macro" (a label for
+  macros meant to be run by others).
+- **Pause until…:** a step that waits until a condition is true (a window appears, a file exists, a colour
+  shows up on screen…), giving up after a time you choose. Giving up counts as the step failing, so its
+  ⋯ → If It Fails setting decides what happens next.
+- **New conditions** for If, Repeat while and Pause until: the front window's title contains, an app is (or
+  isn't) running, a file or folder exists (or doesn't), keys are held down (e.g. ⌘⌥), the colour at a point
+  on screen, and whether the screen shows a picture (or doesn't). The screen ones need Screen Recording.
 
 ## What's new in 0.29: the Macros window works like Keyboard Maestro's editor
 - **Record:** click Record, do the task (typing, shortcuts, clicks, switching apps), then press ⌃⌥⌘. (full
