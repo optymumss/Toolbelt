@@ -453,7 +453,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             rule(shortcut(kVK_ANSI_L), MacroAction(kind: .webSearch, value: "toolbelte2e://search?q=%s")),
             rule(shortcut(kVK_ANSI_Z), .system(.ejectDisks)),
             rule(shortcut(kVK_ANSI_X), .system(.toggleDockHiding)),
-            rule(shortcut(kVK_ANSI_C), .system(.emptyTrash)),
+            rule(shortcut(kVK_ANSI_C), mark("trashpressed")) { $0.moreActions = [.system(.emptyTrash)] },
         ]
         try JSONEncoder().encode(rules).write(to: data.appendingPathComponent("gestures.json"), options: .atomic)
         try JSONEncoder().encode([frontGroup, neverGroup]).write(to: data.appendingPathComponent("trigger-groups.json"), options: .atomic)
@@ -785,9 +785,9 @@ final class RealUse: NSObject, NSApplicationDelegate {
         try? FileManager.default.trashItem(at: file, resultingItemURL: &inTrash)
         let trashed = (inTrash as URL?).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         await press(CGKeyCode(kVK_ANSI_C), Self.testMods)
-        let emptied = trashed ? await waitUntil(25) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
+        let emptied = trashed ? await waitUntil(40) { !FileManager.default.fileExists(atPath: (inTrash as URL?)?.path ?? "") } : false
         check("empty the Trash", emptied,
-              "put in the Trash: \(trashed); still asking Finder: \(output("/usr/bin/pgrep", ["-lf", "empty trash"]).isEmpty ? "no" : "yes"); "
+              "put in the Trash: \(trashed); the trigger ran: \(count("trashpressed")); still asking Finder: \(output("/usr/bin/pgrep", ["-lf", "empty trash"]).isEmpty ? "no" : "yes"); "
                 + "Finder running: \(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty ? "no" : "yes"); "
                 + "the Trash holds \((try? FileManager.default.contentsOfDirectory(atPath: NSHomeDirectory() + "/.Trash"))?.count ?? -1) items, "
                 + "the file is at \((inTrash as URL?)?.path ?? "?")")

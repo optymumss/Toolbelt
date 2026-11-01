@@ -300,6 +300,7 @@ enum Trash {
                 NSLog("Toolbelt: Finder emptied the Trash")
             }
         }
+        NSLog("Toolbelt: asking Finder to empty the Trash")
         do { try process.run() } catch { NSLog("Toolbelt: couldn't empty the Trash: \(error)") }
     }
 }
