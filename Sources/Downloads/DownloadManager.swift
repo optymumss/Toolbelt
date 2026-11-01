@@ -212,7 +212,7 @@ final class DownloadManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func downloadableURL(from text: String) -> URL? {
+    nonisolated static func downloadableURL(from text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: \.isWhitespace),
               let url = URL(string: trimmed),
