@@ -1222,11 +1222,16 @@ final class RealUse: NSObject, NSApplicationDelegate {
 
         _ = await runMacro("Test alert")
         await pause(2)
+        // Like clicking on it: macOS doesn't let an app in the background take the keyboard by itself.
+        toolbelt?.activate()
+        await pause(0.8)
         await press(CGKeyCode(kVK_Return), [])
         check("an alert with buttons (Return clicks the first)", await waitUntil(5) { self.count("alert-First") == 1 },
               "markers: \(markers().filter { $0.hasPrefix("alert") })")
         _ = await runMacro("Test ask several")
         await pause(2)
+        toolbelt?.activate()
+        await pause(0.8)
         await type("Sam")
         await press(CGKeyCode(kVK_Tab), [])
         await type("Home")
