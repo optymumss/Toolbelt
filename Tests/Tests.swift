@@ -55,7 +55,7 @@ enum ToolbeltTests {
         t.group("Real-use test helpers: pretend trackpad touches", RealUseHelperTests.run)
         t.group("Rotate, edge swipes, TipSwipe, mouse wheel, screen corners, keys and Mac events", MoreBTTTests.run)
         t.group("Mouse actions, web search, Shortcuts, Bluetooth, Wi-Fi, Dock, Trash, disks", MoreActionTests.run)
-        t.group("Presets, floating menus and menu-bar items", PanelTests.run)
+        t.group("Presets, floating menus and menu-bar items", PresetAndMenuTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4036,7 +4036,7 @@ enum MoreActionTests {
 }
 
 @MainActor
-enum PanelTests {
+enum PresetAndMenuTests {
     static func run() {
         let work = TriggerPreset(name: "Work"), home = TriggerPreset(name: "Home")
         var inWork = GestureRule(gesture: .mouseButton(5), action: .system(.mute))
