@@ -75,7 +75,9 @@ for page in stream protected; do
 </body></html>
 HTML
 done
-python3 -m http.server 8765 --bind 127.0.0.1 --directory "$SITE" >/dev/null 2>&1 &
+# Served with node (already needed for the test). Python's server timed out here once the real-use
+# tests had run their own Python server earlier in the same job.
+node .github/scripts/static-server.cjs "$(cd "$SITE" && pwd -P)" 8765 &
 SERVER=$!
 
 # Tell Chrome for Testing where ToolbeltBridge is (the same note Settings › Set Up Chrome writes for Chrome).
@@ -100,6 +102,16 @@ done
 
 TOOL="$(mktemp -d -t toolbelt-puppeteer)"
 (cd "$TOOL" && npm install --silent --no-audit --no-fund puppeteer@23.11.1 >/dev/null 2>&1) || { echo "✗ couldn't install Chrome for Testing"; exit 1; }
-sleep 2
+# Wait until the test site answers; if it never does, say why rather than failing inside Chrome.
+for _ in $(seq 1 40); do
+    curl -fsS -m 2 -o /dev/null http://127.0.0.1:8765/ && break
+    sleep 0.5
+done
+if ! curl -fsS -m 5 -o /dev/null http://127.0.0.1:8765/; then
+    echo "✗ the test web site on 127.0.0.1:8765 doesn't answer"
+    echo "firewall: $(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1)"
+    lsof -nP -iTCP:8765 2>&1 | head -5
+    exit 1
+fi
 TOOLBELT_DATA_DIR="$DATA" TOOLBELT_BRIDGE_NO_LAUNCH=1 NODE_PATH="$TOOL/node_modules" \
     node .github/scripts/chrome-e2e.cjs "$ROOT/Chrome" "$EXTENSION_ID" "$DOWNLOADS" "http://127.0.0.1:8765/" "$PROFILE"
