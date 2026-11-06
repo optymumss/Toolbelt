@@ -275,6 +275,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case "settings-downloads": settings.show(tab: .module(.downloads))
             case "downloads": modules.module(.downloads)?.open()
+            case "projects":
+                // 0.35: two example projects, one just run.
+                let folder = Prefs.downloadFolder.appendingPathComponent("Projects")
+                var photos = DownloadProject(name: "Trip photos", start: "https://photos.example/trip/", template: .pictures, depth: 2,
+                                             folder: folder.appendingPathComponent("Trip photos").path, repeats: .daily(3 * 60))
+                photos.lastRun = Date().addingTimeInterval(-3600 * 5)
+                photos.lastResult = "4 new, 1 changed, 37 unchanged"
+                let manuals = DownloadProject(name: "Product manuals", start: "https://docs.example/manuals/", template: .files, depth: 1,
+                                              folder: folder.appendingPathComponent("Manuals").path, repeats: .weekly(2, 9 * 60))
+                ProjectStore.shared.projects = [photos, manuals]
+                ProjectsWindow.show(select: photos.id)
             case "link-picker", "grabber", "link-offer":
                 // 0.34: Chrome's "Download All Links", the site grabber with what it found, and a copied link's offer.
                 guard let downloads = modules.module(.downloads) as? DownloadsModule else { break }

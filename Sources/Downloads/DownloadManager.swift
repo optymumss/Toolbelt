@@ -410,7 +410,8 @@ final class DownloadManager: ObservableObject {
         let worker: DownloadWorker
         if item.isStream {
             worker = HLSDownloadJob(playlist: item.url, audio: item.audioURL, folder: streamFolder(for: id), tempURL: tempURL(for: id),
-                                    headers: item.headers ?? [:], connections: Prefs.downloadConnections, retries: Prefs.downloadRetries,
+                                    headers: NetworkSettings.headers(item.headers ?? [:], for: item.url),
+                                    connections: Prefs.downloadConnections, retries: Prefs.downloadRetries,
                                     throttle: throttle)
         } else if item.url.scheme?.lowercased() == "ftp" {
             let ftp = FTPDownloadJob(url: item.url, tempURL: tempURL(for: id), total: item.total, retries: Prefs.downloadRetries)
@@ -419,7 +420,8 @@ final class DownloadManager: ObservableObject {
         } else {
             worker = HTTPDownloadJob(url: item.url, tempURL: tempURL(for: id), segments: item.segments, total: item.total,
                                      acceptsRanges: item.acceptsRanges, connections: Self.connections(running: workers.count + 1),
-                                     retries: Prefs.downloadRetries, headers: item.headers ?? [:], throttle: throttle)
+                                     retries: Prefs.downloadRetries, headers: NetworkSettings.headers(item.headers ?? [:], for: item.url),
+                                     throttle: throttle)
         }
         worker.onEvent = { [weak self] event in
             DispatchQueue.main.async {
@@ -473,10 +475,38 @@ final class DownloadManager: ObservableObject {
                 $0.connections = 0
                 if let total = $0.total { $0.received = total }
             }
+            check(destination, of: id)
         } catch {
             update(id) { $0.state = .failed; $0.error = "Downloaded, but couldn't move it to \(folder.path): \(error.localizedDescription)" }
         }
         save()
+    }
+
+    /// 0.35: marks the file as from the internet, then runs the virus scanner (if one is set) away from the
+    /// main thread. A flagged file gets a warning, and goes to the Trash if that's switched on.
+    var onFlagged: ((DownloadItem) -> Void)?
+
+    private func check(_ file: URL, of id: UUID) {
+        guard let item = item(id) else { return }
+        if Prefs.downloadQuarantine { DownloadSafety.markQuarantined(file, from: item.url, page: item.pageURL) }
+        let command = Prefs.downloadScanCommand
+        guard !command.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let trash = Prefs.downloadScanTrash
+        Task.detached { [weak self] in
+            guard let result = DownloadSafety.scan(file, command: command), result.flagged else { return }
+            var trashed: URL?
+            if trash, (try? FileManager.default.trashItem(at: file, resultingItemURL: nil)) != nil { trashed = file }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                let said = result.message.isEmpty ? "it may be harmful" : result.message
+                self.update(id) {
+                    $0.warning = (trashed != nil ? "Moved to the Trash: " : "") + "the virus scanner flagged it (\(said))"
+                    if trashed != nil { $0.finalPath = nil }
+                }
+                self.save()
+                if let flagged = self.item(id) { self.onFlagged?(flagged) }
+            }
+        }
     }
 
     // MARK: Progress

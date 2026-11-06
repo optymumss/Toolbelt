@@ -1,9 +1,24 @@
-# Toolbelt — v0.34
+# Toolbelt — v0.35
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.35: projects that keep a folder up to date, virus check, logins and proxy
+- **Download projects** (menu-bar menu → Downloads → Download Projects…, or "Save as Project…" in the Site
+  Grabber): a site grab that runs again by itself — every few hours, every day or every week — and keeps a
+  folder in step with the site. Each run downloads only new and changed files: Toolbelt asks the site whether
+  each file has changed since last time, so nothing is downloaded twice. A run missed while the Mac was off
+  happens once when Toolbelt is next running.
+- **Virus check:** like a browser, Toolbelt now marks what it downloads as "from the internet", so macOS checks
+  programs and disk images when you open them (and Get Info shows where they came from). If you have a virus
+  scanner (for example ClamAV), Settings → Downloads → Virus check runs it on every finished download; a file it
+  flags gets a warning and goes to the Trash.
+- **Site logins:** for sites that ask for a user name and password before a download. Saved in Settings →
+  Downloads → Site logins; the password is kept in your Mac's Keychain and sent only to that site.
+- **Proxy:** Settings → Downloads → Proxy sends downloads, the Site Grabber and projects through an HTTP or
+  SOCKS proxy.
 
 ## What's new in 0.34: download everything on a page
 - **Download All Links with Toolbelt…**: right-click a page in Chrome (or click the Toolbelt button in Chrome's

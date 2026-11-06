@@ -28,9 +28,18 @@ final class DownloadsModule: ToolbeltModule {
         ChromeSetup.refreshIfSetUp()
         inbox.start()
         manager.resumeInterrupted()
+        NetworkSettings.currentProxy = Prefs.downloadProxy
+        manager.onFlagged = { item in
+            DownloadNotifier.post(id: "toolbelt-flagged-\(item.id.uuidString)", title: "Virus scanner flagged \(item.name)",
+                                  body: item.warning ?? "", path: nil)
+        }
         badgeWatcher = manager.$items.sink { items in
             MenuBarBadge.shared.show(active: Self.isActive(items), progress: Self.progress(of: items))
+            if RealUseHooks.isOn { DispatchQueue.main.async { RealUseHooks.writeStatus() } }
         }
+        ProjectStore.shared.start()
+        ProjectStore.shared.registerTestHooks()
+        registerSafetyTestHooks()
         clipboard.onChange = { [weak self] text in self?.copied(text) }
         refreshClipboardCatching()
         LinkPickerWindows.registerTestHooks(manager: manager)
@@ -40,6 +49,35 @@ final class DownloadsModule: ToolbeltModule {
             Prefs.downloadCatchClipboard = value == "on"
             self?.refreshClipboardCatching()
         }
+    }
+
+    /// 0.35 test commands: a proxy, a login, a virus scanner, and downloading a link straight away.
+    private func registerSafetyTestHooks() {
+        RealUseHooks.extraStatus["downloads"] = { [weak self] in
+            (self?.manager.items ?? []).map { "\($0.name) \($0.state.rawValue)" + ($0.warning != nil ? " flagged" : "") }
+        }
+        // "proxy:http 127.0.0.1 12397" or "proxy:none"
+        RealUseHooks.commands["proxy"] = { text in
+            let parts = text.split(separator: " ").map(String.init)
+            var proxy = ProxySettings()
+            if parts.count == 3, let kind = ProxySettings.Kind(rawValue: parts[0]), let port = Int(parts[2]) {
+                proxy = ProxySettings(kind: kind, host: parts[1], port: port)
+            }
+            Prefs.downloadProxy = proxy
+        }
+        // "login-add:host user password"
+        RealUseHooks.commands["login-add"] = { text in
+            let parts = text.split(separator: " ").map(String.init)
+            guard parts.count == 3 else { return }
+            SiteLogins.add(host: parts[0], user: parts[1], password: parts[2])
+            RealUseHooks.writeStatus()
+        }
+        RealUseHooks.commands["login-remove"] = { host in
+            for login in SiteLogins.all where login.host == host { SiteLogins.remove(login) }
+        }
+        RealUseHooks.extraStatus["logins"] = { SiteLogins.all.map { "\($0.user)@\($0.host)" + (SiteLogins.password(for: $0) != nil ? " saved" : " missing") } }
+        RealUseHooks.commands["scan"] = { command in Prefs.downloadScanCommand = command }
+        RealUseHooks.commands["download-url"] = { [weak self] url in _ = self?.manager.add(url) }
     }
 
     /// Starts or stops watching the clipboard, following the setting.
@@ -100,6 +138,7 @@ final class DownloadsModule: ToolbeltModule {
         inbox.stop()
         clipboard.stop()
         LinkOfferPanel.close()
+        ProjectStore.shared.stop()
         manager.stopAll()
         window?.orderOut(nil)
     }
@@ -186,7 +225,8 @@ final class DownloadsModule: ToolbeltModule {
 
     func menuItems() -> [NSMenuItem] {
         var list: [NSMenuItem] = [ActionMenuItem("Download Link from Clipboard") { [weak self] in self?.downloadFromClipboard() },
-                                  ActionMenuItem("Site Grabber…") { [weak self] in self?.openGrabber() }]
+                                  ActionMenuItem("Site Grabber…") { [weak self] in self?.openGrabber() },
+                                  ActionMenuItem("Download Projects…") { ProjectsWindow.show() }]
         let active = manager.items.filter { $0.state == .downloading }
         let whenDone = NSMenuItem(title: "When Downloads Finish", action: nil, keyEquivalent: "")
         whenDone.submenu = NSMenu()

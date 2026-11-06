@@ -87,6 +87,7 @@ final class HTTPDownloadJob: NSObject, DownloadWorker, URLSessionDataDelegate, @
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         // Cookies handed over by the browser are sent as they are.
         if headers["Cookie"] != nil { configuration.httpShouldSetCookies = false }
+        NetworkSettings.apply(to: configuration)
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
 
         let partial = segments.contains { $0.received > 0 }

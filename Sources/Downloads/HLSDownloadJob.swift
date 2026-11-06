@@ -62,6 +62,7 @@ final class HLSDownloadJob: DownloadWorker, @unchecked Sendable {
         configuration.timeoutIntervalForResource = 600
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         if headers["Cookie"] != nil { configuration.httpShouldSetCookies = false }
+        NetworkSettings.apply(to: configuration)
         session = URLSession(configuration: configuration)
         lock.unlock()
         Thread.detachNewThread { [weak self] in self?.work(run) }

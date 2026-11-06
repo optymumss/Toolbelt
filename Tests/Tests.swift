@@ -62,6 +62,7 @@ enum ToolbeltTests {
         t.group("Calculations, picture filters, sub-macros, palettes and the Macros window's lists", MacroExtraTests.run)
         t.group("Updating Toolbelt from GitHub: versions, releases, unpacking and swapping", UpdaterTests.run)
         t.group("Downloading all links: links on a page, types, category folders, copied links, site grabber", LinkGrabberTests.run)
+        t.group("Download projects, proxy, site logins and the virus check", ProjectSyncTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -4964,5 +4965,156 @@ enum LinkGrabberTests {
         checkEqual(request.headers(for: URL(string: "https://cdn.com/p.jpg")!)["Referer"], "https://shop.com/list", "the page is sent as where they came from")
         let old = #"{"url":"https://x.com/a.zip"}"#
         checkEqual((try? JSONDecoder().decode(DownloadRequest.self, from: Data(old.utf8)))?.links, nil, "single downloads from Chrome still work")
+    }
+}
+
+/// A pretend server for project runs: files with ETags, answering 304 when the ETag still matches.
+final class SyncSite: @unchecked Sendable {
+    private let lock = NSLock()
+    var files: [String: (etag: String, body: String)] = [:]
+    var requests: [(url: String, headers: [String: String])] = []
+
+    func fetch(_ url: URL, _ headers: [String: String]) -> SyncEngine.Response? {
+        lock.lock()
+        defer { lock.unlock() }
+        requests.append((url.absoluteString, headers))
+        guard let file = files[url.absoluteString] else { return SyncEngine.Response(status: 404) }
+        if headers["If-None-Match"] == file.etag { return SyncEngine.Response(status: 304, etag: file.etag) }
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("sync-\(UUID().uuidString)")
+        try? Data(file.body.utf8).write(to: temp)
+        return SyncEngine.Response(status: 200, etag: file.etag, lastModified: "Mon, 02 Nov 2026 10:00:00 GMT",
+                                   length: Int64(file.body.utf8.count), file: temp)
+    }
+}
+
+@MainActor
+enum ProjectSyncTests {
+    static func run() {
+        schedules()
+        syncing()
+        proxyAndLogins()
+        safety()
+    }
+
+    static func schedules() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func date(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
+        let now = date("2026-11-04T12:00:00Z") // a Wednesday
+        checkEqual(ProjectRepeat.manual.next(last: nil, now: now, calendar: calendar), nil, "a manual project never runs by itself")
+        checkEqual(ProjectRepeat.daily(3 * 60).next(last: nil, now: now, calendar: calendar), date("2026-11-05T03:00:00Z"),
+                   "daily at 3:00, never run: tomorrow at 3:00")
+        checkEqual(ProjectRepeat.daily(13 * 60).next(last: nil, now: now, calendar: calendar), date("2026-11-04T13:00:00Z"),
+                   "daily at 13:00: today, later on")
+        checkEqual(ProjectRepeat.daily(3 * 60).next(last: date("2026-11-04T03:00:00Z"), now: now, calendar: calendar),
+                   date("2026-11-05T03:00:00Z"), "after today's run: tomorrow")
+        checkEqual(ProjectRepeat.daily(3 * 60).next(last: date("2026-11-01T03:00:00Z"), now: now, calendar: calendar), now,
+                   "a run missed while the Mac was off happens straight away, once")
+        checkEqual(ProjectRepeat.everyHours(6).next(last: date("2026-11-04T09:00:00Z"), now: now, calendar: calendar),
+                   date("2026-11-04T15:00:00Z"), "every 6 hours: 6 hours after the last run")
+        checkEqual(ProjectRepeat.weekly(2, 9 * 60).next(last: nil, now: now, calendar: calendar), date("2026-11-09T09:00:00Z"),
+                   "weekly on Monday at 9:00: next Monday")
+        let project = DownloadProject(name: "x", start: "https://x.com/", folder: "/tmp/x", repeats: .daily(60), enabled: false)
+        checkEqual(project.nextRun(now: now), nil, "a project that's off doesn't run")
+        let saved = try? JSONDecoder().decode(DownloadProject.self, from: JSONEncoder().encode(
+            DownloadProject(name: "y", start: "https://y.com/", folder: "/tmp/y", repeats: .weekly(3, 120))))
+        checkEqual(saved?.repeats, .weekly(3, 120), "projects are saved with their schedule")
+    }
+
+    static func syncing() {
+        checkEqual(SyncEngine.conditionalHeaders(FileValidator(etag: "\"abc\"", lastModified: "Mon, 02 Nov 2026 10:00:00 GMT", path: "a")),
+                   ["If-None-Match": "\"abc\"", "If-Modified-Since": "Mon, 02 Nov 2026 10:00:00 GMT"],
+                   "the server is asked whether a file changed since")
+        let site = SyncSite()
+        let pages = TestSite([
+            "https://s.com/": ("text/html", #"<a href="/a.zip">a</a> <a href="/docs/b.pdf">b</a> <a href="/gone.zip">c</a>"#),
+        ])
+        site.files = ["https://s.com/a.zip": ("\"1\"", "AAA"), "https://s.com/docs/b.pdf": ("\"1\"", "BBB")]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-sync-\(UUID().uuidString)")
+        var project = DownloadProject(name: "Test", start: "https://s.com/", template: .files, depth: 0, folder: folder.path, repeats: .manual)
+
+        func runOnce() -> SyncEngine.Summary? {
+            let box = ResultBox<(DownloadProject, SyncEngine.Summary)>()
+            let current = project
+            Task.detached {
+                box.value = await SyncEngine.run(current, rules: DownloadCategories.defaults, headers: { _ in ["X-Test": "1"] },
+                                                 page: { [pages] in pages.fetch($0) }, fetch: { [site] in site.fetch($0, $1) })
+            }
+            _ = DownloadTests.waitFor(10) { box.value != nil }
+            if let value = box.value { project = value.0 }
+            return box.value?.1
+        }
+
+        checkEqual(runOnce(), SyncEngine.Summary(new: 2, changed: 0, unchanged: 0, failed: 1), "the first run downloads every file (one is missing)")
+        checkEqual(try? String(contentsOf: folder.appendingPathComponent("docs/b.pdf"), encoding: .utf8), "BBB",
+                   "files keep the site's folders")
+        check(site.requests.allSatisfy { $0.headers["X-Test"] == "1" }, "each request gets the project's headers (logins)")
+        checkEqual(runOnce(), SyncEngine.Summary(new: 0, changed: 0, unchanged: 2, failed: 1), "the next run downloads nothing that's unchanged")
+        check(site.requests.suffix(3).contains { $0.headers["If-None-Match"] == "\"1\"" }, "… by asking with the ETag")
+        site.files["https://s.com/a.zip"] = ("\"2\"", "NEW")
+        checkEqual(runOnce(), SyncEngine.Summary(new: 0, changed: 1, unchanged: 1, failed: 1), "a changed file is downloaded again")
+        checkEqual(try? String(contentsOf: folder.appendingPathComponent("a.zip"), encoding: .utf8), "NEW", "… replacing the old copy")
+        checkEqual(project.lastResult, "0 new, 1 changed, 1 unchanged, 1 failed", "the run's result is kept with the project")
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    static func proxyAndLogins() {
+        checkEqual(ProxySettings().dictionary == nil, true, "no proxy: the Mac's own network settings")
+        let http = ProxySettings(kind: .http, host: "proxy.example.com", port: 3128).dictionary
+        check(http?["HTTPProxy"] as? String == "proxy.example.com" && http?["HTTPSPort"] as? Int == 3128 && http?["HTTPSEnable"] as? Int == 1,
+              "an HTTP proxy covers web and secure web downloads")
+        let socks = ProxySettings(kind: .socks, host: "10.0.0.2", port: 1080).dictionary
+        check(socks?["SOCKSProxy"] as? String == "10.0.0.2" && socks?["SOCKSPort"] as? Int == 1080, "a SOCKS proxy")
+        checkEqual(ProxySettings(kind: .http, host: " ", port: 80).isOn, false, "a proxy without a server is off")
+        let saved = Prefs.downloadProxy
+        Prefs.downloadProxy = ProxySettings(kind: .socks, host: "h", port: 9)
+        checkEqual(Prefs.downloadProxy, ProxySettings(kind: .socks, host: "h", port: 9), "the proxy is saved")
+        checkEqual(NetworkSettings.currentProxy, Prefs.downloadProxy, "… and used by downloads straight away")
+        Prefs.downloadProxy = saved
+
+        checkEqual(NetworkSettings.basicAuthorization(user: "tb", password: "pw"), "Basic dGI6cHc=", "a login is sent as HTTP Basic")
+        checkEqual(SiteLogin.cleanHost("https://Files.Example.com/x/y"), "files.example.com", "a pasted address becomes the site's name")
+        let realStore = SiteLogins.store
+        SiteLogins.store = MemoryPasswords()
+        let savedLogins = Prefs.downloadLogins
+        check(SiteLogins.add(host: "files.example.com", user: "tb", password: "pw"), "a login can be added")
+        checkEqual(NetworkSettings.headers([:], for: URL(string: "https://files.example.com/a.zip")!)["Authorization"], "Basic dGI6cHc=",
+                   "downloads from that site send it")
+        checkEqual(NetworkSettings.headers([:], for: URL(string: "https://other.example.com/a.zip")!)["Authorization"], nil,
+                   "… and no other site gets it")
+        checkEqual(NetworkSettings.headers(["Authorization": "Bearer x"], for: URL(string: "https://files.example.com/a")!)["Authorization"],
+                   "Bearer x", "a download's own sign-in is kept")
+        SiteLogins.remove(Prefs.downloadLogins[0])
+        check(SiteLogins.all.isEmpty, "a login can be removed")
+        SiteLogins.store = realStore
+        Prefs.downloadLogins = savedLogins
+
+        let keychain = KeychainPasswords()
+        let account = "test-\(UUID().uuidString)"
+        let stored = keychain.setPassword("s3cret", service: "Toolbelt test", account: account)
+        check(stored && keychain.password(service: "Toolbelt test", account: account) == "s3cret", "passwords are kept in the Keychain")
+        keychain.removePassword(service: "Toolbelt test", account: account)
+        checkEqual(keychain.password(service: "Toolbelt test", account: account), nil, "… and removed from it")
+    }
+
+    static func safety() {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-safety-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("setup's file.dmg")
+        FileManager.default.createFile(atPath: file.path, contents: Data("x".utf8))
+        check(DownloadSafety.markQuarantined(file, from: URL(string: "https://x.com/setup.dmg"), page: nil), "a download can be marked as from the internet")
+        let mark = DownloadSafety.quarantine(of: file) ?? ""
+        check(mark.hasPrefix("0083;") && mark.contains(";Toolbelt;"), "… with the quarantine mark macOS checks on opening", mark)
+        checkEqual(DownloadSafety.scanCommand("scan --quiet %file%", file: file), "scan --quiet '\(folder.path)/setup'\\''s file.dmg'",
+                   "the scanner gets the file's path, quoted")
+        checkEqual(DownloadSafety.scanCommand("scan", file: URL(fileURLWithPath: "/a b")), "scan '/a b'", "… added at the end without %file%")
+        checkEqual(DownloadSafety.scan(file, command: "test -e %file%")?.flagged, false, "a clean result")
+        let flagged = DownloadSafety.scan(file, command: "test -e %file% && echo FOUND: Test-Virus && exit 1")
+        check(flagged?.flagged == true && flagged?.message.contains("FOUND: Test-Virus") == true,
+              "a scanner's error flags the file, with what it said", "\(String(describing: flagged))")
+        checkEqual(DownloadSafety.scan(file, command: " "), nil, "no scanner set: nothing runs")
+        let item = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"https://x.com/a","name":"a","state":"completed","received":1,"segments":[],"acceptsRanges":false,"added":0,"warning":"flagged"}"#
+        checkEqual((try? JSONDecoder().decode(DownloadItem.self, from: Data(item.utf8)))?.warning, "flagged", "a scanner's warning is kept with the download")
+        try? FileManager.default.removeItem(at: folder)
     }
 }

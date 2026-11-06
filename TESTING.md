@@ -42,7 +42,11 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    and (0.34) a small web site served on the Mac: the site grabber finding its pictures and downloading the ticked
    ones into the Images folder, the whole site saved to read offline with working links, Chrome's list of links
    (files ticked, pages not, the Documents button, a PDF going to the Documents category's own folder), and
-   copied links (one offered and downloaded, several offered as a list, a web page not offered). Each check confirms the action really
+   copied links (one offered and downloaded, several offered as a list, a web page not offered);
+   and (0.35) a download project's three runs (everything new, then nothing changed, then one changed file),
+   a download through a proxy to a made-up site name only the proxy knows, a password-protected file refused
+   without a login and downloaded with one (kept in the Keychain), the quarantine mark on a finished download,
+   and a test virus scanner flagging a file that then goes to the Trash. Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.

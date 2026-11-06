@@ -279,6 +279,7 @@ struct DownloadRow: View {
                 if show.contains(.connections), item.connections > 1 { parts.append("\(item.connections) connections") }
             }
         case .completed:
+            if let warning = item.warning { parts.append("⚠️ " + warning) }
             if show.contains(.size) { parts.append(ByteFormat.size(item.total ?? item.received)) }
             if let path = item.finalPath {
                 parts.append((path as NSString).deletingLastPathComponent.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
@@ -391,6 +392,19 @@ struct DownloadsSettingsTab: View {
             }
 
             CategoriesSection()
+
+            Section {
+                LabeledContent("Projects") {
+                    Button("Open Download Projects…") { ProjectsWindow.show() }
+                }
+            } footer: {
+                Text("A project grabs a site again by itself (every few hours, daily or weekly) and downloads only new and changed files into its folder. “Save as Project…” in the Site Grabber makes one from what you set up there.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            SafetySection()
+            LoginsSection()
+            ProxySection()
 
             Section {
                 Toggle("Offer to download links to files when I copy them", isOn: Binding(
@@ -632,5 +646,97 @@ struct CategoriesSection: View {
         if panel.runModal() == .OK, let url = panel.url {
             change(name) { $0.folder = url.path }
         }
+    }
+}
+
+/// 0.35: macOS's own check on opening, and an optional virus scanner.
+struct SafetySection: View {
+    @ObservedObject private var settings = SettingsStore.shared
+    @State private var command = Prefs.downloadScanCommand
+
+    var body: some View {
+        Section {
+            Toggle("Mark downloads as from the internet (macOS checks them when opened)",
+                   isOn: settings.binding("downloads.quarantine", default: true))
+            LabeledContent("Virus scanner command") {
+                TextField("", text: $command, prompt: Text("e.g. /opt/homebrew/bin/clamscan --no-summary %file%"))
+                    .onSubmit { Prefs.downloadScanCommand = command }
+            }
+            Toggle("Move files the scanner flags to the Trash", isOn: settings.binding("downloads.scanTrash", default: true))
+        } header: {
+            Text("Virus check")
+        } footer: {
+            Text("Like a browser, Toolbelt marks what it downloads, so macOS checks programs and disk images for malware when you open them. A virus scanner, if you have one, runs on every finished download: %file% is the file; the scanner flags it by ending with an error. Press Return after typing the command.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// 0.35: user names and passwords for sites that ask for them (passwords are kept in the Keychain).
+struct LoginsSection: View {
+    @State private var logins = SiteLogins.all
+    @State private var host = ""
+    @State private var user = ""
+    @State private var password = ""
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            ForEach(logins) { login in
+                HStack {
+                    Label(login.host, systemImage: "key")
+                    Spacer()
+                    Text(login.user).foregroundStyle(.secondary)
+                    Button {
+                        SiteLogins.remove(login)
+                        logins = SiteLogins.all
+                    } label: { Image(systemName: "minus.circle") }
+                    .buttonStyle(.borderless)
+                }
+            }
+            HStack {
+                TextField("Site", text: $host, prompt: Text("files.example.com"))
+                TextField("User name", text: $user)
+                SecureField("Password", text: $password)
+                Button("Add") {
+                    if SiteLogins.add(host: host, user: user, password: password) {
+                        host = ""; user = ""; password = ""; problem = nil
+                    } else {
+                        problem = "Couldn't save it: fill in all three (the Keychain may also have said no)."
+                    }
+                    logins = SiteLogins.all
+                }
+                .disabled(host.isEmpty || user.isEmpty || password.isEmpty)
+            }
+            if let problem { Text(problem).font(.caption).foregroundStyle(.red) }
+        } header: {
+            Text("Site logins")
+        } footer: {
+            Text("For sites that ask for a user name and password before a download (a box from the browser, not a page on the site). Toolbelt sends them only to that site. Passwords are kept in your Mac's Keychain. For sites you sign in to on a page, use Chrome: its downloads come with your sign-in.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// 0.35: send downloads through a proxy.
+struct ProxySection: View {
+    @State private var proxy = Prefs.downloadProxy
+
+    var body: some View {
+        Section {
+            Picker("Proxy", selection: $proxy.kind) {
+                ForEach(ProxySettings.Kind.allCases) { Text($0.title).tag($0) }
+            }
+            if proxy.kind != .none {
+                TextField("Server", text: $proxy.host, prompt: Text("proxy.example.com"))
+                TextField("Port", value: $proxy.port, format: .number.grouping(.never))
+            }
+        } header: {
+            Text("Proxy")
+        } footer: {
+            Text("Downloads, the site grabber and projects go through this proxy. “No proxy” uses your Mac's own network settings. Takes effect for downloads that start after the change.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onChange(of: proxy) { Prefs.downloadProxy = proxy }
     }
 }
