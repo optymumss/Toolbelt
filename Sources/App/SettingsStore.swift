@@ -225,6 +225,46 @@ enum Prefs {
         }
     }
 
+    /// 0.35: saved site logins (passwords are in the Keychain).
+    static var downloadLogins: [SiteLogin] {
+        get { (store.raw("downloads.logins") as? [[String: String]] ?? []).compactMap { entry in
+            guard let host = entry["host"], let user = entry["user"] else { return nil }
+            return SiteLogin(host: host, user: user)
+        } }
+        set { store.set(newValue.map { ["host": $0.host, "user": $0.user] }, for: "downloads.logins") }
+    }
+
+    /// 0.35: a proxy for downloads.
+    static var downloadProxy: ProxySettings {
+        get {
+            guard let entry = store.raw("downloads.proxy") as? [String: Any] else { return ProxySettings() }
+            return ProxySettings(kind: ProxySettings.Kind(rawValue: entry["kind"] as? String ?? "") ?? .none,
+                                 host: entry["host"] as? String ?? "", port: entry["port"] as? Int ?? 8080)
+        }
+        set {
+            store.set(["kind": newValue.kind.rawValue, "host": newValue.host, "port": newValue.port], for: "downloads.proxy")
+            NetworkSettings.currentProxy = newValue
+        }
+    }
+
+    /// 0.35: mark finished downloads as from the internet, so macOS checks them when they're opened.
+    static var downloadQuarantine: Bool {
+        get { store.value("downloads.quarantine", default: true) }
+        set { store.set(newValue, for: "downloads.quarantine") }
+    }
+
+    /// 0.35: a virus scanner run on each finished download (%file% is the file); empty: none.
+    static var downloadScanCommand: String {
+        get { store.value("downloads.scanCommand", default: "") }
+        set { store.set(newValue, for: "downloads.scanCommand") }
+    }
+
+    /// Move files the scanner flags to the Trash.
+    static var downloadScanTrash: Bool {
+        get { store.value("downloads.scanTrash", default: true) }
+        set { store.set(newValue, for: "downloads.scanTrash") }
+    }
+
     /// 0.34: offer to download links to files when they're copied.
     static var downloadCatchClipboard: Bool {
         get { store.value("downloads.catchClipboard", default: true) }

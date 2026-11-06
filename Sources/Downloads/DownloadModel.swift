@@ -45,6 +45,8 @@ struct DownloadItem: Identifiable, Codable, Equatable {
     var pageURL: URL? = nil
     /// 0.34: a folder chosen for this download (the site grabber's), instead of its category's.
     var folder: String? = nil
+    /// 0.35: what the virus scanner said about the finished file, if it flagged it.
+    var warning: String? = nil
 
     var isStream: Bool { kind == "hls" }
 
@@ -54,7 +56,7 @@ struct DownloadItem: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, url, name, state, received, total, segments, acceptsRanges, finalPath, error, added, finished, queueID, headers, nameIsFixed
-        case kind, audioURL, pageURL, folder
+        case kind, audioURL, pageURL, folder, warning
     }
 
     var progress: Double? {

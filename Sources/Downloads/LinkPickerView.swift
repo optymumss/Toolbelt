@@ -313,6 +313,16 @@ final class GrabberModel: ObservableObject {
 
     func stop() { grabber?.cancel() }
 
+    /// 0.35: keeps this grab as a project that runs again by itself (opens it in the Projects window).
+    func saveAsProject() {
+        guard let start = startURL else { return }
+        let name = start.host ?? "Site"
+        let project = DownloadProject(name: name, start: start.absoluteString, template: template, depth: depth, maxFiles: maxFiles,
+                                      sameSite: sameSite, folder: Prefs.downloadFolder.appendingPathComponent("Projects/\(name)").path)
+        ProjectStore.shared.update(project)
+        ProjectsWindow.show(select: project.id)
+    }
+
     /// For the screenshot: as if it had just found these on the site.
     func showExample(links: [FoundLink]) {
         picker = LinkPickerModel(title: "\(links.count) files on 4 pages of \(startURL?.host ?? "")", links: links, page: address, tickAll: true)
@@ -325,7 +335,7 @@ final class GrabberModel: ObservableObject {
     nonisolated static func fetch(_ url: URL) async -> SiteGrabber.Page? {
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        guard let (bytes, response) = try? await URLSession.shared.bytes(for: request),
+        guard let (bytes, response) = try? await NetworkSettings.sharedSession.bytes(for: request),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         let type = http.mimeType ?? ""
         let finalURL = http.url ?? url
@@ -349,7 +359,7 @@ final class GrabberModel: ObservableObject {
     nonisolated static func save(_ url: URL, to destination: URL) async -> String? {
         var request = URLRequest(url: url, timeoutInterval: 60)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        guard let (file, response) = try? await URLSession.shared.download(for: request),
+        guard let (file, response) = try? await NetworkSettings.sharedSession.download(for: request),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         try? FileManager.default.removeItem(at: destination)
         guard (try? FileManager.default.moveItem(at: file, to: destination)) != nil else { return nil }
@@ -387,6 +397,9 @@ struct GrabberView: View {
                 if model.isWorking {
                     Button("Stop") { model.stop() }
                 } else {
+                    Button("Save as Project…") { model.saveAsProject() }
+                        .help("Run this grab again by itself, downloading only new and changed files")
+                        .disabled(model.startURL == nil)
                     Button(model.template == .site ? "Save Site" : "Find Files") { model.start() }
                         .keyboardShortcut(.defaultAction)
                         .disabled(model.startURL == nil)

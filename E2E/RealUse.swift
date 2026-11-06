@@ -1495,9 +1495,13 @@ final class RealUse: NSObject, NSApplicationDelegate {
         for name in ["a.pdf", "b.zip", "pic1.png", "pic2.png", "pic3.png"] {
             try? Data(repeating: UInt8(name.count), count: 20_000).write(to: site.appendingPathComponent(name))
         }
+        // 0.35: one Python program serves the site, asks for a password under /private/, and is also a proxy
+        // (on the next port) that serves the same site for any host name, writing each address to proxy-log.txt.
+        let script = data.appendingPathComponent("site-server.py")
+        try? Data(Self.siteServer.utf8).write(to: script)
         let server = Process()
         server.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        server.arguments = ["python3", "-m", "http.server", "\(Self.sitePort)", "--bind", "127.0.0.1", "--directory", site.path]
+        server.arguments = ["python3", script.path, site.path, "\(Self.sitePort)", "\(Self.proxyPort)"]
         server.standardOutput = FileHandle.nullDevice
         server.standardError = FileHandle.nullDevice
         guard (try? server.run()) != nil else {
@@ -1571,6 +1575,115 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("a copied link to a web page isn't offered", status("linkOffer").isEmpty, "offer: \(status("linkOffer"))")
         command("catch-clipboard:off")
         command("picker-close")
+        await safetyTests(site: site, home: home)
+    }
+
+    static let proxyPort = 12397
+
+    static let siteServer = #"""
+    import base64, http.server, os, sys, threading, urllib.parse
+    root, port, proxy_port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+    WANT = "Basic " + base64.b64encode(b"tb:pw").decode()
+
+    class Site(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=root, **kwargs)
+        def send_head(self):
+            if self.path.startswith("/private/") and self.headers.get("Authorization") != WANT:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="test"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return None
+            return super().send_head()
+        def log_message(self, *args):
+            pass
+
+    class Proxy(Site):
+        def send_head(self):
+            with open(os.path.join(root, "proxy-log.txt"), "a") as log:
+                log.write(self.path + "\n")
+            parts = urllib.parse.urlsplit(self.path)
+            self.path = (parts.path or "/") + ("?" + parts.query if parts.query else "")
+            return super().send_head()
+
+    proxy = http.server.ThreadingHTTPServer(("127.0.0.1", proxy_port), Proxy)
+    threading.Thread(target=proxy.serve_forever, daemon=True).start()
+    http.server.ThreadingHTTPServer(("127.0.0.1", port), Site).serve_forever()
+    """#
+
+    /// 0.35: a project kept in step with the site, a proxy, a site login, the quarantine mark and a virus scanner.
+    func safetyTests(site: URL, home: String) async {
+        say("— 0.35: download projects, proxy, site login, virus check")
+        func list(_ key: String) -> [String] { toolbeltStatus()[key] as? [String] ?? [] }
+        func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
+        let downloads = data.appendingPathComponent("Downloads")
+
+        // A project: the first run downloads the start page's files, the next only what changed.
+        let syncFolder = data.appendingPathComponent("Sync")
+        let project = DownloadProject(name: "Test sync", start: home, template: .files, depth: 0, folder: syncFolder.path, repeats: .manual)
+        try? JSONEncoder().encode([project]).write(to: data.appendingPathComponent("projects.json"))
+        command("projects-reload")
+        await pause(0.5)
+        command("project-run:Test sync")
+        check("a project's first run downloads the site's files",
+              await waitUntil(30) { list("projects") == ["Test sync: 3 new, 0 changed, 0 unchanged"] }, "projects: \(list("projects"))")
+        check("… into its folder, as on the site", ["a.pdf", "b.zip", "pic1.png"].allSatisfy { exists(syncFolder.appendingPathComponent($0).path) })
+        command("project-run:Test sync")
+        check("the next run downloads nothing that hasn't changed",
+              await waitUntil(30) { list("projects") == ["Test sync: 0 new, 0 changed, 3 unchanged"] }, "projects: \(list("projects"))")
+        let changed = site.appendingPathComponent("b.zip")
+        try? Data(repeating: 7, count: 30_000).write(to: changed)
+        try? FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: changed.path)
+        command("project-run:Test sync")
+        check("a changed file is downloaded again",
+              await waitUntil(30) { list("projects") == ["Test sync: 0 new, 1 changed, 2 unchanged"] }, "projects: \(list("projects"))")
+        check("… replacing the old copy", (try? Data(contentsOf: syncFolder.appendingPathComponent("b.zip")))?.count == 30_000)
+
+        // A proxy: a made-up site name only the proxy knows.
+        try? Data(repeating: 3, count: 20_000).write(to: site.appendingPathComponent("proxied.zip"))
+        command("proxy:http 127.0.0.1 \(Self.proxyPort)")
+        await pause(0.5)
+        command("download-url:http://toolbelt-proxy-test.invalid/proxied.zip")
+        let proxied = downloads.appendingPathComponent("Archives/proxied.zip")
+        check("downloads go through the proxy", await waitUntil(20) { exists(proxied.path) },
+              "downloads: \(list("downloads").suffix(3)), proxy log: \((try? String(contentsOf: site.appendingPathComponent("proxy-log.txt"), encoding: .utf8)) ?? "none")")
+        command("proxy:none")
+        await pause(0.5)
+
+        // A site login, kept in the Keychain.
+        let privateFolder = site.appendingPathComponent("private")
+        try? FileManager.default.createDirectory(at: privateFolder, withIntermediateDirectories: true)
+        try? Data(repeating: 5, count: 20_000).write(to: privateFolder.appendingPathComponent("locked.zip"))
+        try? Data(repeating: 6, count: 20_000).write(to: privateFolder.appendingPathComponent("secret.zip"))
+        command("download-url:\(home)private/locked.zip")
+        check("a site that asks for a password refuses without a login",
+              await waitUntil(15) { list("downloads").contains("locked.zip failed") }, "downloads: \(list("downloads").suffix(3))")
+        command("login-add:127.0.0.1 tb pw")
+        check("a login is saved, its password in the Keychain", await waitUntil(5) { list("logins") == ["tb@127.0.0.1 saved"] },
+              "logins: \(list("logins"))")
+        command("download-url:\(home)private/secret.zip")
+        let secret = downloads.appendingPathComponent("Archives/secret.zip")
+        check("with the login it downloads", await waitUntil(20) { exists(secret.path) }, "downloads: \(list("downloads").suffix(3))")
+        command("login-remove:127.0.0.1")
+
+        // Finished downloads carry the quarantine mark; a virus scanner can flag one.
+        let mark = DownloadSafety.quarantine(of: secret) ?? ""
+        check("a finished download is marked as from the internet", mark.contains(";Toolbelt;"), "mark: \(mark)")
+        let scanner = data.appendingPathComponent("scan.sh")
+        try? Data("#!/bin/bash\ncase \"$1\" in *eicar*) echo \"FOUND: Test-Signature\"; exit 1;; esac\nexit 0\n".utf8).write(to: scanner)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scanner.path)
+        command("scan:\(scanner.path) %file%")
+        try? Data(repeating: 9, count: 20_000).write(to: site.appendingPathComponent("eicar-test.zip"))
+        try? Data(repeating: 8, count: 20_000).write(to: site.appendingPathComponent("clean.zip"))
+        command("download-url:\(home)clean.zip")
+        command("download-url:\(home)eicar-test.zip")
+        check("the virus scanner flags a bad file", await waitUntil(20) { list("downloads").contains("eicar-test.zip completed flagged") },
+              "downloads: \(list("downloads").prefix(3))")
+        check("… and it goes to the Trash", !exists(downloads.appendingPathComponent("Archives/eicar-test.zip").path))
+        check("a clean file stays, unflagged", exists(downloads.appendingPathComponent("Archives/clean.zip").path)
+              && list("downloads").contains("clean.zip completed"), "downloads: \(list("downloads").prefix(3))")
+        command("scan:")
     }
 
     func macEventTests() async {

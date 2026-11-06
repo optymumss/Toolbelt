@@ -112,6 +112,7 @@ SCREENS=(
     "link-picker=link-picker"
     "grabber=grabber"
     "link-offer=link-offer"
+    "projects=projects"
     "launcher-download=launcher:https://example.com/files/big-file.zip"
     "settings-screenshots=settings-screenshots"
     "screenshot-editor=screenshot-editor"
