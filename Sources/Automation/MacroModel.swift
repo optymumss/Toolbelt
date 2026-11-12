@@ -226,6 +226,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case pauseUntil
         case readFile, browserGet, alert, askFolder, askFile, askSeveral
         case calculate, pictureFilter, runMacro
+        case forEach, switchCase, breakLoop, continueLoop, tryCatch, runTogether, splitText
 
         var id: String { rawValue }
 
@@ -254,10 +255,19 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .calculate: return "Calculate"
             case .pictureFilter: return "Change the clipboard's picture"
             case .runMacro: return "Run another macro and wait for it"
+            case .forEach: return "For each line, word, item or file…"
+            case .switchCase: return "Choose by value (switch)…"
+            case .breakLoop: return "Leave the loop"
+            case .continueLoop: return "Skip to the loop's next round"
+            case .tryCatch: return "Try… and if a step fails…"
+            case .runTogether: return "Run steps at the same time"
+            case .splitText: return "Split text into a list"
             }
         }
 
-        var hasChildren: Bool { self == .ifThen || self == .repeatTimes || self == .repeatWhile }
+        var hasChildren: Bool { [.ifThen, .repeatTimes, .repeatWhile, .forEach, .switchCase, .tryCatch, .runTogether].contains(self) }
+        /// Steps that only make sense inside a loop.
+        var isLoop: Bool { [.repeatTimes, .repeatWhile, .forEach].contains(self) }
     }
 
     var id = UUID()
@@ -285,6 +295,10 @@ struct MacroStep: Identifiable, Codable, Equatable {
     var onFailure: FailureMode? = nil
     /// Change the clipboard's picture: which change.
     var picture: PictureFilter? = nil
+    /// 0.36, For each: what to go through.
+    var source: LoopSource? = nil
+    /// 0.36, Choose by value: the cases, in order (the first that matches runs; `elseSteps` when none does).
+    var cases: [SwitchCase]? = nil
 
     var isOn: Bool { disabled != true }
 
@@ -316,6 +330,95 @@ struct MacroStep: Identifiable, Codable, Equatable {
             return filter == .readText ? "Read the clipboard picture's text → %\(name.isEmpty ? "Text" : name)%" : "Clipboard picture: \(filter.title)"
         case .runMacro: return "Run macro “\(text)”" + (name.isEmpty ? "" : " → %\(name)%")
         case .askSeveral: return "Ask \(MacroRun.fields(text2).map { "%\(MacroRun.variableName(for: $0))%" }.joined(separator: ", "))"
+        case .forEach: return "For each \((source ?? .lines).noun) in \(text.prefix(30)) → %\(name.isEmpty ? "Item" : name)%"
+        case .switchCase: return "Choose by \(text) (\((cases ?? []).count) case\((cases ?? []).count == 1 ? "" : "s"))"
+        case .breakLoop: return "Leave the loop"
+        case .continueLoop: return "Next round of the loop"
+        case .tryCatch: return "Try \(steps.count) step\(steps.count == 1 ? "" : "s")"
+        case .runTogether: return "Run \(steps.count) step\(steps.count == 1 ? "" : "s") at the same time" + (number == 0 ? " (don't wait)" : "")
+        case .splitText: return "Split \(text.prefix(30)) → %\(name.isEmpty ? "List" : name)%"
+        }
+    }
+
+    /// Every step inside this one (then/otherwise, loops, cases), for searching and copying.
+    var childLists: [[MacroStep]] { [steps, elseSteps] + (cases ?? []).map(\.steps) }
+}
+
+/// 0.36: what "For each" goes through.
+enum LoopSource: String, Codable, CaseIterable, Identifiable {
+    case lines, words, items, files, allFiles
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .lines: return "Each line of some text"
+        case .words: return "Each word of some text"
+        case .items: return "Each item of a list split by commas"
+        case .files: return "Each file in a folder"
+        case .allFiles: return "Each file in a folder and the folders inside it"
+        }
+    }
+    var noun: String {
+        switch self {
+        case .lines: return "line"
+        case .words: return "word"
+        case .items: return "item"
+        case .files, .allFiles: return "file"
+        }
+    }
+    var isFolder: Bool { self == .files || self == .allFiles }
+
+    /// The things to go through: text split up, or the files' full paths (sorted, hidden files left out).
+    func items(in text: String) -> [String] {
+        switch self {
+        case .lines:
+            return text.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        case .words:
+            return text.split(whereSeparator: \.isWhitespace).map(String.init)
+        case .items:
+            return text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        case .files, .allFiles:
+            let folder = URL(fileURLWithPath: (text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath)
+            let keys: [URLResourceKey] = [.isRegularFileKey]
+            var urls: [URL] = []
+            if self == .files {
+                urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys, options: .skipsHiddenFiles)) ?? []
+            } else if let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys, options: .skipsHiddenFiles) {
+                for case let url as URL in walker { urls.append(url) }
+            }
+            return urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+                .map(\.path).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        }
+    }
+}
+
+/// 0.36: one case of "Choose by value".
+struct SwitchCase: Identifiable, Codable, Equatable {
+    enum Test: String, Codable, CaseIterable, Identifiable {
+        case equals, contains, matches, isEmpty
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .equals: return "is"
+            case .contains: return "contains"
+            case .matches: return "matches the pattern"
+            case .isEmpty: return "is empty"
+            }
+        }
+    }
+
+    var id = UUID()
+    var test: Test = .equals
+    var value = ""
+    var steps: [MacroStep] = []
+
+    /// Whether `text` fits this case (ignoring case, like the other conditions).
+    func matches(_ text: String, value expanded: String) -> Bool {
+        switch test {
+        case .equals: return text.compare(expanded, options: .caseInsensitive) == .orderedSame
+        case .contains: return !expanded.isEmpty && text.localizedCaseInsensitiveContains(expanded)
+        case .matches: return text.range(of: expanded, options: [.regularExpression, .caseInsensitive]) != nil
+        case .isEmpty: return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 }
@@ -596,7 +699,7 @@ final class MacroStore: ObservableObject {
         let query = text.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return macros }
         func stepText(_ steps: [MacroStep]) -> String {
-            steps.map { "\($0.summary) \($0.text) \($0.text2) \(stepText($0.steps)) \(stepText($0.elseSteps))" }.joined(separator: " ")
+            steps.map { step in "\(step.summary) \(step.text) \(step.text2) " + step.childLists.map(stepText).joined(separator: " ") }.joined(separator: " ")
         }
         return macros.filter { macro in
             let haystack = ([macro.name] + macro.triggers.map(\.summary) + [stepText(macro.steps), group(of: macro)?.name ?? ""]).joined(separator: " ")

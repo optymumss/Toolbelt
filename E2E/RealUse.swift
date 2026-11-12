@@ -656,7 +656,36 @@ final class RealUse: NSObject, NSApplicationDelegate {
         var waiting = MacroStep(kind: .askInput)
         waiting.text = "E2E waiting question"
         waiting.name = "Reply"
+        // 0.36: For each (stopping at "stop"), choose by value, try/catch and a variable that lasts between runs.
+        var tally = MacroStep(kind: .setVariable)
+        tally.name = "Global_E2ECount"
+        tally.text = "%Global_E2ECount%x"
+        var leave = MacroStep(kind: .breakLoop)
+        leave.note = "leaves the loop at “stop”"
+        var seen = MacroStep(kind: .setVariable)
+        seen.name = "Seen"
+        seen.text = "%Seen%%Item%"
+        var choose = MacroStep(kind: .switchCase)
+        choose.text = "%Item%"
+        choose.cases = [SwitchCase(test: .equals, value: "stop", steps: [leave])]
+        choose.elseSteps = [seen]
+        var each = MacroStep(kind: .forEach)
+        each.source = .items
+        each.text = "a, b, stop, c"
+        each.name = "Item"
+        each.steps = [choose]
+        var missing = MacroStep(kind: .readFile)
+        missing.text = "/no/such/toolbelt/file.txt"
+        missing.name = "Never"
+        var caught = MacroStep(kind: .setVariable)
+        caught.name = "Caught"
+        caught.text = "yes"
+        var attempt = MacroStep(kind: .tryCatch)
+        attempt.steps = [missing, shellMark("not-skipped")]
+        attempt.elseSteps = [caught]
+        let flowMacro = Macro(name: "Test flow", steps: [tally, each, attempt, shellMark("flow-%Seen%-%Caught%-%Global_E2ECount%")])
         let extraMacros = [
+            flowMacro,
             Macro(name: "Test double", triggers: [MacroTrigger(kind: .calledByMacro)], steps: [double]),
             Macro(name: "Test sub", steps: [callDouble, shellMark("sub-%Got%")]),
             Macro(name: "Test tokens", steps: [shellMark("app-%FrontAppID%"), shellMark("win-%FrontWindow%")]),
@@ -765,6 +794,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await conditionTests()
             await kmActionTests()
             await kmExtraTests()
+            await flowTests()
             await updateTests()
             await linkTests()
             await macEventTests()
@@ -1397,6 +1427,23 @@ final class RealUse: NSObject, NSApplicationDelegate {
     /// Brings Finder to the front without opening a Finder window (which would stay over the screenshots taken later).
     func activateFinder() {
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.activate()
+    }
+
+    func flowTests() async {
+        say("— 0.36: for each, choose by value, leave the loop, try/catch, variables that last")
+        _ = await runMacro("Test flow")
+        check("For each goes through a list and leaves the loop at “stop”; a failing step is caught",
+              await waitUntil(5) { self.count("flow-ab-yes-x") == 1 }, "markers: \(markers().filter { $0.hasPrefix("flow") })")
+        check("… and the steps after the failing one are skipped", count("not-skipped") == 0)
+        _ = await runMacro("Test flow")
+        check("a Global_ variable is kept from one run to the next", await waitUntil(5) { self.count("flow-ab-yes-xx") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("flow") })")
+        let saved = (try? Data(contentsOf: data.appendingPathComponent("variables.json")))
+            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }
+        check("… and saved, so it lasts after a restart", await waitUntil(3) {
+            ((try? Data(contentsOf: self.data.appendingPathComponent("variables.json")))
+                .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) })?["Global_E2ECount"] == "xx"
+        }, "variables.json: \(saved ?? [:])")
     }
 
     func kmExtraTests() async {
