@@ -263,10 +263,10 @@ final class MacroRun {
                 failed(step, "“\(address)” isn't a web address")
                 return
             }
-            var headers = WebRequest.headers(expand(step.headers ?? ""))
+            var headers = HTTPCall.headers(expand(step.headers ?? ""))
             headers = NetworkSettings.headers(headers, for: url) // a saved site login, if there is one
-            let request = WebRequest.request(url: url, method: step.method ?? "GET", headers: headers, body: expand(step.text2), timeout: step.timeout)
-            let answer = await WebRequest.send(request)
+            let request = HTTPCall.request(url: url, method: step.method ?? "GET", headers: headers, body: expand(step.text2), timeout: step.timeout)
+            let answer = await HTTPCall.send(request)
             let name = step.name.isEmpty ? "Response" : step.name
             set(name, answer.body)
             variables[name + "_status"] = String(answer.status)

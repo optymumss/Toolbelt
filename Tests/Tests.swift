@@ -5287,14 +5287,14 @@ enum MacroDataTests {
         check(data.failures.contains { $0.contains("nothing at") }, "a path that isn't there counts as the step failing", "\(data.failures)")
 
         // Web requests
-        checkEqual(WebRequest.headers("Accept: application/json\nX-Key:  abc \nbroken line\n"), ["Accept": "application/json", "X-Key": "abc"],
+        checkEqual(HTTPCall.headers("Accept: application/json\nX-Key:  abc \nbroken line\n"), ["Accept": "application/json", "X-Key": "abc"],
                    "header lines: Name: value")
-        let post = WebRequest.request(url: URL(string: "https://x.com/api")!, method: "post", headers: [:], body: #"{"a":1}"#, timeout: 5)
+        let post = HTTPCall.request(url: URL(string: "https://x.com/api")!, method: "post", headers: [:], body: #"{"a":1}"#, timeout: 5)
         check(post.httpMethod == "POST" && post.value(forHTTPHeaderField: "Content-Type") == "application/json" && post.httpBody == Data(#"{"a":1}"#.utf8),
               "a POST with a JSON body is sent as JSON")
-        let form = WebRequest.request(url: URL(string: "https://x.com/api")!, method: "PUT", headers: ["Content-Type": "text/plain"], body: "a=1", timeout: nil)
+        let form = HTTPCall.request(url: URL(string: "https://x.com/api")!, method: "PUT", headers: ["Content-Type": "text/plain"], body: "a=1", timeout: nil)
         checkEqual(form.value(forHTTPHeaderField: "Content-Type"), "text/plain", "a Content-Type you set is kept")
-        checkEqual(WebRequest.request(url: URL(string: "https://x.com")!, method: "GET", headers: [:], body: "ignored", timeout: nil).httpBody, nil,
+        checkEqual(HTTPCall.request(url: URL(string: "https://x.com")!, method: "GET", headers: [:], body: "ignored", timeout: nil).httpBody, nil,
                    "a GET sends no body")
         if let server = try? TestServer(size: 2000) {
             _ = DownloadTests.waitFor(5) { server.port != 0 }

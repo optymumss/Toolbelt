@@ -4,7 +4,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 // 0.37: macros that talk to the web, work with JSON and pictures, and new triggers.
-// - `WebRequest`: a request's headers and body from the step, and the answer (status, body).
+// - `HTTPCall`: a request's headers and body from the step, and the answer (status, body).
 // - `JSONTool`: a value at a path ("items[0].name"), how many things are in a list, and JSON made from Name=value lines.
 // - `ScreenGrab`: screenshots of the screen, the front window or an area, to a file or the clipboard.
 // - `PictureFile` / `PictureEdit`: open a picture file, change it (flip, rotate, resize, crop, trim, convert) and save it.
@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 
 // MARK: - Web requests
 
-enum WebRequest {
+enum HTTPCall {
     static let methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 
     /// "Name: value" lines → headers (blank lines and lines without a colon are left out).

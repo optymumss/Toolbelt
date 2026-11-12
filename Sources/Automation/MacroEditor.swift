@@ -764,7 +764,7 @@ struct StepEditor: View {
         case .webRequest:
             HStack {
                 Picker("", selection: Binding(get: { step.method ?? "GET" }, set: { step.method = $0 })) {
-                    ForEach(WebRequest.methods, id: \.self) { Text($0).tag($0) }
+                    ForEach(HTTPCall.methods, id: \.self) { Text($0).tag($0) }
                 }
                 .labelsHidden().fixedSize()
                 TextField("Address, e.g. https://example.com/api/items?q=%Query%", text: $step.text)
