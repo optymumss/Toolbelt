@@ -229,6 +229,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 automation.store.macros = [Macro(name: "Tidy downloaded photos", triggers: [MacroTrigger(kind: .menuBar)], steps: [safely])]
                 automation.selectOnOpen = automation.store.macros.first?.id
                 automation.open()
+            case "debugger", "conflict", "progress":
+                // 0.38: a macro paused in the debugger, the "which macro?" list, and the progress bar.
+                guard let automation = modules.module(.automation) as? AutomationModule else { break }
+                switch target {
+                case "debugger":
+                    var name = MacroStep(kind: .setVariable)
+                    name.name = "Customer"
+                    name.text = "Robin Lee"
+                    var total = MacroStep(kind: .calculate)
+                    total.text = "%Price% * 1.2"
+                    total.name = "Total"
+                    var send = MacroStep(kind: .webRequest)
+                    send.method = "POST"
+                    send.text = "https://example.com/api/invoices"
+                    send.breakpoint = true
+                    automation.store.macros = [Macro(name: "Send invoice", steps: [name, MacroStep(kind: .setVariable, name: "Price", text: "40"), total, send])]
+                    automation.debug(automation.store.macros[0])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        MainActor.assumeIsolated { DebuggerWindow.current?.continueRun() }
+                    }
+                case "conflict":
+                    ConflictPalette.show(["Paste as plain text", "Paste and match style", "Paste from history"], shortcut: "⌃⌥V") { _ in }
+                default:
+                    ProgressPanel.show("Resizing photo 7 of 20", percent: "35", owner: automation.makeRun(trigger: ""))
+                }
             case "variables":
                 // 0.36: variables that last between runs.
                 GlobalVariables.shared.set("Global_Tidied", "42")

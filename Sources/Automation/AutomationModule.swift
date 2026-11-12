@@ -34,6 +34,8 @@ final class AutomationModule: ToolbeltModule {
     private var hotKeys: [HotKey] = []
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var folderWatchers: [FolderWatcher] = []
+    /// 0.38: macros kept in step with other Macs through a shared folder.
+    private(set) lazy var syncer = MacroSyncer(store: store)
     /// 0.37: files changed or removed, dark mode, and the sound output.
     private var changeWatchers: [FolderChangeWatcher] = []
     private let theme = ThemeWatcher()
@@ -65,7 +67,10 @@ final class AutomationModule: ToolbeltModule {
     init(shortcuts: ShortcutCenter, gestures: GesturesModule? = nil) {
         runner = ActionRunner(shortcuts: shortcuts)
         self.gestures = gestures
-        store.onChange = { [weak self] in self?.arm() }
+        store.onChange = { [weak self] in
+            self?.arm()
+            self?.syncer.localChanged()
+        }
         gestures?.extraRules = { [weak self] in self?.gestureRules() ?? [] }
     }
 
@@ -89,6 +94,17 @@ final class AutomationModule: ToolbeltModule {
         }
         RealUseHooks.extraStatus["floatingMenus"] = { [weak self] in self?.panels.showingFrames ?? [:] }
         RealUseHooks.extraStatus["menuBarItems"] = { [weak self] in self?.panels.menuBarStatus ?? [] }
+        DebuggerWindow.registerTestHooks { [weak self] name in
+            if let macro = self?.store.macro(named: name) { self?.debug(macro) }
+        }
+        ConflictPalette.registerTestHooks()
+        ProgressPanel.registerTestHooks()
+        RealUseHooks.extraStatus["macroNames"] = { [weak self] in self?.store.macros.map(\.name) ?? [] }
+        RealUseHooks.commands["sync-folder"] = { [weak self] path in
+            Prefs.macroSyncFolder = path.isEmpty ? nil : path
+            self?.refreshSync()
+        }
+        refreshSync()
         arm()
         updateWebServer()
         if !announcedStart {
@@ -170,8 +186,27 @@ final class AutomationModule: ToolbeltModule {
         lastRun = run
         Task {
             await run.run(macro.steps)
+            ProgressPanel.hide(owner: run)
             done?()
         }
+    }
+
+    /// 0.38: runs a macro step by step in the debugger window.
+    func debug(_ macro: Macro) {
+        let run = makeRun(trigger: "")
+        let debugger = MacroDebugger(macroName: macro.name)
+        run.debugger = debugger
+        DebuggerWindow.show(debugger)
+        Task {
+            await run.run(macro.steps)
+            ProgressPanel.hide(owner: run)
+            debugger.done(run)
+        }
+    }
+
+    /// 0.38: syncing through the folder in the settings (or not at all).
+    func refreshSync() {
+        syncer.start(folder: Prefs.macroSyncFolder.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) })
     }
 
     /// A run that can run other macros (the "Run another macro and wait for it" step).
@@ -225,9 +260,22 @@ final class AutomationModule: ToolbeltModule {
         disarm()
         guard running else { return }
 
-        for (macro, trigger) in triggers([.hotKey]) where trigger.keyCode != 0 || trigger.modifiers != 0 {
-            let key = HotKey(shortcut: Shortcut(keyCode: trigger.keyCode, modifiers: trigger.modifiers)) { [weak self] in
-                self?.fire(macro)
+        // 0.38: one hot key per shortcut; when several macros share it, a small list asks which one.
+        for group in HotKeyGroups.group(triggers([.hotKey]).filter { $0.1.keyCode != 0 || $0.1.modifiers != 0 }) {
+            guard let first = group.first?.1 else { continue }
+            let shortcut = Shortcut(keyCode: first.keyCode, modifiers: first.modifiers)
+            let macros = group.map(\.0)
+            let key = HotKey(shortcut: shortcut) { [weak self] in
+                guard let self else { return }
+                let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                let candidates = macros.filter { self.store.isActive($0, in: front) }
+                if candidates.count == 1 {
+                    self.fire(candidates[0])
+                } else if candidates.count > 1 {
+                    ConflictPalette.show(candidates.map(\.name), shortcut: shortcut.display) { [weak self] index in
+                        if candidates.indices.contains(index) { self?.fire(candidates[index]) }
+                    }
+                }
             }
             if key.isRegistered { hotKeys.append(key) }
         }

@@ -51,7 +51,10 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    a failing step caught by Try (the rest skipped), and a Global_ variable kept from one run to the next and saved;
    and (0.37) a web request getting JSON from the test site and a POST echoed back, a screenshot of the front window
    saved smaller as a JPEG, a file changed and then removed in a watched folder starting macros, and dark mode
-   switching starting one.
+   switching starting one;
+   and (0.38) the debugger stepping through a macro (variables shown, Continue stopping at a marked step), two macros
+   sharing a shortcut offering a list (picked by the list and by pressing its number), the progress bar showing and
+   going away, and a macro added by "another Mac" to the shared sync file arriving and running.
    Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is

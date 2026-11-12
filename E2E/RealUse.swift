@@ -729,7 +729,30 @@ final class RealUse: NSObject, NSApplicationDelegate {
             Macro(name: "Test file removed", triggers: [removedTrigger], steps: [shellMark("removed-%Trigger%")]),
             Macro(name: "Test dark mode", triggers: [MacroTrigger(kind: .darkModeChanged)], steps: [shellMark("theme-%Trigger%")]),
         ]
-        let extraMacros = folderMacros + [
+        // 0.38: the debugger, two macros sharing a shortcut, and a progress bar.
+        var debugX = MacroStep(kind: .setVariable)
+        debugX.name = "X"
+        debugX.text = "1"
+        var debugY = MacroStep(kind: .setVariable)
+        debugY.name = "Y"
+        debugY.text = "%X%2"
+        var debugMark = shellMark("debug-%Y%")
+        debugMark.breakpoint = true
+        var shared = MacroTrigger(kind: .hotKey)
+        shared.keyCode = kVK_ANSI_P
+        shared.modifiers = controlKey | optionKey | shiftKey
+        var bar = MacroStep(kind: .progress)
+        bar.text = "Half way"
+        bar.text2 = "25 * 2"
+        var hold = MacroStep(kind: .pause)
+        hold.number = 2
+        let toolingMacros = [
+            Macro(name: "Test debug", steps: [debugX, debugY, MacroStep(kind: .pause, number: 0.1), debugMark]),
+            Macro(name: "Test conflict A", triggers: [shared], steps: [shellMark("conflict-A")]),
+            Macro(name: "Test conflict B", triggers: [shared], steps: [shellMark("conflict-B")]),
+            Macro(name: "Test progress", steps: [bar, hold, shellMark("progress-done")]),
+        ]
+        let extraMacros = toolingMacros + folderMacros + [
             webMacro2, shotMacro,
             flowMacro,
             Macro(name: "Test double", triggers: [MacroTrigger(kind: .calledByMacro)], steps: [double]),
@@ -841,6 +864,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await kmActionTests()
             await kmExtraTests()
             await flowTests()
+            await toolingTests()
             await updateTests()
             await linkTests()
             await macEventTests()
@@ -1473,6 +1497,69 @@ final class RealUse: NSObject, NSApplicationDelegate {
     /// Brings Finder to the front without opening a Finder window (which would stay over the screenshots taken later).
     func activateFinder() {
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.activate()
+    }
+
+    /// 0.38: the debugger, the "which macro?" list for a shared shortcut, the progress bar, and syncing macros.
+    func toolingTests() async {
+        say("— 0.38: debugger, shortcut conflicts, progress bar, syncing macros")
+        func status(_ key: String) -> String { toolbeltStatus()[key] as? String ?? "" }
+        func list(_ key: String) -> [String] { toolbeltStatus()[key] as? [String] ?? [] }
+
+        command("debug-run:Test debug")
+        check("the debugger stops before the first step", await waitUntil(5) { status("debugger") == "paused at %X% = 1" }, "debugger: \(status("debugger"))")
+        command("debug-step")
+        check("Step runs one step and shows the variables", await waitUntil(5) {
+            status("debugger") == "paused at %Y% = %X%2" && list("debuggerVariables").contains("X=1")
+        }, "debugger: \(status("debugger")), variables: \(list("debuggerVariables"))")
+        command("debug-continue")
+        check("Continue runs on to the step marked “Pause here”", await waitUntil(5) { status("debugger").hasPrefix("paused at Shell") },
+              "debugger: \(status("debugger"))")
+        check("… without having run it yet", count("debug-12") == 0)
+        command("debug-step")
+        check("and the macro finishes", await waitUntil(5) { status("debugger") == "finished" && self.count("debug-12") == 1 },
+              "debugger: \(status("debugger")), marker \(count("debug-12"))")
+        command("debug-close")
+
+        await focus()
+        await press(CGKeyCode(kVK_ANSI_P), Self.testMods, character: "p")
+        check("a shortcut used by two macros asks which one", await waitUntil(5) { list("conflict") == ["Test conflict A", "Test conflict B"] },
+              "conflict list: \(list("conflict"))")
+        command("conflict-pick:2")
+        check("… and runs the one picked", await waitUntil(5) { self.count("conflict-B") == 1 && self.count("conflict-A") == 0 },
+              "markers: \(markers().filter { $0.hasPrefix("conflict") })")
+        await press(CGKeyCode(kVK_ANSI_P), Self.testMods, character: "p")
+        _ = await waitUntil(5) { !list("conflict").isEmpty }
+        await press(CGKeyCode(kVK_ANSI_1), [], character: "1")
+        check("pressing its number picks one too", await waitUntil(5) { self.count("conflict-A") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("conflict") }), list: \(list("conflict"))")
+        if !list("conflict").isEmpty { command("conflict-pick:0") }
+
+        _ = await runMacro("Test progress")
+        check("the progress step shows a bar with its label and amount", await waitUntil(3) { status("progress") == "Half way 50%" },
+              "progress: \(status("progress"))")
+        check("… which goes away when the macro ends", await waitUntil(6) { self.count("progress-done") == 1 && status("progress").isEmpty },
+              "progress: \(status("progress")), marker \(count("progress-done"))")
+
+        let syncFolder = data.appendingPathComponent("sync")
+        command("sync-folder:\(syncFolder.path)")
+        let file = syncFolder.appendingPathComponent(MacroSync.fileName)
+        func synced() -> SyncedMacros? { (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(SyncedMacros.self, from: $0) } }
+        check("turning on sync writes the macros to the shared folder", await waitUntil(5) { synced()?.macros.contains { $0.name == "Test flow" } == true },
+              "file: \(FileManager.default.fileExists(atPath: file.path))")
+        if var fromOther = synced() {
+            var markStep = MacroStep(kind: .action)
+            markStep.action = mark("synced")
+            var arrived = Macro(name: "Synced macro", steps: [markStep])
+            arrived.modified = Date()
+            fromOther.device = "Another Mac"
+            fromOther.macros.append(arrived)
+            try? JSONEncoder().encode(fromOther).write(to: file, options: .atomic)
+        }
+        check("a macro another Mac adds to the shared file arrives", await waitUntil(15) { list("macroNames").contains("Synced macro") },
+              "macros: \(list("macroNames").suffix(3))")
+        _ = await runMacro("Synced macro")
+        check("… and runs", await waitUntil(5) { self.count("synced") == 1 })
+        command("sync-folder:")
     }
 
     func flowTests() async {

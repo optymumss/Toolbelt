@@ -65,6 +65,7 @@ enum ToolbeltTests {
         t.group("Download projects, proxy, site logins and the virus check", ProjectSyncTests.run)
         t.group("Macros: for each, choose by value, leave/skip a loop, try, at the same time, split, lasting variables", MacroFlowTests.run)
         t.group("Macros: web requests, JSON, screenshots, picture files, folder changes", MacroDataTests.run)
+        t.group("Macros: debugger, shortcut conflicts, progress, syncing between Macs", MacroToolingTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -5383,5 +5384,96 @@ enum MacroDataTests {
         check([MacroTrigger.Kind.fileChanged, .fileRemoved, .darkModeChanged, .soundOutputChanged].allSatisfy { !$0.title.isEmpty }
               && [MacroStep.Kind.webRequest, .json, .screenshot, .pictureFile].allSatisfy { !$0.title.isEmpty },
               "the new triggers and steps have names")
+    }
+}
+
+@MainActor
+enum MacroToolingTests {
+    static func run() {
+        let runner = ActionRunner(shortcuts: ShortcutCenter())
+        func set(_ name: String, _ value: String) -> MacroStep {
+            AutomationTests.step(.setVariable, name: name, text: value)
+        }
+
+        // Debugger: step by step, then let it run on to a "Pause here" step, then stop
+        let debugged = MacroRun(runner: runner)
+        let debugger = MacroDebugger(macroName: "Test")
+        debugged.debugger = debugger
+        var marked = set("C", "3")
+        marked.breakpoint = true
+        let done = Box(false)
+        Task { @MainActor in await debugged.run([set("A", "1"), set("B", "%A%2"), marked, set("D", "4")]); done.value = true }
+        _ = DownloadTests.waitFor(5) { debugger.isPaused }
+        checkEqual(debugger.current, "%A% = 1", "the debugger stops before the first step")
+        debugger.step()
+        _ = DownloadTests.waitFor(5) { debugger.current == "%B% = %A%2" }
+        check(debugger.variables.contains { $0.name == "A" && $0.value == "1" }, "… showing the variables so far", "\(debugger.variables)")
+        debugger.continueRun()
+        _ = DownloadTests.waitFor(5) { debugger.current == "%C% = 3" && debugger.isPaused }
+        checkEqual(debugged.value(of: "B"), "12", "Continue runs on…")
+        check(debugger.isPaused && debugger.current == "%C% = 3", "… until a step marked “Pause here”")
+        debugger.stop()
+        _ = DownloadTests.waitFor(5) { done.value }
+        checkEqual([debugged.value(of: "C"), debugged.value(of: "D")], ["", ""], "Stop ends the macro there")
+
+        // Shortcut conflicts
+        func hotKey(_ code: Int) -> MacroTrigger {
+            var trigger = MacroTrigger(kind: .hotKey)
+            trigger.keyCode = code
+            trigger.modifiers = 0x0800
+            return trigger
+        }
+        let a = Macro(name: "A"), b = Macro(name: "B"), c = Macro(name: "C")
+        let groups = HotKeyGroups.group([(a, hotKey(1)), (b, hotKey(2)), (c, hotKey(1))])
+        checkEqual(groups.map { $0.map(\.0.name) }, [["A", "C"], ["B"]], "macros sharing a shortcut are grouped, to ask which one")
+
+        // Progress
+        checkEqual([ProgressPanel.fraction("50"), ProgressPanel.fraction("25%"), ProgressPanel.fraction("3 * 10"), ProgressPanel.fraction("150")],
+                   [0.5, 0.25, 0.3, 1], "progress from a percent, a sum, and never past 100%")
+        checkEqual(ProgressPanel.fraction("soon"), nil, "no number: a moving bar")
+
+        // Syncing between Macs
+        let old = Date(timeIntervalSince1970: 1000), new = Date(timeIntervalSince1970: 2000)
+        var mine = Macro(name: "Mine"), shared = Macro(name: "Shared v1"), gone = Macro(name: "Deleted elsewhere")
+        mine.modified = old
+        shared.modified = old
+        gone.modified = old
+        var sharedNewer = shared
+        sharedNewer.name = "Shared v2"
+        sharedNewer.modified = new
+        var theirs = Macro(name: "Theirs")
+        theirs.modified = new
+        let merged = MacroSync.merge(local: [mine, shared, gone], remote: [sharedNewer, theirs], deleted: [gone.id: new])
+        checkEqual(merged.map(\.name), ["Mine", "Shared v2", "Theirs"], "syncing keeps the newer copy, adds the other Mac's, and drops deleted ones")
+        var editedAfter = gone
+        editedAfter.modified = Date(timeIntervalSince1970: 3000)
+        checkEqual(MacroSync.merge(local: [editedAfter], remote: [], deleted: [gone.id: new]).count, 1, "… unless it was changed after being deleted")
+        let now = Date()
+        let cleaned = MacroSync.mergeDeleted([mine.id: now.addingTimeInterval(-100 * 24 * 3600)], [theirs.id: now], now: now)
+        check(cleaned[theirs.id] != nil && cleaned[mine.id] == nil, "deletion records are kept for 90 days")
+
+        let store = MacroStore()
+        let kept = (store.macros, store.groups)
+        store.macros = [mine]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-sync-\(UUID().uuidString)")
+        let syncer = MacroSyncer(store: store)
+        syncer.start(folder: folder)
+        let file = folder.appendingPathComponent(MacroSync.fileName)
+        let written = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(SyncedMacros.self, from: $0) }
+        checkEqual(written?.macros.map(\.name), ["Mine"], "turning sync on writes this Mac's macros to the folder")
+        let other = SyncedMacros(device: "Other Mac", macros: [mine, theirs], groups: [], deleted: [:])
+        try? JSONEncoder().encode(other).write(to: file)
+        syncer.pull()
+        checkEqual(store.macros.map(\.name), ["Mine", "Theirs"], "a macro made on another Mac arrives")
+        store.macros = store.macros.filter { $0.name != "Theirs" }
+        syncer.localChanged()
+        let after = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(SyncedMacros.self, from: $0) }
+        check(after?.macros.map(\.name) == ["Mine"] && after?.deleted[theirs.id] != nil, "deleting one here deletes it for the other Macs too")
+        syncer.start(folder: nil)
+        store.macros = kept.0
+        store.groups = kept.1
+        try? FileManager.default.removeItem(at: folder)
+
+        check(!MacroStep.Kind.progress.title.isEmpty, "the progress step has a name")
     }
 }

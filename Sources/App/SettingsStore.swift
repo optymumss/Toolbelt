@@ -225,6 +225,12 @@ enum Prefs {
         }
     }
 
+    /// 0.38: the folder macros are synced through (nil: not synced).
+    static var macroSyncFolder: String? {
+        get { store.raw("macros.syncFolder") as? String }
+        set { store.set(newValue, for: "macros.syncFolder") }
+    }
+
     /// 0.35: saved site logins (passwords are in the Keychain).
     static var downloadLogins: [SiteLogin] {
         get { (store.raw("downloads.logins") as? [[String: String]] ?? []).compactMap { entry in

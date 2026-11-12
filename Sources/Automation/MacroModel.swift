@@ -237,6 +237,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case calculate, pictureFilter, runMacro
         case forEach, switchCase, breakLoop, continueLoop, tryCatch, runTogether, splitText
         case webRequest, json, screenshot, pictureFile
+        case progress
 
         var id: String { rawValue }
 
@@ -276,6 +277,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .json: return "JSON: get a value, count, make"
             case .screenshot: return "Take a screenshot"
             case .pictureFile: return "Change a picture file"
+            case .progress: return "Show progress"
             }
         }
 
@@ -323,6 +325,8 @@ struct MacroStep: Identifiable, Codable, Equatable {
     var area: String? = nil
     /// 0.37, Change a picture file: which change.
     var pictureEdit: PictureEdit? = nil
+    /// 0.38: the debugger stops here even when the macro is let run on.
+    var breakpoint: Bool? = nil
 
     var isOn: Bool { disabled != true }
 
@@ -367,6 +371,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
             return mode == .make ? "Make JSON → %\(name.isEmpty ? "JSON" : name)%" : "\(mode.title) \(text2) → %\(name.isEmpty ? "Value" : name)%"
         case .screenshot: return "Screenshot of \((capture ?? .screen).title.lowercased()) → " + (text.isEmpty ? "clipboard" : (text as NSString).lastPathComponent)
         case .pictureFile: return "\((pictureEdit ?? .convert).title.components(separatedBy: " (").first ?? ""): \((text as NSString).lastPathComponent)"
+        case .progress: return text2.lowercased() == "hide" ? "Hide progress" : "Progress “\(text.prefix(30))” \(text2)"
         }
     }
 
