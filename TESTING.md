@@ -46,7 +46,10 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    and (0.35) a download project's three runs (everything new, then nothing changed, then one changed file),
    a download through a proxy to a made-up site name only the proxy knows, a password-protected file refused
    without a login and downloaded with one (kept in the Keychain), the quarantine mark on a finished download,
-   and a test virus scanner flagging a file that then goes to the Trash. Each check confirms the action really
+   and a test virus scanner flagging a file that then goes to the Trash;
+   and (0.36) a macro going through a list with For each and leaving the loop at "stop" via Choose by value,
+   a failing step caught by Try (the rest skipped), and a Global_ variable kept from one run to the next and saved.
+   Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is
    only made after both pass.

@@ -63,6 +63,7 @@ enum ToolbeltTests {
         t.group("Updating Toolbelt from GitHub: versions, releases, unpacking and swapping", UpdaterTests.run)
         t.group("Downloading all links: links on a page, types, category folders, copied links, site grabber", LinkGrabberTests.run)
         t.group("Download projects, proxy, site logins and the virus check", ProjectSyncTests.run)
+        t.group("Macros: for each, choose by value, leave/skip a loop, try, at the same time, split, lasting variables", MacroFlowTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -5116,5 +5117,134 @@ enum ProjectSyncTests {
         let item = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"https://x.com/a","name":"a","state":"completed","received":1,"segments":[],"acceptsRanges":false,"added":0,"warning":"flagged"}"#
         checkEqual((try? JSONDecoder().decode(DownloadItem.self, from: Data(item.utf8)))?.warning, "flagged", "a scanner's warning is kept with the download")
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+@MainActor
+enum MacroFlowTests {
+    static func step(_ kind: MacroStep.Kind, name: String = "", text: String = "", text2: String = "", number: Double = 1,
+                     steps: [MacroStep] = [], elseSteps: [MacroStep] = []) -> MacroStep {
+        AutomationTests.step(kind, name: name, text: text, text2: text2, number: number, steps: steps, elseSteps: elseSteps)
+    }
+
+    static func run() {
+        let runner = ActionRunner(shortcuts: ShortcutCenter())
+
+        // For each
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-foreach-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder.appendingPathComponent("inner"), withIntermediateDirectories: true)
+        for name in ["b.txt", "a.txt", ".hidden", "inner/c.txt"] { FileManager.default.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data()) }
+        checkEqual(LoopSource.lines.items(in: "one\n\ntwo\n"), ["one", "two"], "for each line skips blank lines")
+        checkEqual(LoopSource.words.items(in: "a  b\nc"), ["a", "b", "c"], "for each word")
+        checkEqual(LoopSource.items.items(in: "red, green ,, blue"), ["red", "green", "blue"], "for each item of a comma list")
+        checkEqual(LoopSource.files.items(in: folder.path).map { ($0 as NSString).lastPathComponent }, ["a.txt", "b.txt"],
+                   "for each file in a folder: sorted, hidden ones left out")
+        checkEqual(LoopSource.allFiles.items(in: folder.path).map { ($0 as NSString).lastPathComponent }, ["a.txt", "b.txt", "c.txt"],
+                   "… or in the folders inside it too")
+        try? FileManager.default.removeItem(at: folder)
+
+        let loop = MacroRun(runner: runner)
+        var each = step(.forEach, name: "Fruit", text: "apple, stop, cherry", steps: [
+            step(.ifThen, steps: [step(.breakLoop)]),
+            step(.setVariable, name: "Got", text: "%Got%%Fruit%;"),
+        ])
+        each.source = .items
+        each.steps[0].condition = MacroCondition(left: "%Fruit%", test: .equals, right: "stop")
+        var skip = step(.repeatTimes, number: 4, steps: [
+            step(.ifThen, steps: [step(.continueLoop)]),
+            step(.setVariable, name: "Odd", text: "%Odd%%Index%"),
+        ])
+        skip.steps[0].condition = MacroCondition(left: "%Index%", test: .equals, right: "2")
+        AutomationTests.runSteps(loop, [each, skip, step(.breakLoop), step(.setVariable, name: "After", text: "ran")])
+        checkEqual(loop.value(of: "Got"), "apple;", "For each runs its steps for each item; Leave the loop ends it")
+        checkEqual(loop.value(of: "Odd"), "134", "Skip to the next round skips the rest of a round")
+        checkEqual(loop.value(of: "After"), "ran", "Leave the loop outside a loop does nothing")
+
+        // Choose by value
+        func choose(_ value: String) -> String {
+            let run = MacroRun(runner: runner)
+            var pick = step(.switchCase, text: value, elseSteps: [step(.setVariable, name: "Picked", text: "otherwise")])
+            pick.cases = [
+                SwitchCase(test: .equals, value: "safari", steps: [step(.setVariable, name: "Picked", text: "is")]),
+                SwitchCase(test: .contains, value: "chrome", steps: [step(.setVariable, name: "Picked", text: "contains")]),
+                SwitchCase(test: .matches, value: "^[0-9]+$", steps: [step(.setVariable, name: "Picked", text: "pattern")]),
+                SwitchCase(test: .isEmpty, steps: [step(.setVariable, name: "Picked", text: "empty")]),
+            ]
+            AutomationTests.runSteps(run, [pick])
+            return run.value(of: "Picked")
+        }
+        checkEqual([choose("Safari"), choose("Google Chrome"), choose("2041"), choose(" "), choose("Mail")],
+                   ["is", "contains", "pattern", "empty", "otherwise"], "Choose by value runs the first case that fits, or Otherwise")
+
+        // Try / if a step fails
+        let attempt = MacroRun(runner: runner)
+        var bad = step(.readFile, name: "Text", text: "/no/such/file")
+        bad.onFailure = .stop // inside Try, the failure is caught instead of stopping
+        AutomationTests.runSteps(attempt, [
+            step(.tryCatch, steps: [step(.repeatTimes, number: 3, steps: [bad, step(.setVariable, name: "Skipped", text: "no")])],
+                 elseSteps: [step(.setVariable, name: "Caught", text: "%FailureReason%")]),
+            step(.setVariable, name: "Carried", text: "on"),
+            step(.tryCatch, steps: [step(.setVariable, name: "Fine", text: "yes")], elseSteps: [step(.setVariable, name: "Wrong", text: "ran")]),
+        ])
+        check(attempt.value(of: "Caught").contains("couldn't be read"), "a failing step jumps to “if a step fails”, with %FailureReason%", attempt.value(of: "Caught"))
+        checkEqual(attempt.value(of: "Skipped"), "", "… skipping the rest (even inside a loop)")
+        checkEqual(attempt.value(of: "Carried"), "on", "and the macro carries on after")
+        checkEqual([attempt.value(of: "Fine"), attempt.value(of: "Wrong")], ["yes", ""], "with nothing failing, only the tried steps run")
+
+        // At the same time
+        let together = MacroRun(runner: runner)
+        let started = Date()
+        AutomationTests.runSteps(together, [
+            step(.runTogether, steps: [
+                step(.tryCatch, steps: [step(.pause, number: 1), step(.setVariable, name: "A", text: "1")]),
+                step(.tryCatch, steps: [step(.pause, number: 1), step(.setVariable, name: "B", text: "2")]),
+            ]),
+            step(.setVariable, name: "Both", text: "%A%%B%"),
+        ])
+        let took = Date().timeIntervalSince(started)
+        checkEqual(together.value(of: "Both"), "12", "steps run at the same time, and the macro waits for all of them")
+        check(took < 1.8, "… together (two 1-second pauses take about a second)", "\(took) s")
+        let background = MacroRun(runner: runner)
+        let begun = Date()
+        AutomationTests.runSteps(background, [step(.runTogether, number: 0, steps: [step(.pause, number: 2)]), step(.setVariable, name: "Done", text: "yes")])
+        check(Date().timeIntervalSince(begun) < 1.5 && background.value(of: "Done") == "yes", "with “don't wait” the macro goes straight on")
+
+        // Split text
+        let split = MacroRun(runner: runner)
+        AutomationTests.runSteps(split, [step(.splitText, name: "Part", text: "x;y;z", text2: ";"), step(.splitText, text: "l1\nl2")])
+        checkEqual([split.value(of: "Part"), split.value(of: "Part_count"), split.value(of: "Part_2")], ["x\ny\nz", "3", "y"],
+                   "split text gives a list (one per line), its count and each part")
+        checkEqual(split.value(of: "List_count"), "2", "… split at each line by default, into %List%")
+
+        // Variables that last
+        GlobalVariables.shared.remove("Global_Visits")
+        let first = MacroRun(runner: runner)
+        AutomationTests.runSteps(first, [step(.setVariable, name: "Global_Visits", text: "%Global_Visits%I"), step(.setVariable, name: "Plain", text: "x")])
+        let second = MacroRun(runner: runner)
+        AutomationTests.runSteps(second, [step(.setVariable, name: "Global_Visits", text: "%global_visits%I")])
+        checkEqual(second.value(of: "Global_Visits"), "II", "a Global_ variable lasts from one run to the next (names ignore capitals)")
+        checkEqual(second.value(of: "Plain"), "", "other variables last only while their macro runs")
+        GlobalVariables.shared.saveNow()
+        let reread = GlobalVariables()
+        checkEqual(reread.value("Global_Visits"), "II", "Global_ variables are saved, so they last after a restart")
+        check(!GlobalVariables.isGlobal("Global_") && GlobalVariables.isGlobal("GLOBAL_x") && !GlobalVariables.isGlobal("Globalx"),
+              "only names starting Global_ (and with more after it) are kept")
+        GlobalVariables.shared.remove("Global_Visits")
+
+        // Saving, copying, searching
+        var withCases = step(.switchCase, text: "%X%")
+        withCases.cases = [SwitchCase(value: "a", steps: [step(.notify, text: "deep inside")])]
+        let copy = withCases.renewingIDs()
+        check(copy.cases?[0].id != withCases.cases?[0].id && copy.cases?[0].steps[0].id != withCases.cases?[0].steps[0].id,
+              "copied steps get new identities, cases and their steps too")
+        let decoded = try? JSONDecoder().decode(MacroStep.self, from: JSONEncoder().encode(withCases))
+        checkEqual(decoded?.cases?.first?.steps.first?.text, "deep inside", "cases are saved with their steps")
+        let store = MacroStore()
+        let kept = store.macros
+        store.macros = [Macro(name: "Find me", steps: [withCases])]
+        checkEqual(store.search("deep inside").count, 1, "searching finds text inside a case's steps")
+        store.macros = kept
+        check(MacroStep.Kind.allCases.allSatisfy { !$0.title.isEmpty } && [MacroStep.Kind.forEach, .switchCase, .tryCatch, .runTogether].allSatisfy(\.hasChildren),
+              "the new steps have names, and the ones holding steps say so")
     }
 }

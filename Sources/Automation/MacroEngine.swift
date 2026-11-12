@@ -26,6 +26,17 @@ final class MacroRun {
     /// How often "Pause until" looks again (screen tests look less often: each look takes a screenshot).
     var pauseCheckEvery: Double = 0.25
     private var stopped = false
+    /// 0.36: "Leave the loop" / "Next round" were reached, and how many loops deep the run is.
+    private var breakRequested = false
+    private var continueRequested = false
+    private var loopDepth = 0
+    /// 0.36: inside "Try…": a failing step jumps to the "if a step fails" steps (the reason is kept here).
+    private var tryDepth = 0
+    private var caught: String?
+    /// The rest of the current steps are skipped (stopping, a caught failure, or leaving/skipping a loop round).
+    private var interrupted: Bool { stopped || caught != nil || breakRequested || continueRequested }
+    /// Things to go through in "For each" (a folder can hold more than a loop's usual limit).
+    static let itemLimit = 10_000
     /// Every step that ran, in order (switched-off steps are skipped), and the ones that failed.
     private(set) var log: [String] = []
     private(set) var failures: [String] = []
@@ -50,7 +61,9 @@ final class MacroRun {
         case "pointer": return "\(Int(MouseDriver.pointer.x)),\(Int(MouseDriver.pointer.y))"
         case "pointerx": return String(Int(MouseDriver.pointer.x))
         case "pointery": return String(Int(MouseDriver.pointer.y))
-        default: return variables[name] ?? ""
+        default:
+            if GlobalVariables.isGlobal(name) { return GlobalVariables.shared.value(name) }
+            return variables[name] ?? ""
         }
     }
 
@@ -58,6 +71,9 @@ final class MacroRun {
         if name.lowercased() == "clipboard" {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
+        } else if GlobalVariables.isGlobal(name) {
+            // 0.36: Global_ variables are kept between runs and shared by every macro.
+            GlobalVariables.shared.set(name, value)
         } else {
             variables[name] = value
         }
@@ -95,7 +111,7 @@ final class MacroRun {
 
     func run(_ steps: [MacroStep]) async {
         for step in steps where step.isOn {
-            if stopped { return }
+            if interrupted { return }
             log.append(step.summary)
             if log.count > 500 { log.removeFirst() }
             await run(step)
@@ -129,6 +145,7 @@ final class MacroRun {
             // Variables are passed to scripts as TB_Name environment variables.
             var environment: [String: String] = [:]
             for (name, value) in variables { environment["TB_" + name] = value }
+            for (name, value) in GlobalVariables.shared.values { environment["TB_" + name] = value }
             environment["TB_Clipboard"] = value(of: "Clipboard")
             let result = await Self.runProcess(tool, arguments, environment: environment, timeout: step.timeout)
             if !step.name.isEmpty { set(step.name, result.output) }
@@ -166,20 +183,80 @@ final class MacroRun {
             let yes = await isTrue(step.condition)
             await run(yes ? step.steps : step.elseSteps)
         case .repeatTimes:
+            loopDepth += 1
+            defer { loopDepth -= 1 }
             for index in 0..<min(Int(step.number), Self.loopLimit) {
-                if stopped { return }
                 variables["Index"] = String(index + 1)
                 await run(step.steps)
+                if endOfRound() { break }
             }
         case .repeatWhile:
             // Each loop counts from the start, whatever an earlier loop left in %Index%.
+            loopDepth += 1
+            defer { loopDepth -= 1 }
             variables["Index"] = "0"
             var count = 0
-            while count < Self.loopLimit, !stopped, await isTrue(step.condition) {
+            while count < Self.loopLimit, !interrupted, await isTrue(step.condition) {
                 count += 1
                 variables["Index"] = String(count)
                 await run(step.steps)
+                if endOfRound() { break }
             }
+        case .forEach:
+            let source = step.source ?? .lines
+            let items = source.items(in: expand(step.text))
+            if source.isFolder, items.isEmpty, !FileManager.default.fileExists(atPath: (expand(step.text) as NSString).expandingTildeInPath) {
+                failed(step, "there's no folder “\(expand(step.text))”")
+                return
+            }
+            loopDepth += 1
+            defer { loopDepth -= 1 }
+            let name = step.name.isEmpty ? "Item" : step.name
+            for (index, item) in items.prefix(Self.itemLimit).enumerated() {
+                set(name, item)
+                variables["Index"] = String(index + 1)
+                await run(step.steps)
+                if endOfRound() { break }
+            }
+        case .switchCase:
+            let value = expand(step.text)
+            if let match = (step.cases ?? []).first(where: { $0.matches(value, value: expand($0.value)) }) {
+                await run(match.steps)
+            } else {
+                await run(step.elseSteps)
+            }
+        case .breakLoop:
+            if loopDepth > 0 { breakRequested = true }
+        case .continueLoop:
+            if loopDepth > 0 { continueRequested = true }
+        case .tryCatch:
+            tryDepth += 1
+            await run(step.steps)
+            tryDepth -= 1
+            if let reason = caught {
+                caught = nil
+                variables["FailureReason"] = reason
+                await run(step.elseSteps)
+            }
+        case .runTogether:
+            let children = step.steps.filter(\.isOn)
+            if step.number == 0 {
+                // Don't wait: they carry on in the background while the macro goes on.
+                for child in children { Task { @MainActor in await self.run([child]) } }
+            } else {
+                await withTaskGroup(of: Void.self) { group in
+                    for child in children { group.addTask { @MainActor in await self.run([child]) } }
+                }
+            }
+        case .splitText:
+            let text = expand(step.text)
+            let separator = expand(step.text2)
+            let parts = separator.isEmpty ? text.components(separatedBy: .newlines) : text.components(separatedBy: separator)
+            let name = step.name.isEmpty ? "List" : step.name
+            let kept = parts.prefix(Self.itemLimit)
+            set(name, kept.joined(separator: "\n"))
+            variables[name + "_count"] = String(kept.count)
+            for (index, part) in kept.enumerated() { variables["\(name)_\(index + 1)"] = part }
         case .stop:
             stopped = true
         case .readFile:
@@ -251,9 +328,24 @@ final class MacroRun {
         }
     }
 
-    /// A step failed: carry on, stop, or stop and say so, as the step asks.
+    /// After a loop's round: true when the loop should end (leave the loop, stop, or a caught failure).
+    private func endOfRound() -> Bool {
+        continueRequested = false
+        if breakRequested {
+            breakRequested = false
+            return true
+        }
+        return stopped || caught != nil
+    }
+
+    /// A step failed: inside "Try…" it jumps to the "if a step fails" steps; otherwise carry on, stop, or stop
+    /// and say so, as the step asks.
     private func failed(_ step: MacroStep, _ reason: String) {
         failures.append("\(step.summary): \(reason)")
+        if tryDepth > 0 {
+            if caught == nil { caught = "\(step.summary): \(reason)" }
+            return
+        }
         switch step.onFailure ?? .carryOn {
         case .carryOn: break
         case .stop: stopped = true

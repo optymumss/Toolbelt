@@ -15,7 +15,7 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
 ## Build order
 
 1 App shell ✅ (v0.2) · 2 Clipboard ✅ (v0.3) · 3 Launcher ✅ (v0.4) · 4 Window management ✅ (v0.5) ·
-5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32). Self-update from GitHub releases ✅ (v0.33). Download all links, site grabber, copied links, category folders ✅ (v0.34). Download projects (sync), virus check, site logins, proxy ✅ (v0.35).
+5 Snippets ✅ (v0.6) · 6 Drop shelf ✅ (v0.7) · 7 Download manager ✅ (v0.8) · 8 Screenshots ✅ (v0.16) · 9 Gestures ✅ (v0.17) · 10 Automation/macros ✅ (v0.18). DMG install ✅ (v0.19). Video sizes + trackpad scroll/double tap ✅ (v0.20). BetterTouchTool parity + web server ✅ (v0.21). IDM-style unlimited parallel downloads ✅ (v0.22). Triggers window + conditions ✅ (v0.23). Key phases, repeat, sides, layout, more gestures ✅ (v0.24). Real-use + stability tests ✅ (v0.25). Rotate/edge/TipSwipe, wheel, screen corners, Hyper key, key remap, Mac-event triggers ✅ (v0.26). Mouse/web-search/Shortcuts actions + Bluetooth, Wi-Fi, Dock, Trash, eject, screen saver, emoji ✅ (v0.27). Floating menus, menu-bar items, presets ✅ (v0.28). Macro editor: record, step menu, undo, export, used shortcuts, timeouts/failures ✅ (v0.29). Macro triggers (clipboard, start/login, window/title) + Pause until + Mac conditions ✅ (v0.30). KM actions: apps, windows, files, browser, download, speech, prompts ✅ (v0.31). Calculations, picture filters, sub-macros, palettes, Macros window lists/back/helper, non-blocking prompts ✅ (v0.32). Self-update from GitHub releases ✅ (v0.33). Download all links, site grabber, copied links, category folders ✅ (v0.34). Download projects (sync), virus check, site logins, proxy ✅ (v0.35). For each, switch, break/continue, try, run together, split, Global_ variables ✅ (v0.36).
 [Core] items of every module first, then [Next], then [Later].
 
 ## Code layout
@@ -106,6 +106,12 @@ Raycast, Dropover, Dropzone, Paste and IDM. Not sandboxed, not on the App Store.
   `DownloadItem.warning`, optional Trash). Test hooks: project-run, projects-reload, proxy, login-add/remove, scan,
   download-url; status keys projects, downloads, logins. The real-use site is a Python script (site + /private/ Basic
   auth + a proxy on 12397 that serves the site for any host).
+- 0.36 macro flow: step kinds `.forEach` (`MacroStep.source: LoopSource`), `.switchCase` (`cases: [SwitchCase]`, else =
+  `elseSteps`), `.breakLoop`/`.continueLoop` (flags + `loopDepth`; ignored outside loops), `.tryCatch` (steps / elseSteps;
+  `failed()` inside sets `caught` instead of onFailure; %FailureReason%), `.runTogether` (task group; number 0 = don't
+  wait), `.splitText`. `MacroRun.interrupted` unwinds `run(steps)`. `childLists` walks every nested list (search,
+  copy). `GlobalVariables` (Automation/MacroVariables.swift): names starting Global_ (any case) live in variables.json,
+  shared by all runs; `VariablesWindow`.
 - `Chrome/` — the Chrome extension (Manifest V3, loaded unpacked; its fixed ID comes from the `key`).
   `Bridge/main.swift` — `ToolbeltBridge`, the native-messaging helper Chrome starts; it writes requests into
   `<data>/inbox/`, which `BrowserInbox` watches. `build.sh` builds both into the app bundle.

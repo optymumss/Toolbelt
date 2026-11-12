@@ -202,6 +202,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ]
                 automation.selectOnOpen = automation.store.macros.first?.id
                 automation.open()
+            case "macro-flow":
+                // 0.36: For each over a folder's files, choosing by value, and Try.
+                guard let automation = modules.module(.automation) as? AutomationModule else { break }
+                var rename = MacroStep(kind: .action, action: MacroAction(kind: .file, value: "%Photo%", option: FileCommand.move.rawValue,
+                                                                         value2: "~/Pictures/Holiday"))
+                rename.color = .green
+                var trash = MacroStep(kind: .action, action: MacroAction(kind: .file, value: "%Photo%", option: FileCommand.trash.rawValue))
+                trash.color = .red
+                var byType = MacroStep(kind: .switchCase)
+                byType.text = "%Photo%"
+                byType.cases = [SwitchCase(test: .matches, value: "\\.(jpe?g|heic)$", steps: [rename]),
+                                SwitchCase(test: .contains, value: "screenshot", steps: [trash])]
+                byType.elseSteps = [MacroStep(kind: .continueLoop)]
+                var each = MacroStep(kind: .forEach)
+                each.source = .files
+                each.text = "~/Downloads"
+                each.name = "Photo"
+                each.steps = [byType]
+                var count = MacroStep(kind: .setVariable)
+                count.name = "Global_Tidied"
+                count.text = "%Global_Tidied%+1"
+                var safely = MacroStep(kind: .tryCatch)
+                safely.steps = [each, count]
+                safely.elseSteps = [MacroStep(kind: .notify, text: "Couldn't tidy: %FailureReason%")]
+                automation.store.macros = [Macro(name: "Tidy downloaded photos", triggers: [MacroTrigger(kind: .menuBar)], steps: [safely])]
+                automation.selectOnOpen = automation.store.macros.first?.id
+                automation.open()
+            case "variables":
+                // 0.36: variables that last between runs.
+                GlobalVariables.shared.set("Global_Tidied", "42")
+                GlobalVariables.shared.set("Global_LastProject", "Kitchen renovation")
+                GlobalVariables.shared.set("Global_ApiBase", "https://example.com/api")
+                VariablesWindow.show()
             case "settings-gestures":
                 // A few example gestures, one opened for editing.
                 guard let gestures = modules.module(.gestures) as? GesturesModule else { break }

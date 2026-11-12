@@ -87,6 +87,8 @@ struct MacrosView: View {
                     .help(recording ? "Stop recording (or press \(MacroRecorder.stopKeys))"
                                     : "Do a task yourself and Toolbelt writes the steps into this macro. Press \(MacroRecorder.stopKeys) to stop.")
                 Button { showUsed = true } label: { Label("Used Shortcuts", systemImage: "command") }
+                Button { VariablesWindow.show() } label: { Label("Variables", systemImage: "x.squareroot") }
+                    .help("Variables that last between runs (named Global_…)")
                     .help("Every shortcut Toolbelt uses, and the ones that clash")
                 Menu {
                     Button("Export This Macro…") { export(all: false) }.disabled(selection == nil)
@@ -484,6 +486,12 @@ struct StepListEditor: View {
         case .calculate: step.text = "%Price% * 1.2"; step.name = "Total"
         case .pictureFilter: step.picture = .rotateRight
         case .runMacro: step.text2 = "Name=%Name%"; step.name = "Answer"
+        case .forEach: step.source = .lines; step.text = "%Clipboard%"; step.name = "Item"
+        case .switchCase:
+            step.text = "%FrontApp%"
+            step.cases = [SwitchCase(test: .equals, value: "Safari"), SwitchCase(test: .contains, value: "Chrome")]
+        case .runTogether: step.number = 1
+        case .splitText: step.text = "%Clipboard%"; step.text2 = ","; step.name = "List"
         default: break
         }
         return step
@@ -680,7 +688,60 @@ struct StepEditor: View {
             Text("Giving up counts as the step failing (⋯ → If it fails).").font(.caption).foregroundStyle(.secondary)
         case .stop:
             EmptyView()
+        case .forEach:
+            Picker("Go through", selection: Binding(get: { step.source ?? .lines }, set: { step.source = $0 })) {
+                ForEach(LoopSource.allCases) { Text($0.title).tag($0) }
+            }
+            TextField((step.source ?? .lines).isFolder ? "Folder, e.g. ~/Desktop or %Folder%" : "Text, e.g. %Clipboard% or %List%", text: $step.text)
+            TextField("Put each one in variable", text: $step.name)
+            Text("%Index% counts the rounds. “Leave the loop” and “Skip to the loop's next round” work inside.").font(.caption).foregroundStyle(.secondary)
+            AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
+        case .switchCase:
+            TextField("Value to check, e.g. %FrontApp% or %Answer%", text: $step.text)
+            ForEach(cases) { $item in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("When it").font(.caption.weight(.semibold))
+                        Picker("", selection: $item.test) { ForEach(SwitchCase.Test.allCases) { Text($0.title).tag($0) } }
+                            .labelsHidden().fixedSize()
+                        if item.test != .isEmpty { TextField("Value", text: $item.value) }
+                        Button { step.cases?.removeAll { $0.id == item.id } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                    }
+                    AnyView(StepListEditor(steps: $item.steps)).padding(.leading, 12)
+                }
+            }
+            Button("Add Case") { step.cases = (step.cases ?? []) + [SwitchCase()] }
+            Text("Otherwise (no case fits)").font(.caption.weight(.semibold))
+            AnyView(StepListEditor(steps: $step.elseSteps)).padding(.leading, 12)
+            Text("The first case that fits runs; text is compared ignoring capitals.").font(.caption).foregroundStyle(.secondary)
+        case .breakLoop:
+            Text("Ends the loop it's in (Repeat or For each); the macro carries on after the loop.").font(.caption).foregroundStyle(.secondary)
+        case .continueLoop:
+            Text("Skips the rest of this round; the loop goes on with its next round.").font(.caption).foregroundStyle(.secondary)
+        case .tryCatch:
+            Text("Try these steps").font(.caption.weight(.semibold))
+            AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
+            Text("If one of them fails").font(.caption.weight(.semibold))
+            AnyView(StepListEditor(steps: $step.elseSteps)).padding(.leading, 12)
+            Text("When a step fails, the rest are skipped and these run instead; %FailureReason% says what went wrong.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .runTogether:
+            Toggle("Wait until they've all finished", isOn: Binding(get: { step.number != 0 }, set: { step.number = $0 ? 1 : 0 }))
+            AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
+            Text("Each step starts at once instead of after the one before (useful for waiting on several things).")
+                .font(.caption).foregroundStyle(.secondary)
+        case .splitText:
+            TextField("Text, e.g. %Clipboard%", text: $step.text)
+            TextField("Split at (empty: each line)", text: $step.text2)
+            TextField("List variable", text: $step.name)
+            Text("Gives %List% (one per line, for “For each line”), %List_1%, %List_2%… and %List_count%.")
+                .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private var cases: Binding<[SwitchCase]> {
+        Binding(get: { step.cases ?? [] }, set: { step.cases = $0 })
     }
 }
 
@@ -736,6 +797,17 @@ struct AutomationSettingsTab: View {
                 }
             } footer: {
                 Text("A macro starts from a trigger (keys, typed text, a gesture, another keyboard, an app, a folder, Wi-Fi, a display, a Space, a time, the menu bar, the launcher or Terminal) and runs its steps: actions, scripts, questions, notifications, variables, if/otherwise and repeats.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                LabeledContent("Variables that last") {
+                    HStack {
+                        Text("\(GlobalVariables.shared.values.count)").foregroundStyle(.secondary)
+                        Button("Open Variables…") { VariablesWindow.show() }
+                    }
+                }
+            } footer: {
+                Text("Variables named Global_… are shared by all macros and kept between runs and restarts.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

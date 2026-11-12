@@ -1,9 +1,22 @@
-# Toolbelt — v0.35
+# Toolbelt — v0.36
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.36: loops, choices and variables that last (macros)
+- **For each:** go through each line, word or comma-separated item of some text, or each file in a folder (and,
+  if you like, the folders inside it). The current one is in a variable; %Index% counts.
+- **Choose by value (switch):** check a value against several cases (is, contains, matches a pattern, is empty) and
+  run the steps of the first that fits, or the Otherwise steps.
+- **Leave the loop** and **Skip to the loop's next round**, for Repeat and For each.
+- **Try… and if a step fails…:** when a step inside fails, the rest are skipped and the "if it fails" steps run,
+  with %FailureReason% saying what went wrong; the macro then carries on.
+- **Run steps at the same time:** each step starts at once (wait for them all, or carry straight on).
+- **Split text into a list:** at a comma, a word or each line, giving %List%, %List_1%, %List_2%… and %List_count%.
+- **Variables that last:** a variable named Global_… is shared by every macro and kept between runs and restarts.
+  See and change them in the Macros window's **Variables** button (or Settings → Automation).
 
 ## What's new in 0.35: projects that keep a folder up to date, virus check, logins and proxy
 - **Download projects** (menu-bar menu → Downloads → Download Projects…, or "Save as Project…" in the Site

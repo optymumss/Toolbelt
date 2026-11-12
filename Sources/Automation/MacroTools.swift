@@ -13,6 +13,12 @@ extension MacroStep {
         copy.id = UUID()
         copy.steps = steps.map { $0.renewingIDs() }
         copy.elseSteps = elseSteps.map { $0.renewingIDs() }
+        copy.cases = cases?.map { item in
+            var renewed = item
+            renewed.id = UUID()
+            renewed.steps = item.steps.map { $0.renewingIDs() }
+            return renewed
+        }
         return copy
     }
 }
