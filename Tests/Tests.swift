@@ -64,6 +64,7 @@ enum ToolbeltTests {
         t.group("Downloading all links: links on a page, types, category folders, copied links, site grabber", LinkGrabberTests.run)
         t.group("Download projects, proxy, site logins and the virus check", ProjectSyncTests.run)
         t.group("Macros: for each, choose by value, leave/skip a loop, try, at the same time, split, lasting variables", MacroFlowTests.run)
+        t.group("Macros: web requests, JSON, screenshots, picture files, folder changes", MacroDataTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -5246,5 +5247,141 @@ enum MacroFlowTests {
         store.macros = kept
         check(MacroStep.Kind.allCases.allSatisfy { !$0.title.isEmpty } && [MacroStep.Kind.forEach, .switchCase, .tryCatch, .runTogether].allSatisfy(\.hasChildren),
               "the new steps have names, and the ones holding steps say so")
+    }
+}
+
+@MainActor
+enum MacroDataTests {
+    static func run() {
+        let runner = ActionRunner(shortcuts: ShortcutCenter())
+
+        // JSON
+        let json = #"{"items":[{"name":"Ann","age":30,"ok":true},{"name":"Bo","tags":["x","y"]}],"odd key":{"v":1.5},"n":null}"#
+        checkEqual(JSONTool.run(.get, json: json, path: "items[0].name"), "Ann", "JSON: a value at a path")
+        checkEqual(JSONTool.run(.get, json: json, path: "items.1.name"), "Bo", "… with dots for list positions too")
+        checkEqual(JSONTool.run(.get, json: json, path: "items[-1].tags"), #"["x","y"]"#, "… counting from the end, a list comes back as JSON")
+        checkEqual([JSONTool.run(.get, json: json, path: "items[0].age"), JSONTool.run(.get, json: json, path: "items[0].ok")], ["30", "true"],
+                   "numbers and true/false come back as written")
+        checkEqual(JSONTool.run(.get, json: json, path: "['odd key'].v"), "1.5", "names with spaces in brackets")
+        checkEqual(JSONTool.run(.get, json: json, path: "missing"), nil, "nothing at a path that isn't there")
+        checkEqual(JSONTool.run(.count, json: json, path: "items"), "2", "count the items in a list")
+        checkEqual(JSONTool.run(.keys, json: json, path: ""), "items\nn\nodd key", "list an object's names")
+        checkEqual(JSONTool.run(.get, json: "not json", path: "a"), nil, "text that isn't JSON")
+        checkEqual(JSONTool.make("name=Sam\nage=42\nok=true\nprice=9.5\nuser.city=Oslo\ntags=[\"a\"]\nzip=+47"),
+                   #"{"age":42,"name":"Sam","ok":true,"price":9.5,"tags":["a"],"user":{"city":"Oslo"},"zip":"+47"}"#,
+                   "JSON made from Name=value lines keeps numbers and true/false, and nests a.b")
+
+        let data = MacroRun(runner: runner)
+        data.set("Response", json)
+        var get = MacroStep(kind: .json)
+        get.jsonMode = .get
+        get.text = "%Response%"
+        get.text2 = "items[1].name"
+        get.name = "Who"
+        var bad = MacroStep(kind: .json)
+        bad.text = "%Response%"
+        bad.text2 = "nope.nothing"
+        bad.name = "Missing"
+        AutomationTests.runSteps(data, [get, bad])
+        checkEqual(data.value(of: "Who"), "Bo", "the JSON step puts the value in a variable")
+        check(data.failures.contains { $0.contains("nothing at") }, "a path that isn't there counts as the step failing", "\(data.failures)")
+
+        // Web requests
+        checkEqual(HTTPCall.headers("Accept: application/json\nX-Key:  abc \nbroken line\n"), ["Accept": "application/json", "X-Key": "abc"],
+                   "header lines: Name: value")
+        let post = HTTPCall.request(url: URL(string: "https://x.com/api")!, method: "post", headers: [:], body: #"{"a":1}"#, timeout: 5)
+        check(post.httpMethod == "POST" && post.value(forHTTPHeaderField: "Content-Type") == "application/json" && post.httpBody == Data(#"{"a":1}"#.utf8),
+              "a POST with a JSON body is sent as JSON")
+        let form = HTTPCall.request(url: URL(string: "https://x.com/api")!, method: "PUT", headers: ["Content-Type": "text/plain"], body: "a=1", timeout: nil)
+        checkEqual(form.value(forHTTPHeaderField: "Content-Type"), "text/plain", "a Content-Type you set is kept")
+        checkEqual(HTTPCall.request(url: URL(string: "https://x.com")!, method: "GET", headers: [:], body: "ignored", timeout: nil).httpBody, nil,
+                   "a GET sends no body")
+        if let server = try? TestServer(size: 2000) {
+            _ = DownloadTests.waitFor(5) { server.port != 0 }
+            let web = MacroRun(runner: runner)
+            var request = MacroStep(kind: .webRequest)
+            request.text = server.url("/files/answer.txt")
+            request.headers = "X-Test: 1"
+            request.name = "Answer"
+            var wrong = MacroStep(kind: .webRequest)
+            wrong.text = "not a web address"
+            AutomationTests.runSteps(web, [request, wrong])
+            checkEqual(web.value(of: "Answer_status"), "200", "a web request keeps the answer's code")
+            checkEqual(web.value(of: "Answer").utf8.count >= 2000, true, "… and its body")
+            check(web.failures.contains { $0.contains("isn't a web address") }, "a wrong address counts as the step failing")
+        } else {
+            check(false, "the test web server starts")
+        }
+
+        // Screenshots (the arguments; taking one needs Screen Recording, checked in the real-use tests)
+        checkEqual(ScreenGrab.rect("10, 20,300 ,200"), CGRect(x: 10, y: 20, width: 300, height: 200), "an area as x, y, width, height")
+        checkEqual(ScreenGrab.rect("1,2,3"), nil, "… needs four numbers")
+        checkEqual(ScreenGrab.arguments(.screen, rect: nil, window: nil, to: ""), ["-x", "-m", "-c"], "the whole screen to the clipboard")
+        checkEqual(ScreenGrab.arguments(.area, rect: CGRect(x: 1, y: 2, width: 30, height: 40), window: nil, to: "/tmp/a.jpg"),
+                   ["-x", "-R1,2,30,40", "-t", "jpg", "/tmp/a.jpg"], "an area to a JPEG file")
+        checkEqual(ScreenGrab.arguments(.frontWindow, rect: nil, window: 77, to: "/tmp/w.png"), ["-x", "-o", "-l", "77", "-t", "png", "/tmp/w.png"],
+                   "the front window, without its shadow")
+        checkEqual(ScreenGrab.arguments(.frontWindow, rect: nil, window: nil, to: ""), nil, "no front window: nothing to capture")
+
+        // Picture files
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-pictures-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let context = CGContext(data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 0.5, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 200, height: 100))
+        let original = folder.appendingPathComponent("photo.png").path
+        check(PictureFile.save(context.makeImage()!, to: original), "a picture can be saved")
+        func size(_ path: String) -> String { PictureFile.load(path).map { "\($0.width)x\($0.height)" } ?? "none" }
+        func change(_ edit: PictureEdit, to name: String, width: Double = 0, area: String = "") {
+            let pictures = MacroRun(runner: runner)
+            var step = MacroStep(kind: .pictureFile)
+            step.text = original
+            step.text2 = folder.appendingPathComponent(name).path
+            step.pictureEdit = edit
+            step.number = width
+            step.area = area
+            AutomationTests.runSteps(pictures, [step])
+        }
+        change(.resize, to: "small.png", width: 50)
+        checkEqual(size(folder.appendingPathComponent("small.png").path), "50x25", "resize to a width keeps the shape")
+        change(.rotateRight, to: "turned.png")
+        checkEqual(size(folder.appendingPathComponent("turned.png").path), "100x200", "rotate a picture file")
+        change(.crop, to: "crop.png", area: "10,10,40,30")
+        checkEqual(size(folder.appendingPathComponent("crop.png").path), "40x30", "crop to an area")
+        change(.convert, to: "photo.jpg")
+        let jpeg = (try? Data(contentsOf: folder.appendingPathComponent("photo.jpg")))?.prefix(3)
+        checkEqual(jpeg.map { [UInt8]($0) }, [0xFF, 0xD8, 0xFF], "save as another type (a JPEG)")
+        checkEqual(size(original), "200x100", "the original is left as it was when saving under another name")
+
+        // Folder changes
+        let watched = folder.appendingPathComponent("watched")
+        try? FileManager.default.createDirectory(at: watched, withIntermediateDirectories: true)
+        let note = watched.appendingPathComponent("note.txt")
+        try? Data("one".utf8).write(to: note)
+        try? Data("x".utf8).write(to: watched.appendingPathComponent("gone.txt"))
+        let before = FolderSnapshot.take(watched)
+        try? Data("one two".utf8).write(to: note)
+        try? FileManager.default.removeItem(at: watched.appendingPathComponent("gone.txt"))
+        try? Data("new".utf8).write(to: watched.appendingPathComponent("new.txt"))
+        let changes = FolderSnapshot.take(watched).changes(since: before)
+        check(changes.added == ["new.txt"] && changes.changed == ["note.txt"] && changes.removed == ["gone.txt"],
+              "a folder's files added, changed and removed are told apart", "\(changes)")
+        var seen: [String] = []
+        let watcher = FolderChangeWatcher(folder: watched) { changed, removed in
+            seen += changed.map { "changed " + $0.lastPathComponent } + removed.map { "removed " + $0.lastPathComponent }
+        }
+        watcher.start(lookEvery: 60)
+        try? Data("one two three".utf8).write(to: note)
+        watcher.look()
+        try? FileManager.default.removeItem(at: note)
+        watcher.look()
+        watcher.stop()
+        checkEqual(seen, ["changed note.txt", "removed note.txt"], "the folder watcher reports changed and removed files")
+        try? FileManager.default.removeItem(at: folder)
+
+        check([MacroTrigger.Kind.fileChanged, .fileRemoved, .darkModeChanged, .soundOutputChanged].allSatisfy { !$0.title.isEmpty }
+              && [MacroStep.Kind.webRequest, .json, .screenshot, .pictureFile].allSatisfy { !$0.title.isEmpty },
+              "the new triggers and steps have names")
     }
 }

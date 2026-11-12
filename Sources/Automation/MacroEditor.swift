@@ -352,7 +352,7 @@ struct TriggerEditor: View {
                 }
                 if !trigger.text.isEmpty { Button("Any App") { trigger.text = "" } }
             }
-        case .fileAdded:
+        case .fileAdded, .fileChanged, .fileRemoved:
             HStack {
                 Text(trigger.text.isEmpty ? "No folder chosen" : (trigger.text as NSString).abbreviatingWithTildeInPath).foregroundStyle(.secondary)
                 Button("Choose Folder…") {
@@ -363,7 +363,19 @@ struct TriggerEditor: View {
                     if panel.runModal() == .OK, let url = panel.url { trigger.text = url.path }
                 }
             }
-            Text("The new file's path is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
+            Text(trigger.kind == .fileAdded ? "The new file's path is in %Trigger%." : trigger.kind == .fileChanged
+                 ? "The changed file's path is in %Trigger%. Toolbelt looks every few seconds while a macro uses this."
+                 : "The removed file's path is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
+        case .darkModeChanged:
+            Picker("When it switches to", selection: $trigger.text) {
+                Text("Either").tag("")
+                Text("Dark").tag("Dark")
+                Text("Light").tag("Light")
+            }
+            Text("“Dark” or “Light” is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
+        case .soundOutputChanged:
+            TextField("Only when the device's name contains (empty for any)", text: $trigger.text)
+            Text("The new sound output's name (AirPods, speakers…) is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
         case .wifiChanged:
             HStack {
                 TextField("Network name (empty for any change)", text: $trigger.text)
@@ -492,6 +504,10 @@ struct StepListEditor: View {
             step.cases = [SwitchCase(test: .equals, value: "Safari"), SwitchCase(test: .contains, value: "Chrome")]
         case .runTogether: step.number = 1
         case .splitText: step.text = "%Clipboard%"; step.text2 = ","; step.name = "List"
+        case .webRequest: step.method = "GET"; step.text = "https://api.github.com/zen"; step.name = "Response"; step.timeout = 30
+        case .json: step.jsonMode = .get; step.text = "%Response%"; step.text2 = "items[0].name"; step.name = "Value"
+        case .screenshot: step.capture = .frontWindow; step.text = "~/Desktop/%FrontApp%.png"; step.name = "Picture"
+        case .pictureFile: step.pictureEdit = .resize; step.number = 800; step.text = "%Trigger%"; step.text2 = ""
         default: break
         }
         return step
@@ -731,12 +747,78 @@ struct StepEditor: View {
             AnyView(StepListEditor(steps: $step.steps)).padding(.leading, 12)
             Text("Each step starts at once instead of after the one before (useful for waiting on several things).")
                 .font(.caption).foregroundStyle(.secondary)
+        case .webRequest, .json, .screenshot, .pictureFile:
+            dataFields
         case .splitText:
             TextField("Text, e.g. %Clipboard%", text: $step.text)
             TextField("Split at (empty: each line)", text: $step.text2)
             TextField("List variable", text: $step.name)
             Text("Gives %List% (one per line, for “For each line”), %List_1%, %List_2%… and %List_count%.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var dataFields: some View {
+        switch step.kind {
+        case .webRequest:
+            HStack {
+                Picker("", selection: Binding(get: { step.method ?? "GET" }, set: { step.method = $0 })) {
+                    ForEach(HTTPCall.methods, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                TextField("Address, e.g. https://example.com/api/items?q=%Query%", text: $step.text)
+            }
+            Text("Headers, one per line: Name: value").font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: Binding(get: { step.headers ?? "" }, set: { step.headers = $0.isEmpty ? nil : $0 }))
+                .font(.system(.caption, design: .monospaced)).frame(minHeight: 30, maxHeight: 70)
+            if (step.method ?? "GET") != "GET" && (step.method ?? "GET") != "HEAD" {
+                Text("Body (JSON, or name=value&… for a form)").font(.caption).foregroundStyle(.secondary)
+                TextEditor(text: $step.text2).font(.system(.caption, design: .monospaced)).frame(minHeight: 40, maxHeight: 110)
+            }
+            TextField("Keep the answer in variable", text: $step.name)
+            Text("The answer's code (200, 404…) is in %\(step.name.isEmpty ? "Response" : step.name)_status%. Anything but 2xx counts as the step failing. Goes through the download proxy; a saved site login is sent too.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .json:
+            Picker("Do", selection: Binding(get: { step.jsonMode ?? .get }, set: { step.jsonMode = $0 })) {
+                ForEach(JSONMode.allCases) { Text($0.title).tag($0) }
+            }
+            if step.jsonMode == .make {
+                TextEditor(text: $step.text2).font(.system(.caption, design: .monospaced)).frame(minHeight: 40, maxHeight: 110)
+                Text("One per line: name=value (variables work; numbers and true/false keep their type; user.city=Oslo nests).")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                TextField("JSON, e.g. %Response%", text: $step.text)
+                TextField("Path, e.g. items[0].name (empty: the whole thing)", text: $step.text2)
+            }
+            TextField("Keep it in variable", text: $step.name)
+        case .screenshot:
+            Picker("Capture", selection: Binding(get: { step.capture ?? .screen }, set: { step.capture = $0 })) {
+                ForEach(CaptureArea.allCases) { Text($0.title).tag($0) }
+            }
+            if step.capture == .area {
+                TextField("Area: x, y, width, height (from the top left)", text: Binding(get: { step.area ?? "" }, set: { step.area = $0 }))
+            }
+            TextField("Save to (empty: the clipboard), e.g. ~/Desktop/shot.png", text: $step.text)
+            TextField("Keep the file's path in variable", text: $step.name)
+            Text("Needs Screen Recording for Toolbelt (Settings → Permissions).").font(.caption).foregroundStyle(.secondary)
+        case .pictureFile:
+            TextField("Picture file, e.g. %Trigger% or ~/Desktop/photo.jpg", text: $step.text)
+            Picker("Change", selection: Binding(get: { step.pictureEdit ?? .convert }, set: { step.pictureEdit = $0 })) {
+                ForEach(PictureEdit.allCases) { Text($0.title).tag($0) }
+            }
+            if step.pictureEdit == .resize { Stepper("Width: \(Int(step.number)) pixels", value: $step.number, in: 16...10_000, step: 50) }
+            if step.pictureEdit == .crop {
+                TextField("Area: x, y, width, height (in pixels, from the top left)", text: Binding(get: { step.area ?? "" }, set: { step.area = $0 }))
+            }
+            if step.pictureEdit == .readText {
+                TextField("Keep the text in variable", text: $step.name)
+            } else {
+                TextField("Save as (empty: replace the picture)", text: $step.text2)
+                TextField("Keep the saved file's path in variable", text: $step.name)
+            }
+        default:
+            EmptyView()
         }
     }
 
