@@ -1,9 +1,21 @@
-# Toolbelt — v0.37
+# Toolbelt — v0.38
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.38: a macro debugger, picking between macros that share a shortcut, progress bars, and syncing
+- **Debug** (in the Macros window's toolbar): runs the selected macro one step at a time in a small window that
+  shows each variable. **Step** runs the next step, **Continue** runs on, **Stop** ends it. Mark a step
+  "Pause Here When Debugging" (in its ⋯ menu) and Continue stops there.
+- **Shared shortcuts:** when two or more macros use the same shortcut, pressing it shows a small list; click one or
+  press its number (1–9).
+- **Show progress** step: a small bar at the bottom of the screen with a label and an amount (a number, or a sum
+  like `%Index% * 10`); it goes away at 100%, with "hide", or when the macro ends.
+- **Sync macros between Macs:** Settings → Automation → "Keep macros the same on my Macs (iCloud Drive)". Toolbelt
+  writes your macros to a file in iCloud Drive (or any folder you choose, Dropbox too) and picks up changes your
+  other Macs make; the newer copy of each macro wins, and deleting one deletes it everywhere.
 
 ## What's new in 0.37: web requests, JSON, screenshots and pictures in macros, and new triggers
 - **Web request:** GET, POST, PUT, PATCH, DELETE or HEAD, with your own headers and a body (JSON or a form). The

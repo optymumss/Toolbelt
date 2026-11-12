@@ -26,6 +26,8 @@ final class MacroRun {
     /// How often "Pause until" looks again (screen tests look less often: each look takes a screenshot).
     var pauseCheckEvery: Double = 0.25
     private var stopped = false
+    /// 0.38: the debugger, when the macro runs step by step.
+    var debugger: MacroDebugger?
     /// 0.36: "Leave the loop" / "Next round" were reached, and how many loops deep the run is.
     private var breakRequested = false
     private var continueRequested = false
@@ -112,6 +114,10 @@ final class MacroRun {
     func run(_ steps: [MacroStep]) async {
         for step in steps where step.isOn {
             if interrupted { return }
+            if let debugger, !(await debugger.shouldRun(step, in: self)) {
+                stopped = true
+                return
+            }
             log.append(step.summary)
             if log.count > 500 { log.removeFirst() }
             await run(step)
@@ -257,6 +263,13 @@ final class MacroRun {
             set(name, kept.joined(separator: "\n"))
             variables[name + "_count"] = String(kept.count)
             for (index, part) in kept.enumerated() { variables["\(name)_\(index + 1)"] = part }
+        case .progress:
+            let percent = expand(step.text2)
+            if percent.trimmingCharacters(in: .whitespaces).lowercased() == "hide" {
+                ProgressPanel.hide(owner: self)
+            } else {
+                ProgressPanel.show(expand(step.text), percent: percent, owner: self)
+            }
         case .webRequest:
             let address = expand(step.text).trimmingCharacters(in: .whitespacesAndNewlines)
             guard let url = DownloadManager.downloadableURL(from: address), url.scheme?.lowercased() != "ftp" else {

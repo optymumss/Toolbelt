@@ -87,9 +87,14 @@ struct MacrosView: View {
                     .help(recording ? "Stop recording (or press \(MacroRecorder.stopKeys))"
                                     : "Do a task yourself and Toolbelt writes the steps into this macro. Press \(MacroRecorder.stopKeys) to stop.")
                 Button { showUsed = true } label: { Label("Used Shortcuts", systemImage: "command") }
+                    .help("Every shortcut Toolbelt uses, and the ones that clash")
                 Button { VariablesWindow.show() } label: { Label("Variables", systemImage: "x.squareroot") }
                     .help("Variables that last between runs (named Global_…)")
-                    .help("Every shortcut Toolbelt uses, and the ones that clash")
+                Button {
+                    if let macro = store.macros.first(where: { $0.id == selection }) { module.debug(macro) }
+                } label: { Label("Debug", systemImage: "ladybug") }
+                    .disabled(selection == nil)
+                    .help("Run this macro step by step, watching its variables")
                 Menu {
                     Button("Export This Macro…") { export(all: false) }.disabled(selection == nil)
                     Button("Export All Macros…") { export(all: true) }
@@ -508,6 +513,7 @@ struct StepListEditor: View {
         case .json: step.jsonMode = .get; step.text = "%Response%"; step.text2 = "items[0].name"; step.name = "Value"
         case .screenshot: step.capture = .frontWindow; step.text = "~/Desktop/%FrontApp%.png"; step.name = "Picture"
         case .pictureFile: step.pictureEdit = .resize; step.number = 800; step.text = "%Trigger%"; step.text2 = ""
+        case .progress: step.text = "Working on %Item%"; step.text2 = "%Index% * 10"
         default: break
         }
         return step
@@ -553,6 +559,9 @@ struct StepEditor: View {
                 if step.color != nil { Circle().fill(Self.color(step.color)).frame(width: 9, height: 9) }
                 Text(step.kind.title).font(.subheadline.weight(.semibold))
                 if !step.isOn { Text("Off").font(.caption.weight(.semibold)).foregroundStyle(.orange) }
+                if step.breakpoint == true {
+                    Image(systemName: "pause.circle").font(.caption).foregroundStyle(.orange).help("The debugger pauses here")
+                }
                 if let failure = step.onFailure, failure != .carryOn {
                     Image(systemName: "exclamationmark.octagon").font(.caption).foregroundStyle(.secondary).help("If it fails: \(failure.title)")
                 }
@@ -562,6 +571,9 @@ struct StepEditor: View {
                 Menu {
                     if let tryStep { Button("Try This Step") { tryStep(step) } }
                     Button(step.isOn ? "Turn Off" : "Turn On") { step.disabled = step.isOn ? true : nil }
+                    Button(step.breakpoint == true ? "Don't Pause Here When Debugging" : "Pause Here When Debugging") {
+                        step.breakpoint = step.breakpoint == true ? nil : true
+                    }
                     Divider()
                     Button("Duplicate", action: duplicate)
                     Button("Copy") { StepClipboard.copy([step]) }
@@ -749,6 +761,11 @@ struct StepEditor: View {
                 .font(.caption).foregroundStyle(.secondary)
         case .webRequest, .json, .screenshot, .pictureFile:
             dataFields
+        case .progress:
+            TextField("Label, e.g. Working on %Item%", text: $step.text)
+            TextField("Percent, e.g. 50 or %Index% * 10 (hide: take the bar away)", text: $step.text2)
+            Text("A small bar at the bottom of the screen; it goes away at 100%, with “hide”, or when the macro ends.")
+                .font(.caption).foregroundStyle(.secondary)
         case .splitText:
             TextField("Text, e.g. %Clipboard%", text: $step.text)
             TextField("Split at (empty: each line)", text: $step.text2)
@@ -881,6 +898,7 @@ struct AutomationSettingsTab: View {
                 Text("A macro starts from a trigger (keys, typed text, a gesture, another keyboard, an app, a folder, Wi-Fi, a display, a Space, a time, the menu bar, the launcher or Terminal) and runs its steps: actions, scripts, questions, notifications, variables, if/otherwise and repeats.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            MacroSyncSettings(module: web)
             Section {
                 LabeledContent("Variables that last") {
                     HStack {
@@ -1013,5 +1031,51 @@ struct NewMacroHelper: View {
     static func make(name: String, trigger: MacroTrigger.Kind?, step: MacroStep.Kind, group: UUID?) -> Macro {
         Macro(name: name.trimmingCharacters(in: .whitespaces), groupID: group,
               triggers: trigger.map { [MacroTrigger.starting($0)] } ?? [], steps: [StepListEditor.newStep(step)])
+    }
+}
+
+/// 0.38: Settings → Automation → Sync macros.
+struct MacroSyncSettings: View {
+    let module: AutomationModule?
+    @State private var folder = Prefs.macroSyncFolder
+
+    var body: some View {
+        Section {
+            Toggle("Keep macros the same on my Macs (iCloud Drive)", isOn: Binding(get: { folder != nil }, set: { on in
+                folder = on ? MacroSync.iCloudFolder.path : nil
+                apply()
+            }))
+            if let folder {
+                LabeledContent("Folder") {
+                    HStack {
+                        Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                        Button("Choose…", action: choose)
+                    }
+                }
+            }
+        } header: {
+            Text("Sync macros")
+        } footer: {
+            Text("Toolbelt writes your macros to a file in this folder and reads changes other Macs make to it; the newer copy of each macro wins, and deleting one deletes it everywhere. Turn it on in Toolbelt on each Mac. Any shared folder works (Dropbox too).")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func apply() {
+        Prefs.macroSyncFolder = folder
+        module?.refreshSync()
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Sync Here"
+        NSApp.activate()
+        if panel.runModal() == .OK, let url = panel.url {
+            folder = url.path
+            apply()
+        }
     }
 }
