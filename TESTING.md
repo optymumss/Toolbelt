@@ -48,7 +48,10 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    without a login and downloaded with one (kept in the Keychain), the quarantine mark on a finished download,
    and a test virus scanner flagging a file that then goes to the Trash;
    and (0.36) a macro going through a list with For each and leaving the loop at "stop" via Choose by value,
-   a failing step caught by Try (the rest skipped), and a Global_ variable kept from one run to the next and saved.
+   a failing step caught by Try (the rest skipped), and a Global_ variable kept from one run to the next and saved;
+   and (0.37) a web request getting JSON from the test site and a POST echoed back, a screenshot of the front window
+   saved smaller as a JPEG, a file changed and then removed in a watched folder starting macros, and dark mode
+   switching starting one.
    Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is

@@ -129,6 +129,16 @@ enum AudioOutputs {
         return name.takeRetainedValue() as String
     }
 
+    /// The name of the device sound goes to now.
+    static func currentName() -> String? {
+        var id = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id) == noErr else { return nil }
+        return name(of: id)
+    }
+
     /// Sends sound to the device whose name contains `name` (for example "AirPods"). Returns whether it worked.
     @discardableResult
     static func setDefault(_ name: String) -> Bool {

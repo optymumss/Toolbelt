@@ -1,9 +1,21 @@
-# Toolbelt — v0.36
+# Toolbelt — v0.37
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.37: web requests, JSON, screenshots and pictures in macros, and new triggers
+- **Web request:** GET, POST, PUT, PATCH, DELETE or HEAD, with your own headers and a body (JSON or a form). The
+  answer goes into a variable and its code (200, 404…) into %Response_status%; anything but success counts as the
+  step failing. It goes through the download proxy, with a saved site login if there is one.
+- **JSON:** get a value at a path like `items[0].name`, count the items in a list, list an object's names, or
+  make JSON from Name=value lines (numbers and true/false keep their type; `user.city=Oslo` nests).
+- **Take a screenshot:** the whole screen, the front window or an area, to a file or the clipboard.
+- **Change a picture file:** resize to a width, crop, rotate, flip, halve, trim, read its text, or save it as
+  another type (PNG, JPEG, HEIC, TIFF…).
+- **New triggers:** a file changed or removed in a folder, dark mode switching on or off, and the sound output
+  changing (AirPods connecting, say).
 
 ## What's new in 0.36: loops, choices and variables that last (macros)
 - **For each:** go through each line, word or comma-separated item of some text, or each file in a folder (and,

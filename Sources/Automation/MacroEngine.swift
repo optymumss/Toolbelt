@@ -257,6 +257,66 @@ final class MacroRun {
             set(name, kept.joined(separator: "\n"))
             variables[name + "_count"] = String(kept.count)
             for (index, part) in kept.enumerated() { variables["\(name)_\(index + 1)"] = part }
+        case .webRequest:
+            let address = expand(step.text).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = DownloadManager.downloadableURL(from: address), url.scheme?.lowercased() != "ftp" else {
+                failed(step, "“\(address)” isn't a web address")
+                return
+            }
+            var headers = WebRequest.headers(expand(step.headers ?? ""))
+            headers = NetworkSettings.headers(headers, for: url) // a saved site login, if there is one
+            let request = WebRequest.request(url: url, method: step.method ?? "GET", headers: headers, body: expand(step.text2), timeout: step.timeout)
+            let answer = await WebRequest.send(request)
+            let name = step.name.isEmpty ? "Response" : step.name
+            set(name, answer.body)
+            variables[name + "_status"] = String(answer.status)
+            if let error = answer.error {
+                failed(step, error)
+            } else if !(200..<300).contains(answer.status) {
+                failed(step, "the server answered \(answer.status)")
+            }
+        case .json:
+            let mode = step.jsonMode ?? .get
+            let name = step.name.isEmpty ? (mode == .make ? "JSON" : "Value") : step.name
+            guard let result = JSONTool.run(mode, json: expand(step.text), path: mode == .make ? expand(step.text2) : expand(step.text2)) else {
+                set(name, "")
+                failed(step, JSONTool.parse(expand(step.text)) == nil ? "that isn't JSON" : "there's nothing at “\(expand(step.text2))”")
+                return
+            }
+            set(name, result)
+        case .screenshot:
+            let path = (expand(step.text) as NSString).expandingTildeInPath
+            let area = step.capture ?? .screen
+            guard let arguments = ScreenGrab.arguments(area, rect: ScreenGrab.rect(expand(step.area ?? "")),
+                                                       window: area == .frontWindow ? ScreenGrab.frontWindowID() : nil, to: path) else {
+                failed(step, area == .area ? "the area isn't four numbers (x, y, width, height)" : "there's no front window")
+                return
+            }
+            if !path.isEmpty { try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true) }
+            let result = await Self.runProcess("/usr/sbin/screencapture", arguments, environment: [:], timeout: 30)
+            if result.status != 0 || (!path.isEmpty && !FileManager.default.fileExists(atPath: path)) {
+                failed(step, "the screenshot wasn't taken (Toolbelt needs Screen Recording)")
+            } else if !step.name.isEmpty {
+                set(step.name, path.isEmpty ? "clipboard" : path)
+            }
+        case .pictureFile:
+            let source = (expand(step.text) as NSString).expandingTildeInPath
+            guard let image = PictureFile.load(source) else {
+                failed(step, "“\(source)” isn't a picture Toolbelt can open")
+                return
+            }
+            let edit = step.pictureEdit ?? .convert
+            if edit == .readText {
+                set(step.name.isEmpty ? "Text" : step.name, await PictureFilter.readText(image))
+                return
+            }
+            let destination = step.text2.isEmpty ? source : (expand(step.text2) as NSString).expandingTildeInPath
+            guard let changed = PictureFile.apply(edit, to: image, width: step.number, area: expand(step.area ?? "")),
+                  PictureFile.save(changed, to: destination) else {
+                failed(step, edit == .crop ? "the area isn't inside the picture" : "the picture couldn't be changed or saved")
+                return
+            }
+            if !step.name.isEmpty { set(step.name, destination) }
         case .stop:
             stopped = true
         case .readFile:

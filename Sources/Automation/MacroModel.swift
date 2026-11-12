@@ -92,6 +92,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case idle, activeAgain
         case clipboardChanged, toolbeltStarts, atLogin, windowChanged, windowTitleChanged, calledByMacro
         case clipboardFilter
+        case fileChanged, fileRemoved, darkModeChanged, soundOutputChanged
 
         var id: String { rawValue }
 
@@ -137,6 +138,10 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             case .windowTitleChanged: return "Front window's title changes"
             case .calledByMacro: return "Run by another macro"
             case .clipboardFilter: return "Clipboard history: run on an item"
+            case .fileChanged: return "File changed in a folder"
+            case .fileRemoved: return "File removed from a folder"
+            case .darkModeChanged: return "Dark mode switches on or off"
+            case .soundOutputChanged: return "Sound output changes"
             }
         }
     }
@@ -175,6 +180,10 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case .appQuit: return "\(AppNames.name(of: text)) quits"
         case .appActivated: return "Switch to \(AppNames.name(of: text))"
         case .fileAdded: return "File added to \((text as NSString).abbreviatingWithTildeInPath)"
+        case .fileChanged: return "File changed in \((text as NSString).abbreviatingWithTildeInPath)"
+        case .fileRemoved: return "File removed from \((text as NSString).abbreviatingWithTildeInPath)"
+        case .darkModeChanged: return text.isEmpty ? kind.title : "Switches to \(text) mode"
+        case .soundOutputChanged: return text.isEmpty ? kind.title : "Sound goes to a device named “\(text)”"
         case .wifiChanged: return text.isEmpty ? "Wi-Fi changes" : "Joined Wi-Fi “\(text)”"
         case .timeOfDay:
             let days = weekdays.isEmpty ? "every day" : weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[($0 - 1) % 7] }.joined(separator: ", ")
@@ -227,6 +236,7 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case readFile, browserGet, alert, askFolder, askFile, askSeveral
         case calculate, pictureFilter, runMacro
         case forEach, switchCase, breakLoop, continueLoop, tryCatch, runTogether, splitText
+        case webRequest, json, screenshot, pictureFile
 
         var id: String { rawValue }
 
@@ -262,6 +272,10 @@ struct MacroStep: Identifiable, Codable, Equatable {
             case .tryCatch: return "Try… and if a step fails…"
             case .runTogether: return "Run steps at the same time"
             case .splitText: return "Split text into a list"
+            case .webRequest: return "Web request (GET, POST…)"
+            case .json: return "JSON: get a value, count, make"
+            case .screenshot: return "Take a screenshot"
+            case .pictureFile: return "Change a picture file"
             }
         }
 
@@ -299,6 +313,16 @@ struct MacroStep: Identifiable, Codable, Equatable {
     var source: LoopSource? = nil
     /// 0.36, Choose by value: the cases, in order (the first that matches runs; `elseSteps` when none does).
     var cases: [SwitchCase]? = nil
+    /// 0.37, Web request: the method and "Name: value" header lines.
+    var method: String? = nil
+    var headers: String? = nil
+    /// 0.37, JSON: what to do.
+    var jsonMode: JSONMode? = nil
+    /// 0.37, Screenshot: what to capture; Screenshot and picture files: an area "x,y,w,h".
+    var capture: CaptureArea? = nil
+    var area: String? = nil
+    /// 0.37, Change a picture file: which change.
+    var pictureEdit: PictureEdit? = nil
 
     var isOn: Bool { disabled != true }
 
@@ -337,6 +361,12 @@ struct MacroStep: Identifiable, Codable, Equatable {
         case .tryCatch: return "Try \(steps.count) step\(steps.count == 1 ? "" : "s")"
         case .runTogether: return "Run \(steps.count) step\(steps.count == 1 ? "" : "s") at the same time" + (number == 0 ? " (don't wait)" : "")
         case .splitText: return "Split \(text.prefix(30)) → %\(name.isEmpty ? "List" : name)%"
+        case .webRequest: return "\(method ?? "GET") \(text.prefix(40)) → %\(name.isEmpty ? "Response" : name)%"
+        case .json:
+            let mode = jsonMode ?? .get
+            return mode == .make ? "Make JSON → %\(name.isEmpty ? "JSON" : name)%" : "\(mode.title) \(text2) → %\(name.isEmpty ? "Value" : name)%"
+        case .screenshot: return "Screenshot of \((capture ?? .screen).title.lowercased()) → " + (text.isEmpty ? "clipboard" : (text as NSString).lastPathComponent)
+        case .pictureFile: return "\((pictureEdit ?? .convert).title.components(separatedBy: " (").first ?? ""): \((text as NSString).lastPathComponent)"
         }
     }
 

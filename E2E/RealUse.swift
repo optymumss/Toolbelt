@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import ImageIO
 
 // Real-use tests: starts the real Toolbelt app, then uses it the way a person would: presses
 // shortcuts, holds keys, taps modifier keys, types, clicks and drags with the mouse, and sends
@@ -684,7 +685,52 @@ final class RealUse: NSObject, NSApplicationDelegate {
         attempt.steps = [missing, shellMark("not-skipped")]
         attempt.elseSteps = [caught]
         let flowMacro = Macro(name: "Test flow", steps: [tally, each, attempt, shellMark("flow-%Seen%-%Caught%-%Global_E2ECount%")])
-        let extraMacros = [
+        // 0.37: a web request and JSON, a screenshot made smaller, folder changes and dark mode.
+        let siteHome = "http://127.0.0.1:\(Self.sitePort)/"
+        var getJSON = MacroStep(kind: .webRequest)
+        getJSON.text = siteHome + "api.json"
+        getJSON.name = "Answer"
+        var who = MacroStep(kind: .json)
+        who.text = "%Answer%"
+        who.text2 = "items[1].name"
+        who.name = "Who"
+        var send = MacroStep(kind: .webRequest)
+        send.method = "POST"
+        send.text = siteHome + "echo"
+        send.text2 = #"{"n": %Answer_status%}"#
+        send.name = "Echoed"
+        var echo = MacroStep(kind: .json)
+        echo.text = "%Echoed%"
+        echo.text2 = "got.n"
+        echo.name = "Echo"
+        let webMacro2 = Macro(name: "Test web request", steps: [getJSON, who, send, echo, shellMark("web-%Who%-%Echo%")])
+        var shot = MacroStep(kind: .screenshot)
+        shot.capture = .frontWindow
+        shot.text = data.appendingPathComponent("shot.png").path
+        shot.name = "Shot"
+        shot.onFailure = .stop
+        var smaller = MacroStep(kind: .pictureFile)
+        smaller.text = "%Shot%"
+        smaller.pictureEdit = .resize
+        smaller.number = 120
+        smaller.text2 = data.appendingPathComponent("shot-small.jpg").path
+        smaller.name = "Small"
+        smaller.onFailure = .stop
+        let shotMacro = Macro(name: "Test screenshot", steps: [shot, smaller, shellMark("shot-done")])
+        let watch = data.appendingPathComponent("watch")
+        try FileManager.default.createDirectory(at: watch, withIntermediateDirectories: true)
+        try Data("first".utf8).write(to: watch.appendingPathComponent("w.txt"))
+        var changedTrigger = MacroTrigger(kind: .fileChanged)
+        changedTrigger.text = watch.path
+        var removedTrigger = MacroTrigger(kind: .fileRemoved)
+        removedTrigger.text = watch.path
+        let folderMacros = [
+            Macro(name: "Test file changed", triggers: [changedTrigger], steps: [shellMark("changed-%Trigger%")]),
+            Macro(name: "Test file removed", triggers: [removedTrigger], steps: [shellMark("removed-%Trigger%")]),
+            Macro(name: "Test dark mode", triggers: [MacroTrigger(kind: .darkModeChanged)], steps: [shellMark("theme-%Trigger%")]),
+        ]
+        let extraMacros = folderMacros + [
+            webMacro2, shotMacro,
             flowMacro,
             Macro(name: "Test double", triggers: [MacroTrigger(kind: .calledByMacro)], steps: [double]),
             Macro(name: "Test sub", steps: [callDouble, shellMark("sub-%Got%")]),
@@ -1623,12 +1669,44 @@ final class RealUse: NSObject, NSApplicationDelegate {
         command("catch-clipboard:off")
         command("picker-close")
         await safetyTests(site: site, home: home)
+        await dataTests(site: site, home: home)
+    }
+
+    /// 0.37: a web request and JSON (GET, then POST echoed back), a screenshot made smaller, folder changes and dark mode.
+    func dataTests(site: URL, home: String) async {
+        say("— 0.37: web requests, JSON, screenshots, picture files, folder and dark mode triggers")
+        try? Data(#"{"items":[{"name":"Ann"},{"name":"Bo"}]}"#.utf8).write(to: site.appendingPathComponent("api.json"))
+        _ = await runMacro("Test web request")
+        check("a web request gets JSON, a value is read from it, and a POST sends JSON back",
+              await waitUntil(10) { self.count("web-Bo-200") == 1 }, "markers: \(markers().filter { $0.hasPrefix("web-") })")
+
+        await focus()
+        _ = await runMacro("Test screenshot")
+        let small = data.appendingPathComponent("shot-small.jpg")
+        let ok = await waitUntil(15) { self.count("shot-done") == 1 }
+        let width = CGImageSourceCreateWithURL(small as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }?.width
+        check("a screenshot of the front window is taken and saved smaller as a JPEG", ok && width == 120,
+              "marker \(count("shot-done")), width \(width.map(String.init) ?? "none"), full shot there: \(FileManager.default.fileExists(atPath: data.appendingPathComponent("shot.png").path))")
+
+        let watched = data.appendingPathComponent("watch/w.txt")
+        try? Data("changed, and longer".utf8).write(to: watched)
+        check("changing a file in a folder starts a macro", await waitUntil(10) { self.count("changed-\(watched.path)") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("changed-") })")
+        try? FileManager.default.removeItem(at: watched)
+        check("removing a file from a folder starts a macro", await waitUntil(10) { self.count("removed-\(watched.path)") == 1 },
+              "markers: \(markers().filter { $0.hasPrefix("removed-") })")
+
+        DistributedNotificationCenter.default().postNotificationName(Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil,
+                                                                     userInfo: nil, deliverImmediately: true)
+        check("dark mode switching starts a macro (with Dark or Light)", await waitUntil(5) {
+            self.markers().contains { $0 == "theme-Dark" || $0 == "theme-Light" }
+        }, "markers: \(markers().filter { $0.hasPrefix("theme-") })")
     }
 
     static let proxyPort = 12397
 
     static let siteServer = #"""
-    import base64, http.server, os, sys, threading, urllib.parse
+    import base64, http.server, json, os, sys, threading, urllib.parse
     root, port, proxy_port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
     WANT = "Basic " + base64.b64encode(b"tb:pw").decode()
 
@@ -1645,6 +1723,20 @@ final class RealUse: NSObject, NSApplicationDelegate {
             return super().send_head()
         def log_message(self, *args):
             pass
+        def do_POST(self):
+            # 0.37: echoes what was sent, as JSON: {"got": <the body>, "type": <its Content-Type>}
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length).decode("utf-8", "replace")
+            try:
+                got = json.loads(body)
+            except ValueError:
+                got = body
+            answer = json.dumps({"got": got, "type": self.headers.get("Content-Type", "")}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(answer)))
+            self.end_headers()
+            self.wfile.write(answer)
 
     class Proxy(Site):
         def send_head(self):

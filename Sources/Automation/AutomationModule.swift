@@ -34,6 +34,10 @@ final class AutomationModule: ToolbeltModule {
     private var hotKeys: [HotKey] = []
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var folderWatchers: [FolderWatcher] = []
+    /// 0.37: files changed or removed, dark mode, and the sound output.
+    private var changeWatchers: [FolderChangeWatcher] = []
+    private let theme = ThemeWatcher()
+    private let soundOutput = SoundOutputWatcher()
     private var timers: [Timer] = []
     private var terminalInbox: FolderWatcher?
     private var screenCount = NSScreen.screens.count
@@ -257,6 +261,40 @@ final class AutomationModule: ToolbeltModule {
             folderWatchers.append(watcher)
         }
 
+        // 0.37: one watcher per folder, for the macros that want changed or removed files from it.
+        let changeTriggers = triggers([.fileChanged, .fileRemoved]).filter { !$0.1.text.isEmpty }
+        let folders = Set(changeTriggers.map { ($0.1.text as NSString).expandingTildeInPath })
+        for folder in folders {
+            let mine = changeTriggers.filter { ($0.1.text as NSString).expandingTildeInPath == folder }
+            let watcher = FolderChangeWatcher(folder: URL(fileURLWithPath: folder, isDirectory: true)) { [weak self] changed, removed in
+                for (macro, trigger) in mine {
+                    for file in trigger.kind == .fileChanged ? changed : removed { self?.fire(macro, value: file.path) }
+                }
+            }
+            watcher.start(lookEvery: mine.contains { $0.1.kind == .fileChanged } ? 3 : 30)
+            changeWatchers.append(watcher)
+        }
+        if !triggers([.darkModeChanged]).isEmpty {
+            theme.onChange = { [weak self] dark in
+                guard let self else { return }
+                let mode = dark ? "Dark" : "Light"
+                for (macro, trigger) in self.triggers([.darkModeChanged]) where trigger.text.isEmpty || trigger.text == mode {
+                    self.fire(macro, value: mode)
+                }
+            }
+            theme.start()
+        }
+        if !triggers([.soundOutputChanged]).isEmpty {
+            soundOutput.onChange = { [weak self] name in
+                guard let self else { return }
+                for (macro, trigger) in self.triggers([.soundOutputChanged])
+                    where trigger.text.isEmpty || name.localizedCaseInsensitiveContains(trigger.text) {
+                    self.fire(macro, value: name)
+                }
+            }
+            soundOutput.start()
+        }
+
         for (macro, trigger) in triggers([.timeOfDay, .every]) {
             schedule(macro, trigger)
         }
@@ -303,6 +341,10 @@ final class AutomationModule: ToolbeltModule {
         observers = []
         for watcher in folderWatchers { watcher.stop() }
         folderWatchers = []
+        for watcher in changeWatchers { watcher.stop() }
+        changeWatchers = []
+        theme.stop()
+        soundOutput.stop()
         for timer in timers { timer.invalidate() }
         timers = []
         deviceKeys.stop()
