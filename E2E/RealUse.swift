@@ -1547,13 +1547,15 @@ final class RealUse: NSObject, NSApplicationDelegate {
         check("turning on sync writes the macros to the shared folder", await waitUntil(5) { synced()?.macros.contains { $0.name == "Test flow" } == true },
               "file: \(FileManager.default.fileExists(atPath: file.path))")
         if var fromOther = synced() {
-            var arrived = Macro(name: "Synced macro", steps: [shellMark("synced")])
+            var markStep = MacroStep(kind: .action)
+            markStep.action = mark("synced")
+            var arrived = Macro(name: "Synced macro", steps: [markStep])
             arrived.modified = Date()
             fromOther.device = "Another Mac"
             fromOther.macros.append(arrived)
             try? JSONEncoder().encode(fromOther).write(to: file, options: .atomic)
         }
-        check("a macro another Mac adds to the shared file arrives", await waitUntil(15) { self.list("macroNames").contains("Synced macro") },
+        check("a macro another Mac adds to the shared file arrives", await waitUntil(15) { list("macroNames").contains("Synced macro") },
               "macros: \(list("macroNames").suffix(3))")
         _ = await runMacro("Synced macro")
         check("… and runs", await waitUntil(5) { self.count("synced") == 1 })
