@@ -66,6 +66,7 @@ enum ToolbeltTests {
         t.group("Macros: for each, choose by value, leave/skip a loop, try, at the same time, split, lasting variables", MacroFlowTests.run)
         t.group("Macros: web requests, JSON, screenshots, picture files, folder changes", MacroDataTests.run)
         t.group("Macros: debugger, shortcut conflicts, progress, syncing between Macs", MacroToolingTests.run)
+        t.group("Mouse wheel, moving windows with keys, monitor brightness, usage statistics", MouseWindowTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -5475,5 +5476,110 @@ enum MacroToolingTests {
         try? FileManager.default.removeItem(at: folder)
 
         check(!MacroStep.Kind.progress.title.isEmpty, "the progress step has a name")
+    }
+}
+
+@MainActor
+enum MouseWindowTests {
+    static func run() {
+        // Mouse wheel: direction and speed.
+        check(MouseTuning().isNeutral, "the wheel is left alone until a setting is changed")
+        let reversed = MouseTuning(reverse: true)
+        checkEqual(reversed.adjusted(lines: 3, points: 30).lines, -3, "“the other way” reverses a notch")
+        checkEqual(reversed.adjusted(lines: 3, points: 30).points, -30, "… points too")
+        let fast = MouseTuning(speed: 2)
+        checkEqual(fast.adjusted(lines: -2, points: -20).lines, -4, "a faster speed scrolls more lines")
+        let slow = MouseTuning(speed: 0.5)
+        checkEqual(slow.adjusted(lines: 1, points: 10).lines, 1, "a slow speed still moves at least a line")
+        checkEqual(MouseTuning(text: "1,0,1.5"), MouseTuning(smooth: true, reverse: false, speed: 1.5), "the settings read from text")
+        checkEqual(MouseTuning(text: "0,1,9")?.speed, 3, "… with the speed kept to 3 at most")
+        check(MouseTuning(text: "nonsense") == nil, "… and nonsense refused")
+        checkEqual(MouseTuning(smooth: true).glide(lines: 1, points: 0), 40, "a notch with no point amount glides 40 pixels")
+        checkEqual(MouseTuning(smooth: true, reverse: true).glide(lines: 1, points: 12), -12, "a glide goes the other way when reversed")
+
+        // Smooth scrolling: a notch eases out and always ends, adding up to the whole distance.
+        var smoother = ScrollSmoother()
+        smoother.add(vertical: 100, horizontal: -30)
+        var totalY = 0, totalX = 0, frames = 0, first = 0
+        while !smoother.isIdle && frames < 500 {
+            let step = smoother.step(dt: 1.0 / 120)
+            if frames == 0 { first = Int(step.dy) }
+            totalY += Int(step.dy)
+            totalX += Int(step.dx)
+            frames += 1
+        }
+        checkEqual(totalY, 100, "a smooth notch scrolls its whole distance")
+        checkEqual(totalX, -30, "… sideways too")
+        check(frames > 5 && frames < 120, "… over several frames, ending within a second", "\(frames) frames")
+        check(first > 0 && first < 100, "… starting with part of it", "first \(first)")
+        var quick = ScrollSmoother()
+        quick.add(vertical: 50, horizontal: 0)
+        _ = quick.step(dt: 1.0 / 120)
+        quick.add(vertical: 50, horizontal: 0)
+        check(quick.remainingY > 50, "notches in quick succession add up")
+        quick.stop()
+        check(quick.isIdle, "stopping ends a glide")
+
+        // Moving windows with keys held.
+        let control = WindowDragKeys.raw(.control), option = WindowDragKeys.raw(.option)
+        let shift = WindowDragKeys.raw(.shift), capsLock = WindowDragKeys.raw(.capsLock)
+        let keys = WindowDragKeys(move: control | option, resize: control | option | shift)
+        checkEqual(keys.mode(for: control | option), .move, "⌃⌥ held moves the window")
+        checkEqual(keys.mode(for: control | option | shift), .resize, "⌃⌥⇧ held resizes it")
+        checkEqual(keys.mode(for: control | option | capsLock | 0x100), .move, "Caps Lock and device bits don't get in the way")
+        check(keys.mode(for: control) == nil && keys.mode(for: 0) == nil, "other keys (or none) do nothing")
+        check(WindowDragKeys().isOff, "it's off until keys are chosen")
+        checkEqual(WindowDragKeys.name(control | option), "⌃⌥", "the choices have names")
+        let start = CGRect(x: 100, y: 200, width: 400, height: 300)
+        checkEqual(WindowDragMath.frame(start: start, mouseStart: CGPoint(x: 10, y: 10), mouse: CGPoint(x: 60, y: -20), mode: .move),
+                   CGRect(x: 150, y: 170, width: 400, height: 300), "moving follows the mouse")
+        checkEqual(WindowDragMath.frame(start: start, mouseStart: .zero, mouse: CGPoint(x: 50, y: 25), mode: .resize),
+                   CGRect(x: 100, y: 200, width: 450, height: 325), "resizing moves the bottom-right corner")
+        checkEqual(WindowDragMath.frame(start: start, mouseStart: .zero, mouse: CGPoint(x: -1000, y: -1000), mode: .resize).size,
+                   WindowDragMath.minimumSize, "… never smaller than a usable window")
+
+        // Monitor brightness over DDC.
+        checkEqual(DDC.setMessage(code: 0x10, value: 70), [0x84, 0x03, 0x10, 0x00, 70, 0x6E ^ 0x51 ^ 0x84 ^ 0x03 ^ 0x10 ^ 0x00 ^ 70],
+                   "the “set brightness” message, with its checksum")
+        checkEqual(DDC.getMessage(code: 0x10), [0x82, 0x01, 0x10, 0x6E ^ 0x51 ^ 0x82 ^ 0x01 ^ 0x10], "the “what is it at” message")
+        let reply: [UInt8] = [0x6E, 0x88, 0x02, 0x00, 0x10, 0x00, 0x00, 0x64, 0x00, 0x2D, 0x00, 0x00]
+        check(DDC.parseReply(reply, code: 0x10).map { $0.current == 45 && $0.maximum == 100 } == true, "the monitor's answer is read (45 of 100)")
+        check(DDC.parseReply([0x6E, 0x80, 0xBE], code: 0x10) == nil, "a short or empty answer is ignored")
+        check(DDC.parseReply([0x02, 0x00, 0x12, 0, 0, 100, 0, 50], code: 0x10) == nil, "… and so is an answer about another control")
+        checkEqual(DDC.level("+10", from: 50), 60, "+10 raises the brightness")
+        checkEqual(DDC.level("-80", from: 50), 0, "… and it never goes below 0")
+        checkEqual(DDC.level("70%", from: 20), 70, "a number sets it")
+        check(DDC.level("bright", from: 50) == nil, "nonsense is refused")
+        checkEqual(MonitorBrightness.brightnessKey(subtype: 8, data1: (2 << 16) | (0x0A << 8)), true, "the brightness-up key going down is noticed")
+        checkEqual(MonitorBrightness.brightnessKey(subtype: 8, data1: (3 << 16) | (0x0A << 8)), false, "… and brightness down")
+        check(MonitorBrightness.brightnessKey(subtype: 8, data1: (2 << 16) | (0x0B << 8)) == nil, "… not on its way up")
+        check(MonitorBrightness.brightnessKey(subtype: 8, data1: (0 << 16) | (0x0A << 8)) == nil, "… and not the volume keys")
+        check(MacroAction.Kind.allCases.contains(.monitorBrightness), "the monitor brightness action is offered")
+        check(MoreMacroActions.kinds.contains(.monitorBrightness), "… and runs")
+        _ = ExternalDisplays.isSupported // looked up without crashing, monitor or not
+
+        // Usage statistics.
+        let now = Date()
+        let known = [(key: "rule:a", kind: "Trigger", name: "Tap"), (key: "macro:b", kind: "Macro", name: "Backup"),
+                     (key: "macro:c", kind: "Macro", name: "Clean"), (key: "rule:d", kind: "Trigger", name: "Drag")]
+        let entries = ["rule:a": UsageEntry(count: 5, last: now), "macro:b": UsageEntry(count: 5, last: now.addingTimeInterval(-60)),
+                       "macro:c": UsageEntry(count: 1, last: now.addingTimeInterval(-40 * 86_400))]
+        let items = UsageStats.items(known: known, entries: entries)
+        checkEqual(UsageStats.list(items, filter: .all, now: now).map(\.name), ["Tap", "Backup", "Clean", "Drag"],
+                   "most used first, then most recent")
+        checkEqual(UsageStats.list(items, filter: .never, now: now).map(\.name), ["Drag"], "“never used” lists what never ran")
+        checkEqual(UsageStats.list(items, filter: .unusedMonth, now: now).map(\.name), ["Clean", "Drag"], "“not used for 30 days” too")
+        checkEqual(UsageStats.summary(nil), "Never used", "a summary for one that never ran")
+        check(UsageStats.summary(UsageEntry(count: 3, last: now), now: now).hasPrefix("3 times · last today"), "… and for one that did")
+        check(UsageStats.summary(UsageEntry(count: 1, last: now), now: now).hasPrefix("Once"), "… once")
+        let stats = UsageStats.shared
+        let key = UsageStats.macroKey(UUID())
+        stats.record(key)
+        stats.record(key)
+        checkEqual(stats.entry(key)?.count, 2, "each run is counted")
+        stats.saveNow()
+        checkEqual(UsageStats().entry(key)?.count, 2, "counts are kept after a restart")
+        stats.reset()
+        check(stats.entry(key) == nil, "Reset Counts starts from zero")
     }
 }

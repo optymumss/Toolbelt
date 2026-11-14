@@ -12,6 +12,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case mouse, webSearch, runShortcut
         case floatingMenu, switchPreset
         case app, window, file, browser, download, speak, playSound, largeText, setVolume, desktopPicture, keyboardLayout
+        case monitorBrightness
 
         var id: String { rawValue }
 
@@ -49,6 +50,7 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .setVolume: return "Set the volume"
             case .desktopPicture: return "Change the desktop picture"
             case .keyboardLayout: return "Switch keyboard layout"
+            case .monitorBrightness: return "Set a separate monitor's brightness"
             }
         }
     }
@@ -129,6 +131,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .setVolume: return "Volume \(MoreMacroActions.volume(value) ?? 50)%"
         case .desktopPicture: return "Desktop picture \((value as NSString).lastPathComponent)"
         case .keyboardLayout: return "Keyboard layout \(value)"
+        case .monitorBrightness: return "Monitor brightness \(value.hasPrefix("+") || value.hasPrefix("-") ? "" : "to ")\(value)%"
         }
     }
 }
@@ -271,7 +274,7 @@ final class ActionRunner {
         case .runShortcut:
             guard !action.value.isEmpty else { return }
             Self.runScript("/usr/bin/shortcuts", ["run", action.value])
-        case .app, .window, .file, .browser, .download, .speak, .playSound, .largeText, .setVolume, .desktopPicture, .keyboardLayout:
+        case .app, .window, .file, .browser, .download, .speak, .playSound, .largeText, .setVolume, .desktopPicture, .keyboardLayout, .monitorBrightness:
             Task { _ = await MoreMacroActions.perform(action) }
         case .floatingMenu:
             Self.toggleFloatingMenu?(action.value)
@@ -335,15 +338,23 @@ final class ActionRunner {
         case .previousTrack: MediaKeys.press(MediaKeys.previous)
         case .volumeUpSmall: MediaKeys.press(MediaKeys.soundUp, small: true)
         case .volumeDownSmall: MediaKeys.press(MediaKeys.soundDown, small: true)
-        case .brightnessUpSmall: MediaKeys.press(MediaKeys.brightnessUp, small: true)
-        case .brightnessDownSmall: MediaKeys.press(MediaKeys.brightnessDown, small: true)
+        case .brightnessUpSmall:
+            MediaKeys.press(MediaKeys.brightnessUp, small: true)
+            MonitorBrightness.shared.step(up: true, small: true)
+        case .brightnessDownSmall:
+            MediaKeys.press(MediaKeys.brightnessDown, small: true)
+            MonitorBrightness.shared.step(up: false, small: true)
         case .restart, .shutDown, .logOut:
             if let script = MoreMacroActions.loginWindowScript(control) { Self.runScript("/usr/bin/osascript", ["-e", script]) }
         case .volumeUp: MediaKeys.press(MediaKeys.soundUp)
         case .volumeDown: MediaKeys.press(MediaKeys.soundDown)
         case .mute: MediaKeys.press(MediaKeys.mute)
-        case .brightnessUp: MediaKeys.press(MediaKeys.brightnessUp)
-        case .brightnessDown: MediaKeys.press(MediaKeys.brightnessDown)
+        case .brightnessUp:
+            MediaKeys.press(MediaKeys.brightnessUp)
+            MonitorBrightness.shared.step(up: true, small: false)
+        case .brightnessDown:
+            MediaKeys.press(MediaKeys.brightnessDown)
+            MonitorBrightness.shared.step(up: false, small: false)
         case .lockScreen: SystemActions.lockScreen()
         case .sleepDisplay: SystemActions.run("/usr/bin/pmset", ["displaysleepnow"])
         case .sleep: SystemActions.sleep()
@@ -503,7 +514,10 @@ enum MediaKeys {
             let data1 = Int((key << 16) | ((down ? 0xA : 0xB) << 8))
             let event = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: flags, timestamp: 0,
                                            windowNumber: 0, context: nil, subtype: 8, data1: data1, data2: -1)
-            event?.cgEvent?.post(tap: .cghidEventTap)
+            guard let cgEvent = event?.cgEvent else { continue }
+            // Marked as Toolbelt's own, so watching the brightness keys for monitors doesn't count it twice.
+            cgEvent.setIntegerValueField(.eventSourceUserData, value: GestureEventTap.ownEventMarker)
+            cgEvent.post(tap: .cghidEventTap)
         }
     }
 }
@@ -579,7 +593,7 @@ struct ActionEditor: View {
                 TextField("Shortcut name, as in the Shortcuts app", text: $action.value)
                 Text("For example a shortcut that turns a Focus (like Do Not Disturb) on or off: make it once in the Shortcuts app.")
                     .font(.caption).foregroundStyle(.secondary)
-            case .app, .window, .file, .browser, .download, .speak, .playSound, .largeText, .setVolume, .desktopPicture, .keyboardLayout:
+            case .app, .window, .file, .browser, .download, .speak, .playSound, .largeText, .setVolume, .desktopPicture, .keyboardLayout, .monitorBrightness:
                 MoreActionFields(action: $action)
             case .shell, .appleScript, .javaScript:
                 TextEditor(text: $action.value)

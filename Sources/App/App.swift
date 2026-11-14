@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         modules.refresh()
         Updater.shared.registerTestHooks()
+        UsageStats.registerTestHooks()
         Updater.shared.start()
 
         // Right-click and Services menu entries (see NSServices in Info.plist).
@@ -254,6 +255,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 default:
                     ProgressPanel.show("Resizing photo 7 of 20", percent: "35", owner: automation.makeRun(trigger: ""))
                 }
+            case "usage":
+                // 0.39: how often each trigger and macro ran (made-up numbers).
+                let now = Date()
+                let demo: [(String, String, Int, Double?)] = [
+                    ("Trigger", "Three-finger tap → Open the launcher", 412, 0.1), ("Trigger", "Right ⌘ twice → Clipboard history", 236, 0.5),
+                    ("Macro", "Tidy downloaded photos", 58, 26), ("Trigger", "Mouse button 4 → Back", 31, 3),
+                    ("Macro", "Send invoice", 12, 200), ("Trigger", "Swipe in from the left edge → Mission Control", 2, 900),
+                    ("Macro", "Rename screenshots", 0, nil),
+                ]
+                UsageStats.sources["demo"] = { demo.map { (key: "demo:" + $0.1, kind: $0.0, name: $0.1) } }
+                for item in demo where item.2 > 0 {
+                    UsageStats.shared.set("demo:" + item.1, UsageEntry(count: item.2, last: now.addingTimeInterval(-(item.3 ?? 0) * 3600)))
+                }
+                UsageWindow.show()
             case "variables":
                 // 0.36: variables that last between runs.
                 GlobalVariables.shared.set("Global_Tidied", "42")

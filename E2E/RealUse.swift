@@ -865,6 +865,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await kmExtraTests()
             await flowTests()
             await toolingTests()
+            await mouseWindowTests()
             await updateTests()
             await linkTests()
             await macEventTests()
@@ -1560,6 +1561,96 @@ final class RealUse: NSObject, NSApplicationDelegate {
         _ = await runMacro("Synced macro")
         check("… and runs", await waitUntil(5) { self.count("synced") == 1 })
         command("sync-folder:")
+    }
+
+    /// 0.39: an ordinary mouse's wheel (direction, smooth), moving and resizing windows with keys held, usage counts.
+    func mouseWindowTests() async {
+        say("— 0.39: mouse wheel, moving windows with keys held, usage statistics")
+        func status(_ key: String) -> String { toolbeltStatus()[key] as? String ?? "" }
+        func number(_ key: String) -> Int { (toolbeltStatus()[key] as? NSNumber)?.intValue ?? 0 }
+        func wheel(_ lines: Int32, at point: CGPoint) {
+            guard let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0) else { return }
+            event.location = point
+            post(event)
+        }
+
+        await focus()
+        let padMiddle = padPoint(0.5)
+        moveMouse(to: padMiddle)
+        await pause(0.2)
+        command("mouse-tuning:0,1,1")
+        check("changing the mouse wheel starts watching it", await waitUntil(3) { status("mouseTuning") == "on" }, "status: \(status("mouseTuning"))")
+        pad.log = []
+        wheel(-3, at: padMiddle)
+        check("“scroll the other way” reverses an ordinary mouse wheel", await waitUntil(3) { self.pad.log.contains("scroll up") }
+              && !pad.log.contains("scroll down"), "the pad saw \(pad.log)")
+
+        command("mouse-tuning:1,0,1")
+        await pause(0.3)
+        pad.log = []
+        let glidesBefore = number("mouseGlideEvents")
+        wheel(-1, at: padMiddle)
+        check("smooth scrolling turns one notch into a glide of small scrolls", await waitUntil(3) {
+            number("mouseGlideEvents") - glidesBefore >= 4 && self.pad.log.filter { $0 == "scroll down" }.count >= 4
+        }, "glides: \(number("mouseGlideEvents") - glidesBefore), the pad saw \(pad.log)")
+        command("mouse-tuning:0,0,1")
+        check("… and with every setting back to normal, Toolbelt stops watching the wheel", await waitUntil(3) { status("mouseTuning") == "off" })
+
+        let control = CGEventFlags.maskControl.rawValue, option = CGEventFlags.maskAlternate.rawValue, shift = CGEventFlags.maskShift.rawValue
+        command("window-drag:\(control | option),\(control | option | shift)")
+        check("choosing keys for moving windows starts watching them", await waitUntil(3) { status("windowDrag") == "on" })
+        window.setFrame(homeFrame, display: true)
+        await focus(clear: false)
+        let start = windowMiddle
+        moveMouse(to: start)
+        await pause(0.3)
+        let before = window.frame
+        flagsEvent(59, flags: control | 0x01)
+        flagsEvent(58, flags: control | option | 0x21)
+        await pause(0.2)
+        for step in 1...12 {
+            moveMouse(to: CGPoint(x: start.x - CGFloat(step * 10), y: start.y + CGFloat(step * 5)))
+            await pause(0.03)
+        }
+        await pause(0.3)
+        flagsEvent(58, flags: control | 0x01)
+        flagsEvent(59, flags: 0)
+        let moved = window.frame
+        check("holding ⌃⌥ and moving the mouse moves the window under the pointer", await waitUntil(2) {
+            abs(self.window.frame.minX - before.minX + 120) <= 6 && abs(self.window.frame.minY - before.minY + 60) <= 6
+        }, "from \(before) to \(window.frame); moves \(number("windowDragMoves"))")
+        check("… keeping its size", abs(moved.width - before.width) < 1 && abs(moved.height - before.height) < 1)
+
+        // (Moved left, so there's room on the test Mac's small screen to grow to the right.)
+        let resizeStart = CGPoint(x: start.x - 120, y: start.y + 60)
+        await pause(0.2)
+        flagsEvent(59, flags: control | 0x01)
+        flagsEvent(58, flags: control | option | 0x21)
+        flagsEvent(56, flags: control | option | shift | 0x23)
+        await pause(0.2)
+        for step in 1...8 {
+            moveMouse(to: CGPoint(x: resizeStart.x + CGFloat(step * 10), y: resizeStart.y + CGFloat(step * 5)))
+            await pause(0.03)
+        }
+        await pause(0.3)
+        flagsEvent(56, flags: control | option | 0x21)
+        flagsEvent(58, flags: control | 0x01)
+        flagsEvent(59, flags: 0)
+        check("holding ⌃⌥⇧ and moving the mouse resizes it from the bottom-right corner", await waitUntil(2) {
+            abs(self.window.frame.width - moved.width - 80) <= 6 && abs(self.window.frame.height - moved.height - 40) <= 6
+        }, "from \(moved) to \(window.frame); screen \(NSScreen.screens.first?.frame ?? .zero)")
+        check("… keeping its top-left corner where it was", abs(window.frame.minX - moved.minX) < 2 && abs(window.frame.maxY - moved.maxY) < 2)
+        command("window-drag:0,0")
+        _ = await waitUntil(3) { status("windowDrag") == "off" }
+        window.setFrame(homeFrame, display: true)
+
+        func usage() -> Int { ((toolbeltStatus()["usageCounts"] as? [String: Any])?["macro:Test progress"] as? NSNumber)?.intValue ?? -1 }
+        let ranBefore = usage()
+        _ = await runMacro("Test progress")
+        _ = await waitUntil(6) { self.count("progress-done") >= 2 }
+        _ = await runMacro("Test progress")
+        check("each run of a macro is counted in the usage statistics", await waitUntil(8) { usage() == ranBefore + 2 },
+              "before \(ranBefore), now \(usage())")
     }
 
     func flowTests() async {

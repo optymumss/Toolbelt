@@ -100,6 +100,9 @@ final class AutomationModule: ToolbeltModule {
         ConflictPalette.registerTestHooks()
         ProgressPanel.registerTestHooks()
         RealUseHooks.extraStatus["macroNames"] = { [weak self] in self?.store.macros.map(\.name) ?? [] }
+        UsageStats.sources["macros"] = { [weak self] in
+            self?.store.macros.map { (key: UsageStats.macroKey($0.id), kind: "Macro", name: $0.name.isEmpty ? "Untitled" : $0.name) } ?? []
+        }
         RealUseHooks.commands["sync-folder"] = { [weak self] path in
             Prefs.macroSyncFolder = path.isEmpty ? nil : path
             self?.refreshSync()
@@ -180,6 +183,7 @@ final class AutomationModule: ToolbeltModule {
     }
 
     func run(_ macro: Macro, trigger: String = "", done: (() -> Void)? = nil) {
+        UsageStats.shared.record(UsageStats.macroKey(macro.id))
         history.append(macro.name)
         if history.count > 50 { history.removeFirst() }
         let run = makeRun(trigger: trigger)

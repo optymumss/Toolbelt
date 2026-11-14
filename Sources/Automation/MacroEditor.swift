@@ -284,6 +284,7 @@ struct MacroDetail: View {
             Section {
                 TextField("Name", text: $macro.name)
                 Toggle("On", isOn: $macro.enabled)
+                LabeledContent("Used", value: UsageStats.summary(UsageStats.shared.entry(UsageStats.macroKey(macro.id))))
                 Picker("Group", selection: $macro.groupID) {
                     Text("None").tag(UUID?.none)
                     ForEach(groups) { Text($0.name).tag(UUID?.some($0.id)) }
