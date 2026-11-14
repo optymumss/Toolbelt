@@ -44,6 +44,26 @@ final class SettingsStore: ObservableObject {
     func set(_ value: Any?, for key: String) {
         objectWillChange.send()
         values[key] = value
+        lastChanged = Date()
+        save()
+    }
+
+    /// 0.40: when a setting last changed (for syncing between Macs).
+    private(set) lazy var lastChanged: Date = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date) ?? .distantPast
+
+    /// The settings to share with other Macs, as a property list (keys sorted, so equal settings give equal data).
+    func syncedData(excluding local: Set<String>) -> Data {
+        let shared = values.filter { !local.contains($0.key) }
+        return (try? PropertyListSerialization.data(fromPropertyList: shared, format: .xml, options: 0)) ?? Data()
+    }
+
+    /// Settings from another Mac: every shared setting is replaced; this Mac's own ones are kept.
+    func applySynced(_ data: Data, keeping local: Set<String>) {
+        guard let synced = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return }
+        objectWillChange.send()
+        var merged = synced.filter { !local.contains($0.key) }
+        for key in local { if let value = values[key] { merged[key] = value } }
+        values = merged
         save()
     }
 

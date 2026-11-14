@@ -44,6 +44,14 @@ final class GestureStore: ObservableObject {
     private let groupsFile = SettingsStore.folder.appendingPathComponent("trigger-groups.json")
 
     init() {
+        reloadFromDisk()
+        // 0.40: kept the same on all your Macs when syncing everything.
+        EverythingSync.shared.register("Triggers", file: file) { [weak self] in self?.reloadFromDisk() }
+        EverythingSync.shared.register("Trigger groups", file: groupsFile) { [weak self] in self?.reloadFromDisk() }
+        EverythingSync.shared.register("Trigger presets", file: presetsFile) { [weak self] in self?.reloadFromDisk() }
+    }
+
+    func reloadFromDisk() {
         if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([GestureRule].self, from: data) {
             rules = saved
         }

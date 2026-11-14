@@ -73,6 +73,11 @@ final class PanelStore: ObservableObject {
     }
 
     init() {
+        reload()
+        EverythingSync.shared.register("Floating menus", file: file) { [weak self] in self?.reload() }
+    }
+
+    func reload() {
         if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Saved.self, from: data) {
             menus = saved.menus
             menuBarItems = saved.menuBarItems

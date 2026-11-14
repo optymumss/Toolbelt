@@ -10,7 +10,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case toolbelt, openApp, open, pressKeys, typeText, system, menuItem, resolution, audioOutput
         case setClipboard, pasteNamed, macro, shell, appleScript, javaScript, showHUD
         case mouse, webSearch, runShortcut
-        case floatingMenu, switchPreset
+        case floatingMenu, switchPreset, widget
         case app, window, file, browser, download, speak, playSound, largeText, setVolume, desktopPicture, keyboardLayout
         case monitorBrightness
 
@@ -39,6 +39,7 @@ struct MacroAction: Codable, Equatable, Hashable {
             case .runShortcut: return "Run a shortcut from the Shortcuts app"
             case .floatingMenu: return "Show / hide a floating menu"
             case .switchPreset: return "Switch to a preset of triggers"
+            case .widget: return "Show / hide a widget"
             case .app: return "Apps: switch back, quit, hide…"
             case .window: return "Front window: move, resize, minimise, close all"
             case .file: return "Files: copy, move, rename, trash, write"
@@ -93,6 +94,7 @@ struct MacroAction: Codable, Equatable, Hashable {
         case .runShortcut: return "Run shortcut “\(value)”"
         case .floatingMenu: return "Show / hide floating menu “\(value)”"
         case .switchPreset: return value.isEmpty ? "Switch to the next preset" : "Switch to preset “\(value)”"
+        case .widget: return "Show / hide the widget “\(value)”"
         case .app:
             let command = AppCommand(rawValue: option ?? "") ?? .activateLast
             switch command {
@@ -217,6 +219,7 @@ final class ActionRunner {
     static var runMacro: ((String) -> Void)?
     static var toggleFloatingMenu: ((String) -> Void)?
     static var switchPreset: ((String) -> Void)?
+    static var toggleWidget: ((String) -> Void)?
 
     init(shortcuts: ShortcutCenter) {
         self.shortcuts = shortcuts
@@ -280,6 +283,8 @@ final class ActionRunner {
             Self.toggleFloatingMenu?(action.value)
         case .switchPreset:
             Self.switchPreset?(action.value)
+        case .widget:
+            Self.toggleWidget?(action.value)
         }
     }
 
@@ -589,6 +594,8 @@ struct ActionEditor: View {
                 TextField("Floating menu name (Settings → Automation)", text: $action.value)
             case .switchPreset:
                 TextField("Preset name (empty: the next one in turn)", text: $action.value)
+            case .widget:
+                TextField("Widget name (Settings → Automation)", text: $action.value)
             case .runShortcut:
                 TextField("Shortcut name, as in the Shortcuts app", text: $action.value)
                 Text("For example a shortcut that turns a Focus (like Do Not Disturb) on or off: make it once in the Shortcuts app.")

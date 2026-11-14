@@ -93,6 +93,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case clipboardChanged, toolbeltStarts, atLogin, windowChanged, windowTitleChanged, calledByMacro
         case clipboardFilter
         case fileChanged, fileRemoved, darkModeChanged, soundOutputChanged
+        case script
 
         var id: String { rawValue }
 
@@ -142,6 +143,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             case .fileRemoved: return "File removed from a folder"
             case .darkModeChanged: return "Dark mode switches on or off"
             case .soundOutputChanged: return "Sound output changes"
+            case .script: return "Trigger plugin: a script decides"
             }
         }
     }
@@ -167,6 +169,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         var trigger = MacroTrigger(kind: kind, gesture: kind == .gesture ? .touch(.trackpad, .tap, fingers: 3) : nil)
         if kind == .batteryBelow { trigger.number = 20 }
         if kind == .idle || kind == .activeAgain { trigger.number = 5 }
+        if kind == .script { trigger.number = 60 }
         return trigger
     }
 
@@ -184,6 +187,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case .fileRemoved: return "File removed from \((text as NSString).abbreviatingWithTildeInPath)"
         case .darkModeChanged: return text.isEmpty ? kind.title : "Switches to \(text) mode"
         case .soundOutputChanged: return text.isEmpty ? kind.title : "Sound goes to a device named “\(text)”"
+        case .script: return number > 0 ? "A script's output changes (every \(max(5, number)) s)" : "A script prints a line"
         case .wifiChanged: return text.isEmpty ? "Wi-Fi changes" : "Joined Wi-Fi “\(text)”"
         case .timeOfDay:
             let days = weekdays.isEmpty ? "every day" : weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[($0 - 1) % 7] }.joined(separator: ", ")

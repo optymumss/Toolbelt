@@ -69,6 +69,10 @@ final class LayoutStore: ObservableObject {
 
     init() {
         layouts = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([SavedLayout].self, from: $0) } ?? []
+        EverythingSync.shared.register("Window layouts", file: file) { [weak self] in
+            guard let self else { return }
+            self.layouts = (try? Data(contentsOf: self.file)).flatMap { try? JSONDecoder().decode([SavedLayout].self, from: $0) } ?? []
+        }
     }
 
     private func save() {
@@ -153,6 +157,10 @@ final class SnapAreaStore: ObservableObject {
 
     init() {
         areas = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([SnapArea].self, from: $0) } ?? []
+        EverythingSync.shared.register("Snap areas", file: file) { [weak self] in
+            guard let self else { return }
+            self.areas = (try? Data(contentsOf: self.file)).flatMap { try? JSONDecoder().decode([SnapArea].self, from: $0) } ?? []
+        }
     }
 
     func areas(on display: String) -> [SnapArea] {
