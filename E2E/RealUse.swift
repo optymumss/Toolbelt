@@ -1609,7 +1609,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
         flagsEvent(58, flags: control | option | 0x21)
         await pause(0.2)
         for step in 1...12 {
-            moveMouse(to: CGPoint(x: start.x + CGFloat(step * 10), y: start.y + CGFloat(step * 5)))
+            moveMouse(to: CGPoint(x: start.x - CGFloat(step * 10), y: start.y + CGFloat(step * 5)))
             await pause(0.03)
         }
         await pause(0.3)
@@ -1617,11 +1617,12 @@ final class RealUse: NSObject, NSApplicationDelegate {
         flagsEvent(59, flags: 0)
         let moved = window.frame
         check("holding ⌃⌥ and moving the mouse moves the window under the pointer", await waitUntil(2) {
-            abs(self.window.frame.minX - before.minX - 120) <= 6 && abs(self.window.frame.minY - before.minY + 60) <= 6
+            abs(self.window.frame.minX - before.minX + 120) <= 6 && abs(self.window.frame.minY - before.minY + 60) <= 6
         }, "from \(before) to \(window.frame); moves \(number("windowDragMoves"))")
         check("… keeping its size", abs(moved.width - before.width) < 1 && abs(moved.height - before.height) < 1)
 
-        let resizeStart = CGPoint(x: start.x + 120, y: start.y + 60)
+        // (Moved left, so there's room on the test Mac's small screen to grow to the right.)
+        let resizeStart = CGPoint(x: start.x - 120, y: start.y + 60)
         await pause(0.2)
         flagsEvent(59, flags: control | 0x01)
         flagsEvent(58, flags: control | option | 0x21)
@@ -1637,7 +1638,8 @@ final class RealUse: NSObject, NSApplicationDelegate {
         flagsEvent(59, flags: 0)
         check("holding ⌃⌥⇧ and moving the mouse resizes it from the bottom-right corner", await waitUntil(2) {
             abs(self.window.frame.width - moved.width - 80) <= 6 && abs(self.window.frame.height - moved.height - 40) <= 6
-        }, "from \(moved.size) to \(window.frame.size)")
+        }, "from \(moved) to \(window.frame); screen \(NSScreen.screens.first?.frame ?? .zero)")
+        check("… keeping its top-left corner where it was", abs(window.frame.minX - moved.minX) < 2 && abs(window.frame.maxY - moved.maxY) < 2)
         command("window-drag:0,0")
         _ = await waitUntil(3) { status("windowDrag") == "off" }
         window.setFrame(homeFrame, display: true)
