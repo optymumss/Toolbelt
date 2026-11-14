@@ -94,6 +94,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case clipboardFilter
         case fileChanged, fileRemoved, darkModeChanged, soundOutputChanged
         case script
+        case gameButton
 
         var id: String { rawValue }
 
@@ -144,6 +145,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
             case .darkModeChanged: return "Dark mode switches on or off"
             case .soundOutputChanged: return "Sound output changes"
             case .script: return "Trigger plugin: a script decides"
+            case .gameButton: return "Game controller button"
             }
         }
     }
@@ -170,6 +172,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         if kind == .batteryBelow { trigger.number = 20 }
         if kind == .idle || kind == .activeAgain { trigger.number = 5 }
         if kind == .script { trigger.number = 60 }
+        if kind == .gameButton { trigger.text = GamepadButton.a.rawValue }
         return trigger
     }
 
@@ -187,6 +190,7 @@ struct MacroTrigger: Identifiable, Codable, Equatable {
         case .fileRemoved: return "File removed from \((text as NSString).abbreviatingWithTildeInPath)"
         case .darkModeChanged: return text.isEmpty ? kind.title : "Switches to \(text) mode"
         case .soundOutputChanged: return text.isEmpty ? kind.title : "Sound goes to a device named “\(text)”"
+        case .gameButton: return text.isEmpty ? "Any game controller button" : "Game controller: \(GamepadButton(rawValue: text)?.title ?? text)"
         case .script: return number > 0 ? "A script's output changes (every \(max(5, number)) s)" : "A script prints a line"
         case .wifiChanged: return text.isEmpty ? "Wi-Fi changes" : "Joined Wi-Fi “\(text)”"
         case .timeOfDay:

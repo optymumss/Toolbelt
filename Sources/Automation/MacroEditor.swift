@@ -379,6 +379,13 @@ struct TriggerEditor: View {
                 Text("Light").tag("Light")
             }
             Text("“Dark” or “Light” is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
+        case .gameButton:
+            Picker("Button", selection: $trigger.text) {
+                Text("Any button").tag("")
+                ForEach(GamepadButton.allCases) { Text($0.title).tag($0.rawValue) }
+            }
+            Text("Any Xbox, PlayStation, Switch or other controller connected by Bluetooth or USB. The button's name (A, L1, Up…) is in %Trigger%.")
+                .font(.caption).foregroundStyle(.secondary)
         case .script:
             Picker("The macro starts", selection: $trigger.number) {
                 Text("For every line the script prints (it keeps running)").tag(0)

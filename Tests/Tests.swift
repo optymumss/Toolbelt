@@ -68,6 +68,7 @@ enum ToolbeltTests {
         t.group("Macros: debugger, shortcut conflicts, progress, syncing between Macs", MacroToolingTests.run)
         t.group("Mouse wheel, moving windows with keys, monitor brightness, usage statistics", MouseWindowTests.run)
         t.group("Widgets, trigger plugins, syncing everything between Macs", WidgetPluginTests.run)
+        t.group("Game controllers", GameControllerTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -5701,5 +5702,23 @@ enum WidgetPluginTests {
         sync.start(folder: nil)
         snippets.snippets = keptSnippets
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+@MainActor
+enum GameControllerTests {
+    static func run() {
+        var edges = ButtonEdges()
+        check(edges.update("A", pressed: true), "a button going down counts as a press")
+        check(!edges.update("A", pressed: true), "… once, however long it's held")
+        check(!edges.update("A", pressed: false) && edges.update("A", pressed: true), "… and again after it's let go")
+        check(!edges.update("B", pressed: false), "letting go isn't a press")
+        checkEqual(GamepadButton.allCases.count, 19, "every standard button can be chosen")
+        check(GamepadButton.allCases.allSatisfy { !$0.title.isEmpty }, "… each with a name for Xbox, PlayStation and Switch")
+        check(MacroTrigger.Kind.allCases.contains(.gameButton), "the game-controller trigger is offered")
+        checkEqual(MacroTrigger.starting(.gameButton).text, "A", "it starts out on the A button")
+        var trigger = MacroTrigger(kind: .gameButton)
+        trigger.text = "R1"
+        check(trigger.summary.contains("Right shoulder"), "its summary names the button", trigger.summary)
     }
 }
