@@ -51,6 +51,7 @@ final class AutomationModule: ToolbeltModule {
     let panels = PanelController()
     let widgets = WidgetController()
     private var scriptWatchers: [ScriptTriggerWatcher] = []
+    let gamepads = GameControllerWatcher()
     let recorder = MacroRecorder()
 
     /// Starts, restarts or stops the web server to match Settings.
@@ -110,6 +111,10 @@ final class AutomationModule: ToolbeltModule {
         UsageStats.sources["macros"] = { [weak self] in
             self?.store.macros.map { (key: UsageStats.macroKey($0.id), kind: "Macro", name: $0.name.isEmpty ? "Untitled" : $0.name) } ?? []
         }
+        RealUseHooks.commands["gamepad-press"] = { [weak self] name in
+            if let button = GamepadButton(rawValue: name) { self?.gamepadPressed(button) }
+        }
+        RealUseHooks.extraStatus["gamepadWatching"] = { [weak self] in self?.gamepads.isWatching == true ? "on" : "off" }
         RealUseHooks.commands["sync-everything"] = { [weak self] on in
             EverythingSync.isOn = on == "1"
             self?.refreshSync()
@@ -221,6 +226,12 @@ final class AutomationModule: ToolbeltModule {
     }
 
     /// 0.38: syncing through the folder in the settings (or not at all).
+    func gamepadPressed(_ button: GamepadButton) {
+        for (macro, trigger) in triggers([.gameButton]) where trigger.text.isEmpty || trigger.text == button.rawValue {
+            fire(macro, value: button.rawValue)
+        }
+    }
+
     func refreshSync() {
         let folder = Prefs.macroSyncFolder.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
         syncer.start(folder: folder)
@@ -362,6 +373,12 @@ final class AutomationModule: ToolbeltModule {
             soundOutput.start()
         }
 
+        // 0.41: game controller buttons.
+        if !triggers([.gameButton]).isEmpty {
+            gamepads.onPress = { [weak self] button, _ in self?.gamepadPressed(button) }
+            gamepads.start()
+        }
+
         // 0.40: trigger plugins (a script decides when the macro starts).
         for (macro, trigger) in triggers([.script]) where !trigger.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let watcher = ScriptTriggerWatcher(script: trigger.text, every: trigger.number) { [weak self] output in
@@ -421,6 +438,7 @@ final class AutomationModule: ToolbeltModule {
         changeWatchers = []
         for watcher in scriptWatchers { watcher.stop() }
         scriptWatchers = []
+        gamepads.stop()
         theme.stop()
         soundOutput.stop()
         for timer in timers { timer.invalidate() }

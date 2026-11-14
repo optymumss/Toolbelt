@@ -759,10 +759,14 @@ final class RealUse: NSObject, NSApplicationDelegate {
         lookTrigger.text = "cat '\(data.appendingPathComponent("plugin.txt").path)' 2>/dev/null"
         lookTrigger.number = 5
         try "x1".write(to: data.appendingPathComponent("plugin.txt"), atomically: true, encoding: .utf8)
+        // 0.41: a game controller button.
+        var padTrigger = MacroTrigger(kind: .gameButton)
+        padTrigger.text = "R1"
         let pluginMacros = [
             Macro(name: "Test plugin lines", triggers: [linesTrigger], steps: [shellMark("plugin-%Trigger%")]),
             Macro(name: "Test plugin look", triggers: [lookTrigger], steps: [shellMark("look-%Trigger%")]),
             Macro(name: "Test widget macro", steps: [shellMark("widget-ran")]),
+            Macro(name: "Test pad", triggers: [padTrigger], steps: [shellMark("pad-%Trigger%")]),
         ]
         let testWidget = WebWidget(name: "Test widget", content: "<div>Count %Global_E2EWidget% left</div><button id=\"go\" onclick=\"toolbelt.runMacro('Test widget macro')\">Go</button>")
         try JSONEncoder().encode([testWidget]).write(to: data.appendingPathComponent("widgets.json"), options: .atomic)
@@ -881,6 +885,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await toolingTests()
             await mouseWindowTests()
             await widgetPluginTests()
+            await controllerTests()
             await updateTests()
             await linkTests()
             await macEventTests()
@@ -1718,6 +1723,19 @@ final class RealUse: NSObject, NSApplicationDelegate {
         command("sync-everything:0")
         command("sync-folder:")
         _ = await waitUntil(3) { (self.toolbeltStatus()["syncEverything"] as? String) == "off" }
+    }
+
+    /// 0.41: game controller buttons (GitHub's Mac has no controller, so the press is pretended).
+    func controllerTests() async {
+        say("— 0.41: game controllers")
+        check("a macro with a game controller trigger starts watching controllers", await waitUntil(3) {
+            (self.toolbeltStatus()["gamepadWatching"] as? String) == "on"
+        })
+        command("gamepad-press:R1")
+        check("a game controller button starts its macro", await waitUntil(5) { self.count("pad-R1") == 1 })
+        command("gamepad-press:A")
+        await pause(0.5)
+        check("… and other buttons don't", count("pad-A") == 0)
     }
 
     func flowTests() async {

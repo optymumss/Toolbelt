@@ -1,9 +1,14 @@
-# Toolbelt — v0.40
+# Toolbelt — v0.41
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.41: game controllers
+- **Game controller button** (Macros → Add Trigger): a button on an Xbox, PlayStation, Switch or other controller
+  connected by Bluetooth or USB starts a macro, for example the shoulder buttons for the next and previous slide, or
+  a button to mute a call. Any button, or one you choose; its name is in `%Trigger%`.
 
 ## What's new in 0.40: widgets, trigger plugins, and keeping everything the same on all your Macs
 - **Widgets** (Settings → Automation → Widgets): small always-on-top panels made from a web page: your own
