@@ -5713,7 +5713,7 @@ enum GameControllerTests {
         check(!edges.update("A", pressed: true), "… once, however long it's held")
         check(!edges.update("A", pressed: false) && edges.update("A", pressed: true), "… and again after it's let go")
         check(!edges.update("B", pressed: false), "letting go isn't a press")
-        checkEqual(GamepadButton.allCases.count, 19, "every standard button can be chosen")
+        checkEqual(GamepadButton.allCases.count, 17, "every standard button can be chosen (4 face, 4 shoulder, 4 d-pad, 3 menu, 2 sticks)")
         check(GamepadButton.allCases.allSatisfy { !$0.title.isEmpty }, "… each with a name for Xbox, PlayStation and Switch")
         check(MacroTrigger.Kind.allCases.contains(.gameButton), "the game-controller trigger is offered")
         checkEqual(MacroTrigger.starting(.gameButton).text, "A", "it starts out on the A button")
