@@ -27,8 +27,9 @@ struct LineSplitter {
     mutating func add(_ text: String) -> [String] {
         pending += text
         var lines: [String] = []
-        while let newline = pending.firstIndex(of: "\n") {
-            let line = String(pending[..<newline]).trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+        // Swift counts "\r\n" as one character, so look for any line ending, not just "\n".
+        while let newline = pending.firstIndex(where: \.isNewline) {
+            let line = String(pending[..<newline])
             pending = String(pending[pending.index(after: newline)...])
             if !line.trimmingCharacters(in: .whitespaces).isEmpty { lines.append(line) }
         }
