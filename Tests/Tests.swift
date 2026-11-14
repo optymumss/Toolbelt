@@ -5479,6 +5479,7 @@ enum MacroToolingTests {
     }
 }
 
+@MainActor
 enum MouseWindowTests {
     static func run() {
         // Mouse wheel: direction and speed.
