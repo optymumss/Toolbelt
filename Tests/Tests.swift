@@ -5520,8 +5520,8 @@ enum MouseWindowTests {
         check(quick.isIdle, "stopping ends a glide")
 
         // Moving windows with keys held.
-        let control = NSEvent.ModifierFlags.control.rawValue, option = NSEvent.ModifierFlags.option.rawValue
-        let shift = NSEvent.ModifierFlags.shift.rawValue, capsLock = NSEvent.ModifierFlags.capsLock.rawValue
+        let control = WindowDragKeys.raw(.control), option = WindowDragKeys.raw(.option)
+        let shift = WindowDragKeys.raw(.shift), capsLock = WindowDragKeys.raw(.capsLock)
         let keys = WindowDragKeys(move: control | option, resize: control | option | shift)
         checkEqual(keys.mode(for: control | option), .move, "⌃⌥ held moves the window")
         checkEqual(keys.mode(for: control | option | shift), .resize, "⌃⌥⇧ held resizes it")

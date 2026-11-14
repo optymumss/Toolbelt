@@ -18,12 +18,15 @@ struct WindowDragKeys: Equatable {
 
     /// The modifier combinations offered in Settings.
     static let choices: [(name: String, flags: UInt64)] = {
-        let control = NSEvent.ModifierFlags.control.rawValue, option = NSEvent.ModifierFlags.option.rawValue
-        let command = NSEvent.ModifierFlags.command.rawValue, shift = NSEvent.ModifierFlags.shift.rawValue
+        let control = WindowDragKeys.raw(.control), option = WindowDragKeys.raw(.option)
+        let command = WindowDragKeys.raw(.command), shift = WindowDragKeys.raw(.shift)
         return [("Off", 0), ("⌃⌥", control | option), ("⌃⌘", control | command), ("⌥⌘", option | command),
                 ("⌃⌥⌘", control | option | command), ("⌃⌥⇧", control | option | shift), ("⌃⇧", control | shift),
                 ("⌥⇧", option | shift), ("⌃⌥⇧⌘ (Hyper key)", control | option | shift | command)]
     }()
+
+    /// A modifier's flag as a 64-bit number (macOS gives NSEvent's as UInt).
+    static func raw(_ flag: NSEvent.ModifierFlags) -> UInt64 { UInt64(flag.rawValue) }
 
     static func name(_ flags: UInt64) -> String { choices.first { $0.flags == flags }?.name ?? "Custom" }
 
@@ -46,8 +49,7 @@ struct WindowDragKeys: Equatable {
 
     /// What the keys held right now do (exactly these keys: holding more or fewer does nothing).
     func mode(for flags: UInt64) -> Mode? {
-        let relevant = flags & (NSEvent.ModifierFlags.control.rawValue | NSEvent.ModifierFlags.option.rawValue
-            | NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)
+        let relevant = flags & (Self.raw(.control) | Self.raw(.option) | Self.raw(.command) | Self.raw(.shift))
         guard relevant != 0 else { return nil }
         if relevant == move { return .move }
         if relevant == resize { return .resize }
@@ -95,7 +97,7 @@ final class WindowDragger {
         if wants, monitors.isEmpty {
             guard PermissionGate.ensure(.accessibility, to: "move windows while you hold keys") else { return }
             if let flags = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { [weak self] event in
-                MainActor.assumeIsolated { self?.flagsChanged(event.modifierFlags.rawValue) }
+                MainActor.assumeIsolated { self?.flagsChanged(UInt64(event.modifierFlags.rawValue)) }
             }) { monitors.append(flags) }
             if let moved = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] event in
                 MainActor.assumeIsolated { self?.mouseMoved() }
