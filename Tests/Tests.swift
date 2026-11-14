@@ -5585,6 +5585,7 @@ enum MouseWindowTests {
     }
 }
 
+@MainActor
 enum WidgetPluginTests {
     static func run() {
         // Widgets: what a page may do, and how it's filled in.
