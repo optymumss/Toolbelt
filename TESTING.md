@@ -56,7 +56,9 @@ Every change runs on a real Mac at GitHub (macOS 26, Apple silicon) before it re
    sharing a shortcut offering a list (picked by the list and by pressing its number), the progress bar showing and
    going away, and a macro added by "another Mac" to the shared sync file arriving and running,
    and (0.39) an ordinary mouse wheel scrolling the other way and gliding when smooth, a window moved and resized by
-   holding keys and moving the mouse, and macro runs counted in the usage statistics.
+   holding keys and moving the mouse, and macro runs counted in the usage statistics,
+   and (0.40) a widget showing its HTML and its button running a macro, trigger-plugin scripts starting macros (for
+   each line, and when their output changes), and snippets changed on "another Mac" arriving through the sync folder.
    Each check confirms the action really
    happened. Runs on every pull request. On `main` (and by hand) a **stability test** follows: 20 minutes
    of nonstop use, failing on a crash, missed triggers or memory that keeps growing. The release DMG is

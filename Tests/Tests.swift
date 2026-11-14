@@ -67,6 +67,7 @@ enum ToolbeltTests {
         t.group("Macros: web requests, JSON, screenshots, picture files, folder changes", MacroDataTests.run)
         t.group("Macros: debugger, shortcut conflicts, progress, syncing between Macs", MacroToolingTests.run)
         t.group("Mouse wheel, moving windows with keys, monitor brightness, usage statistics", MouseWindowTests.run)
+        t.group("Widgets, trigger plugins, syncing everything between Macs", WidgetPluginTests.run)
         t.group("Automation: macros, triggers and steps", AutomationTests.run)
         t.group("Automation: the web server", WebServerTests.run)
         t.group("Clipboard: transforms, editing and the paste stack", ClipboardNextTests.run)
@@ -5581,5 +5582,123 @@ enum MouseWindowTests {
         checkEqual(UsageStats().entry(key)?.count, 2, "counts are kept after a restart")
         stats.reset()
         check(stats.entry(key) == nil, "Reset Counts starts from zero")
+    }
+}
+
+enum WidgetPluginTests {
+    static func run() {
+        // Widgets: what a page may do, and how it's filled in.
+        check(WidgetBridge.allowed(.html) && WidgetBridge.allowed(.script), "your own HTML and scripts may run macros")
+        check(!WidgetBridge.allowed(.address), "… a web page from the internet may not")
+        checkEqual(WidgetBridge.command(from: ["macro": "Backup"]), .runMacro("Backup"), "a button can run a macro")
+        checkEqual(WidgetBridge.command(from: ["control": "volumeUp"]), .control(.volumeUp), "… or a Mac control")
+        check(WidgetBridge.command(from: ["control": "formatDisk"]) == nil && WidgetBridge.command(from: "hello") == nil
+              && WidgetBridge.command(from: ["macro": ""]) == nil, "anything else is ignored")
+        let globals: (String) -> String = { $0.lowercased() == "global_count" ? "7" : "" }
+        checkEqual(WidgetBridge.render("Done: %Global_Count% · 100% · %Global_None%.", globals: globals), "Done: 7 · 100% · .",
+                   "%Global_…% variables are filled in; other % signs are left alone")
+        checkEqual(WidgetBridge.render("width: 50%; height: 20%", globals: globals), "width: 50%; height: 20%", "… so CSS percentages survive")
+        check(WidgetBridge.page("<b>Hi</b>").contains("<body><b>Hi</b></body>") && WidgetBridge.page("<b>Hi</b>").contains("color-scheme"),
+              "a bit of HTML is wrapped in a page that follows dark mode")
+        checkEqual(WidgetBridge.page("<html><body>x</body></html>"), "<html><body>x</body></html>", "a whole page is left as it is")
+        check(WidgetBridge.script.contains("runMacro") && WidgetBridge.script.contains("messageHandlers.toolbelt"), "pages get toolbelt.runMacro")
+
+        let store = WidgetStore()
+        let kept = store.widgets
+        store.widgets = [WebWidget(name: "Clock", content: "<b>12:00</b>", refresh: 60)]
+        checkEqual(WidgetStore().widgets.map(\.name), ["Clock"], "widgets are kept after a restart")
+        store.widgets = kept
+        check(MacroAction.Kind.allCases.contains(.widget), "the “Show / hide a widget” action is offered")
+
+        // Trigger plugins.
+        check(!ScriptTriggerLogic.fires(previous: nil, output: "3"), "the first look only notes where things start")
+        check(ScriptTriggerLogic.fires(previous: "3", output: "4"), "a change starts the macro")
+        check(!ScriptTriggerLogic.fires(previous: "4", output: "4"), "no change, no start")
+        checkEqual(ScriptTriggerLogic.interval(1), 5, "a script is looked at every 5 seconds at most")
+        var splitter = LineSplitter()
+        checkEqual(splitter.add("one\ntw"), ["one"], "a running script's lines arrive whole")
+        checkEqual(splitter.add("o\r\n\n  \nthree\n"), ["two", "three"], "… with the rest of a line joined on, blank lines skipped")
+        check(MacroTrigger.Kind.allCases.contains(.script), "the trigger-plugin trigger is offered")
+        checkEqual(MacroTrigger.starting(.script).number, 60, "it starts out looking every minute")
+
+        var lines: [String] = []
+        let lineWatcher = ScriptTriggerWatcher(script: "echo hello; echo world; sleep 30", every: 0) { lines.append($0) }
+        lineWatcher.start()
+        let until = Date().addingTimeInterval(5)
+        while lines.count < 2 && Date() < until { spin(0.1) }
+        lineWatcher.stop()
+        checkEqual(lines, ["hello", "world"], "a kept-running script starts the macro for every line it prints")
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-plugin-\(UUID().uuidString).txt")
+        try? "a".write(to: file, atomically: true, encoding: .utf8)
+        var outputs: [String] = []
+        let looker = ScriptTriggerWatcher(script: "cat '\(file.path)'", every: 5) { outputs.append($0) }
+        looker.start()
+        spin(1.5)
+        try? "b".write(to: file, atomically: true, encoding: .utf8)
+        let lookUntil = Date().addingTimeInterval(8)
+        while outputs.isEmpty && Date() < lookUntil { spin(0.2) }
+        looker.stop()
+        checkEqual(outputs, ["b"], "a looked-at script starts the macro when its output changes")
+        try? FileManager.default.removeItem(at: file)
+
+        // Syncing everything.
+        let early = Date(timeIntervalSince1970: 1000), late = Date(timeIntervalSince1970: 2000)
+        checkEqual(FileSync.decide(local: "a", last: nil, remote: nil, localModified: early, remoteModified: nil), .push, "a file not in the folder yet is copied there")
+        checkEqual(FileSync.decide(local: nil, last: nil, remote: "a", localModified: .distantPast, remoteModified: early), .pull, "a file only the other Mac has arrives")
+        checkEqual(FileSync.decide(local: "a", last: "a", remote: "a", localModified: early, remoteModified: early), .nothing, "nothing changed, nothing done")
+        checkEqual(FileSync.decide(local: "b", last: "a", remote: "a", localModified: late, remoteModified: early), .push, "changed here only: copied to the others")
+        checkEqual(FileSync.decide(local: "a", last: "a", remote: "c", localModified: late, remoteModified: early), .pull, "changed there only: copied here, even if older")
+        checkEqual(FileSync.decide(local: "b", last: "a", remote: "c", localModified: late, remoteModified: early), .push, "changed on both: the newer change wins (here)")
+        checkEqual(FileSync.decide(local: "b", last: "a", remote: "c", localModified: early, remoteModified: late), .pull, "… or there")
+        checkEqual(FileSync.hash(Data("x".utf8)).count, 64, "files are compared by a SHA-256 hash")
+        check(EverythingSync.localSettings.contains("macros.syncFolder"), "the sync folder itself stays on each Mac")
+
+        let settings = SettingsStore.shared
+        let oldFolder = settings.raw("macros.syncFolder")
+        settings.set("/tmp/here", for: "macros.syncFolder")
+        settings.set(7, for: "test.synced")
+        let shared = settings.syncedData(excluding: EverythingSync.localSettings)
+        let sharedDict = (try? PropertyListSerialization.propertyList(from: shared, format: nil)) as? [String: Any]
+        check(sharedDict?["test.synced"] as? Int == 7 && sharedDict?["macros.syncFolder"] == nil, "shared settings leave out this Mac's own")
+        var fromOther = sharedDict ?? [:]
+        fromOther["test.synced"] = 9
+        fromOther["macros.syncFolder"] = "/elsewhere"
+        if let data = try? PropertyListSerialization.data(fromPropertyList: fromOther, format: .xml, options: 0) {
+            settings.applySynced(data, keeping: EverythingSync.localSettings)
+        }
+        check(settings.value("test.synced", default: 0) == 9, "a setting changed on another Mac arrives")
+        check(settings.raw("macros.syncFolder") as? String == "/tmp/here", "… but this Mac's own settings stay")
+        settings.set(nil, for: "test.synced")
+        settings.set(oldFolder, for: "macros.syncFolder")
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("toolbelt-everything-\(UUID().uuidString)")
+        let sync = EverythingSync.shared
+        let snippets = SnippetStore()
+        let keptSnippets = snippets.snippets
+        snippets.snippets = [Snippet(keyword: ";hi", name: "Hi", text: "Hello")]
+        sync.start(folder: folder)
+        let remoteSnippets = folder.appendingPathComponent("Toolbelt Snippets.json")
+        check(FileManager.default.fileExists(atPath: remoteSnippets.path), "turning it on copies snippets to the folder")
+        check(FileManager.default.fileExists(atPath: folder.appendingPathComponent("Toolbelt Settings.json").path), "… and settings")
+        var envelope = (try? Data(contentsOf: remoteSnippets)).flatMap { data -> SyncedFile? in
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try? decoder.decode(SyncedFile.self, from: data)
+        }
+        if envelope != nil, let other = try? JSONEncoder().encode([Snippet(keyword: ";bye", name: "Bye", text: "Goodbye")]) {
+            envelope?.data = other
+            envelope?.device = "Other Mac"
+            envelope?.modified = Date()
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            try? encoder.encode(envelope).write(to: remoteSnippets)
+        }
+        sync.syncNow()
+        check(sync.pulled.contains("Snippets"), "a change another Mac made is noticed", "pulled: \(sync.pulled)")
+        checkEqual(snippets.snippets.map(\.keyword), [";bye"], "… and arrives in Toolbelt")
+        sync.start(folder: nil)
+        snippets.snippets = keptSnippets
+        try? FileManager.default.removeItem(at: folder)
     }
 }

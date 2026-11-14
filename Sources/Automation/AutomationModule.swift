@@ -49,6 +49,8 @@ final class AutomationModule: ToolbeltModule {
 
     let web = WebServer()
     let panels = PanelController()
+    let widgets = WidgetController()
+    private var scriptWatchers: [ScriptTriggerWatcher] = []
     let recorder = MacroRecorder()
 
     /// Starts, restarts or stops the web server to match Settings.
@@ -79,6 +81,11 @@ final class AutomationModule: ToolbeltModule {
         ActionRunner.runMacro = { [weak self] name in self?.run(named: name) }
         ActionRunner.toggleFloatingMenu = { [weak self] name in self?.panels.toggle(named: name) }
         panels.start(runner: runner)
+        ActionRunner.toggleWidget = { [weak self] name in self?.widgets.toggle(named: name) }
+        widgets.runMacro = { [weak self] name in self?.run(named: name) }
+        widgets.runControl = { [weak self] control in self?.runner.perform(control) }
+        widgets.start()
+        widgets.registerTestHooks()
         RealUseHooks.commands["record-start"] = { [weak self] name in self?.startTestRecording(into: name) }
         RealUseHooks.commands["record-stop"] = { [weak self] _ in self?.recorder.stop() }
         // "clipboard-filter:Macro name|text", as if chosen from the clipboard history's menu.
@@ -102,6 +109,10 @@ final class AutomationModule: ToolbeltModule {
         RealUseHooks.extraStatus["macroNames"] = { [weak self] in self?.store.macros.map(\.name) ?? [] }
         UsageStats.sources["macros"] = { [weak self] in
             self?.store.macros.map { (key: UsageStats.macroKey($0.id), kind: "Macro", name: $0.name.isEmpty ? "Untitled" : $0.name) } ?? []
+        }
+        RealUseHooks.commands["sync-everything"] = { [weak self] on in
+            EverythingSync.isOn = on == "1"
+            self?.refreshSync()
         }
         RealUseHooks.commands["sync-folder"] = { [weak self] path in
             Prefs.macroSyncFolder = path.isEmpty ? nil : path
@@ -127,6 +138,7 @@ final class AutomationModule: ToolbeltModule {
         running = false
         web.stop()
         panels.stop()
+        widgets.stop()
         disarm()
         gestures?.updateListening()
     }
@@ -210,7 +222,10 @@ final class AutomationModule: ToolbeltModule {
 
     /// 0.38: syncing through the folder in the settings (or not at all).
     func refreshSync() {
-        syncer.start(folder: Prefs.macroSyncFolder.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) })
+        let folder = Prefs.macroSyncFolder.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+        syncer.start(folder: folder)
+        // 0.40: everything else, through the same folder.
+        EverythingSync.shared.start(folder: EverythingSync.isOn ? folder : nil)
     }
 
     /// A run that can run other macros (the "Run another macro and wait for it" step).
@@ -347,6 +362,15 @@ final class AutomationModule: ToolbeltModule {
             soundOutput.start()
         }
 
+        // 0.40: trigger plugins (a script decides when the macro starts).
+        for (macro, trigger) in triggers([.script]) where !trigger.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let watcher = ScriptTriggerWatcher(script: trigger.text, every: trigger.number) { [weak self] output in
+                _ = self?.fire(macro, value: output)
+            }
+            watcher.start()
+            scriptWatchers.append(watcher)
+        }
+
         for (macro, trigger) in triggers([.timeOfDay, .every]) {
             schedule(macro, trigger)
         }
@@ -395,6 +419,8 @@ final class AutomationModule: ToolbeltModule {
         folderWatchers = []
         for watcher in changeWatchers { watcher.stop() }
         changeWatchers = []
+        for watcher in scriptWatchers { watcher.stop() }
+        scriptWatchers = []
         theme.stop()
         soundOutput.stop()
         for timer in timers { timer.invalidate() }
@@ -610,6 +636,7 @@ final class AutomationModule: ToolbeltModule {
         AnyView(Group {
             AutomationSettingsTab(store: store, web: self) { [weak self] in self?.open() }
             PanelSettings(store: panels.store, controller: panels)
+            WidgetSettings(store: widgets.store, controller: widgets)
         })
     }
 

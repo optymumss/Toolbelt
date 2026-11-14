@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.refresh()
         Updater.shared.registerTestHooks()
         UsageStats.registerTestHooks()
+        EverythingSync.registerTestHooks()
         Updater.shared.start()
 
         // Right-click and Services menu entries (see NSServices in Info.plist).
@@ -255,6 +256,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 default:
                     ProgressPanel.show("Resizing photo 7 of 20", percent: "35", owner: automation.makeRun(trigger: ""))
                 }
+            case "widgets":
+                // 0.40: widgets made from web pages.
+                guard let automation = modules.module(.automation) as? AutomationModule else { break }
+                GlobalVariables.shared.set("Global_Inbox", "3")
+                let clock = WebWidget(name: "Clock", content: "<div style=\"font: 600 40px -apple-system; text-align: center; margin-top: 6px\">09:41</div><div style=\"text-align: center; opacity: .7\">Thursday 12 November</div>",
+                                      x: 980, y: 90, width: 240, height: 110)
+                let inbox = WebWidget(name: "Inbox", content: "<b style=\"font-size: 15px\">📥 Inbox</b><p style=\"font-size: 28px; margin: 6px 0\">%Global_Inbox% to sort</p><button onclick=\"toolbelt.runMacro('Tidy downloaded photos')\">Tidy now</button>",
+                                      x: 980, y: 220, width: 240, height: 140)
+                let disk = WebWidget(name: "Disk", source: .script, content: "echo \"<b>Free on this Mac</b><p style='font-size:24px;margin:6px 0'>$(df -h / | awk 'NR==2{print $4}')</p>\"",
+                                     x: 980, y: 380, width: 240, height: 100, refresh: 60)
+                automation.widgets.store.widgets = [clock, inbox, disk]
+                for widget in automation.widgets.store.widgets { automation.widgets.show(widget) }
             case "usage":
                 // 0.39: how often each trigger and macro ran (made-up numbers).
                 let now = Date()

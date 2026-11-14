@@ -752,6 +752,20 @@ final class RealUse: NSObject, NSApplicationDelegate {
             Macro(name: "Test conflict B", triggers: [shared], steps: [shellMark("conflict-B")]),
             Macro(name: "Test progress", steps: [bar, hold, shellMark("progress-done")]),
         ]
+        // 0.40: trigger plugins (a script decides) and a widget's button.
+        var linesTrigger = MacroTrigger(kind: .script)
+        linesTrigger.text = "echo one; echo two; sleep 600"
+        var lookTrigger = MacroTrigger(kind: .script)
+        lookTrigger.text = "cat '\(data.appendingPathComponent("plugin.txt").path)' 2>/dev/null"
+        lookTrigger.number = 5
+        try "x1".write(to: data.appendingPathComponent("plugin.txt"), atomically: true, encoding: .utf8)
+        let pluginMacros = [
+            Macro(name: "Test plugin lines", triggers: [linesTrigger], steps: [shellMark("plugin-%Trigger%")]),
+            Macro(name: "Test plugin look", triggers: [lookTrigger], steps: [shellMark("look-%Trigger%")]),
+            Macro(name: "Test widget macro", steps: [shellMark("widget-ran")]),
+        ]
+        let testWidget = WebWidget(name: "Test widget", content: "<div>Count %Global_E2EWidget% left</div><button id=\"go\" onclick=\"toolbelt.runMacro('Test widget macro')\">Go</button>")
+        try JSONEncoder().encode([testWidget]).write(to: data.appendingPathComponent("widgets.json"), options: .atomic)
         let extraMacros = toolingMacros + folderMacros + [
             webMacro2, shotMacro,
             flowMacro,
@@ -762,7 +776,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             Macro(name: "Test read picture", steps: [readPicture, shellMark("ocr-%Seen%")]),
             Macro(name: "Test filter", triggers: [MacroTrigger(kind: .clipboardFilter)], steps: [shout, shellMark("filtered")]),
             Macro(name: "Test waiting", steps: [waiting, shellMark("waited-%Reply%")]),
-        ]
+        ] + pluginMacros
         try JSONEncoder().encode(SavedMacros(macros: [macro, webMacro, timeoutMacro, errorMacro] + eventMacros + newMacros + actionMacros + extraMacros, groups: []))
             .write(to: data.appendingPathComponent("macros.json"), options: .atomic)
 
@@ -866,6 +880,7 @@ final class RealUse: NSObject, NSApplicationDelegate {
             await flowTests()
             await toolingTests()
             await mouseWindowTests()
+            await widgetPluginTests()
             await updateTests()
             await linkTests()
             await macEventTests()
@@ -1651,6 +1666,58 @@ final class RealUse: NSObject, NSApplicationDelegate {
         _ = await runMacro("Test progress")
         check("each run of a macro is counted in the usage statistics", await waitUntil(8) { usage() == ranBefore + 2 },
               "before \(ranBefore), now \(usage())")
+    }
+
+    /// 0.40: widgets, trigger plugins, syncing everything.
+    func widgetPluginTests() async {
+        say("— 0.40: widgets, trigger plugins, syncing everything between Macs")
+        func widgetText() -> String { (toolbeltStatus()["widgets"] as? [String: String])?["Test widget"] ?? "" }
+        command("widget-show:Test widget")
+        check("a widget shows its HTML", await waitUntil(8) { widgetText().contains("Count") && widgetText().contains("left") },
+              "text: “\(widgetText())”")
+        command("widget-js:Test widget|document.getElementById('go').click()")
+        check("a button in a widget runs a macro", await waitUntil(5) { self.count("widget-ran") >= 1 })
+        command("widget-hide:Test widget")
+        check("… and the widget can be hidden", await waitUntil(3) { widgetText().isEmpty })
+
+        check("a trigger-plugin script that keeps running starts its macro for each line it prints",
+              await waitUntil(5) { self.count("plugin-one") >= 1 && self.count("plugin-two") >= 1 },
+              "markers: \(markers().filter { $0.hasPrefix("plugin") })")
+        try? "x2".write(to: data.appendingPathComponent("plugin.txt"), atomically: true, encoding: .utf8)
+        check("a looked-at script starts its macro when its output changes", await waitUntil(15) { self.count("look-x2") >= 1 },
+              "markers: \(markers().filter { $0.hasPrefix("look") })")
+        check("… but not before it changed", count("look-x1") == 0)
+
+        let folder = data.appendingPathComponent("sync-all")
+        command("sync-folder:\(folder.path)")
+        command("sync-everything:1")
+        let triggers = folder.appendingPathComponent("Toolbelt Triggers.json")
+        check("syncing everything copies triggers, snippets and settings to the shared folder", await waitUntil(6) {
+            FileManager.default.fileExists(atPath: triggers.path)
+                && FileManager.default.fileExists(atPath: folder.appendingPathComponent("Toolbelt Snippets.json").path)
+                && FileManager.default.fileExists(atPath: folder.appendingPathComponent("Toolbelt Settings.json").path)
+        }, "files: \((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])")
+        let snippetsFile = folder.appendingPathComponent("Toolbelt Snippets.json")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if var envelope = (try? Data(contentsOf: snippetsFile)).flatMap({ try? decoder.decode(SyncedFile.self, from: $0) }),
+           let other = try? JSONEncoder().encode([Snippet(keyword: ";e2snip", name: "Test snippet", text: "Expanded by Toolbelt"),
+                                                  Snippet(keyword: ";e2other", name: "From the other Mac", text: "Hello from the other Mac")]) {
+            envelope.data = other
+            envelope.device = "Another Mac"
+            envelope.modified = Date()
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            try? encoder.encode(envelope).write(to: snippetsFile, options: .atomic)
+        }
+        command("sync-now")
+        check("snippets another Mac changed arrive", await waitUntil(5) { (self.toolbeltStatus()["syncPulled"] as? [String])?.contains("Snippets") == true },
+              "pulled: \(toolbeltStatus()["syncPulled"] ?? "nothing")")
+        let local = (try? Data(contentsOf: data.appendingPathComponent("snippets.json"))).flatMap { try? JSONDecoder().decode([Snippet].self, from: $0) }
+        check("… into this Mac's snippets", local?.contains { $0.keyword == ";e2other" } == true, "snippets: \(local?.map(\.keyword) ?? [])")
+        command("sync-everything:0")
+        command("sync-folder:")
+        _ = await waitUntil(3) { (self.toolbeltStatus()["syncEverything"] as? String) == "off" }
     }
 
     func flowTests() async {

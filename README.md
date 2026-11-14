@@ -1,9 +1,23 @@
-# Toolbelt — v0.39
+# Toolbelt — v0.40
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.40: widgets, trigger plugins, and keeping everything the same on all your Macs
+- **Widgets** (Settings → Automation → Widgets): small always-on-top panels made from a web page: your own
+  HTML, a web address, or the HTML a shell script prints, reloaded every so often. Start from a clock, buttons for
+  your macros, a script's output or a web page. In your own HTML a button can run a macro
+  (`toolbelt.runMacro('Name')`) or a Mac control (`toolbelt.control('playPause')`), and `%Global_Name%` shows a
+  variable. Drag a widget by its edge; it remembers where it was. Show or hide one from any trigger with
+  **Show / hide a widget**.
+- **Trigger plugins** (Macros → Add Trigger → "Trigger plugin: a script decides"): a small script decides when a
+  macro starts: either whenever what it prints changes (looked at every 5 seconds to every hour), or for every line
+  it prints while it keeps running (for example watching a log file). What it printed is in `%Trigger%`.
+- **Sync everything:** Settings → Automation → Sync macros → "Also triggers, floating menus, widgets, snippets,
+  window layouts and settings". What you change on one Mac goes to the others; when two Macs changed the same
+  thing, the newer change wins. Settings that only make sense on one Mac stay put.
 
 ## What's new in 0.39: smoother mouse scrolling, moving windows with keys held, monitor brightness, usage counts
 - **Ordinary mouse** (Settings → Gestures): **smooth scrolling** for a mouse whose wheel clicks as it turns (most

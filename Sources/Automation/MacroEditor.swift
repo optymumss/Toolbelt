@@ -379,6 +379,22 @@ struct TriggerEditor: View {
                 Text("Light").tag("Light")
             }
             Text("“Dark” or “Light” is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
+        case .script:
+            Picker("The macro starts", selection: $trigger.number) {
+                Text("For every line the script prints (it keeps running)").tag(0)
+                Text("When its output changes, looking every 5 seconds").tag(5)
+                Text("When its output changes, looking every minute").tag(60)
+                Text("When its output changes, looking every 15 minutes").tag(900)
+                Text("When its output changes, looking every hour").tag(3600)
+            }
+            TextEditor(text: $trigger.text)
+                .font(.system(.caption, design: .monospaced))
+                .frame(minHeight: 44, maxHeight: 100)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+            Text(trigger.number == 0
+                 ? "For example: tail -F ~/Library/Logs/app.log | grep --line-buffered ERROR. Each line is in %Trigger%. If the script ends, it's started again."
+                 : "For example: curl -s https://example.com/status. The new output is in %Trigger%. The first look only notes where things start.")
+                .font(.caption).foregroundStyle(.secondary)
         case .soundOutputChanged:
             TextField("Only when the device's name contains (empty for any)", text: $trigger.text)
             Text("The new sound output's name (AirPods, speakers…) is in %Trigger%.").font(.caption).foregroundStyle(.secondary)
@@ -1039,6 +1055,7 @@ struct NewMacroHelper: View {
 struct MacroSyncSettings: View {
     let module: AutomationModule?
     @State private var folder = Prefs.macroSyncFolder
+    @State private var everything = EverythingSync.isOn
 
     var body: some View {
         Section {
@@ -1053,11 +1070,16 @@ struct MacroSyncSettings: View {
                         Button("Choose…", action: choose)
                     }
                 }
+                Toggle("Also triggers, floating menus, widgets, snippets, window layouts and settings", isOn: $everything)
+                    .onChange(of: everything) { _, on in
+                        EverythingSync.isOn = on
+                        module?.refreshSync()
+                    }
             }
         } header: {
             Text("Sync macros")
         } footer: {
-            Text("Toolbelt writes your macros to a file in this folder and reads changes other Macs make to it; the newer copy of each macro wins, and deleting one deletes it everywhere. Turn it on in Toolbelt on each Mac. Any shared folder works (Dropbox too).")
+            Text("Toolbelt writes your macros to a file in this folder and reads changes other Macs make to it; the newer copy of each macro wins, and deleting one deletes it everywhere. Turn it on in Toolbelt on each Mac. Any shared folder works (Dropbox too). With “Also…”, the rest is kept the same too: what changed on one Mac goes to the others, and when two Macs changed the same thing the newer change wins. Settings that only make sense on one Mac stay put.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

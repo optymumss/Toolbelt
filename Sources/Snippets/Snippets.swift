@@ -35,6 +35,10 @@ final class SnippetStore: ObservableObject {
         } else {
             snippets = []
         }
+        EverythingSync.shared.register("Snippets", file: file) { [weak self] in
+            guard let self, let data = try? Data(contentsOf: self.file), let saved = try? JSONDecoder().decode([Snippet].self, from: data) else { return }
+            self.snippets = saved
+        }
     }
 
     func snippet(forKeyword keyword: String) -> Snippet? {
