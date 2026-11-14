@@ -32,14 +32,18 @@ final class WindowsModule: ToolbeltModule {
                 self?.applyLayout(slot: slot)
             }
         }
+        WindowDragger.registerTestHooks()
     }
 
     func start() {
         snapping.start()
+        WindowDragger.shared.update(running: true)
+        MonitorBrightness.shared.refreshKeys()
     }
 
     func stop() {
         snapping.stop()
+        WindowDragger.shared.update(running: false)
         editor.close()
     }
 
@@ -194,6 +198,9 @@ struct WindowsSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            WindowDragSettings()
+            MonitorBrightnessSettings()
 
             Section {
                 ForEach(Array(layouts.layouts.enumerated()), id: \.element.id) { index, layout in

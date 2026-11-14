@@ -57,6 +57,9 @@ struct GeneralTab: View {
                         Button("Import…") { Backup.importInteractively() }
                     }
                 }
+                LabeledContent("Usage") {
+                    Button("Usage Statistics…") { UsageWindow.show() }
+                }
                 LabeledContent("Version", value: Self.version)
             } footer: {
                 Text("Everything Toolbelt keeps, including settings and clipboard history, stays on this Mac in ~/Library/Application Support/Toolbelt.")

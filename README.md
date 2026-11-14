@@ -1,9 +1,24 @@
-# Toolbelt — v0.38
+# Toolbelt — v0.39
 
 Your all-in-one Mac utility. It lives in the menu bar (look for the wrench-and-screwdriver icon).
 
 **Built so far:** the app shell (menu, settings, shortcuts, permissions), the clipboard manager, the launcher, window management, snippets, the drop shelf and the download manager.
 More modules (launcher, window management, snippets, shelf, downloads…) arrive one at a time.
+
+## What's new in 0.39: smoother mouse scrolling, moving windows with keys held, monitor brightness, usage counts
+- **Ordinary mouse** (Settings → Gestures): **smooth scrolling** for a mouse whose wheel clicks as it turns (most
+  Logitech mice too), **scroll the other way from the trackpad** (so the trackpad keeps macOS's natural scrolling
+  while the wheel scrolls the classic way), and its own **scrolling speed**. The trackpad and Magic Mouse aren't changed.
+- **Move and resize windows with keys held** (Settings → Windows): choose keys, for example ⌃⌥, then just move the
+  mouse (no click) and the window under the pointer follows; hold the resize keys (for example ⌃⌥⇧) and its
+  bottom-right corner follows instead.
+- **Separate monitors** (Settings → Windows): the brightness actions and gestures now also change a monitor
+  plugged into the Mac, and the keyboard's brightness keys can too. A new action, **Set a separate monitor's
+  brightness** (70 to set it, +10 or -10 to change it), works in triggers and macros. Most monitors understand it
+  (Apple silicon Macs); some TVs and docks don't.
+- **Usage statistics** (Settings → General → Usage Statistics…): how often each trigger and macro ran and when it
+  last did, most used first, with "never used" and "not used for 30 days" lists so you can tidy up. Each trigger and
+  macro also shows it in its own settings. The counts stay on this Mac.
 
 ## What's new in 0.38: a macro debugger, picking between macros that share a shortcut, progress bars, and syncing
 - **Debug** (in the Macros window's toolbar): runs the selected macro one step at a time in a small window that

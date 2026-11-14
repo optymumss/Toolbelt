@@ -476,6 +476,8 @@ struct TriggerSettings: View {
                     LiveTrackpadView()
                 }
                 Toggle("Trigger is enabled", isOn: $rule.enabled)
+                Text(UsageStats.summary(UsageStats.shared.entry(UsageStats.ruleKey(rule.id))))
+                    .font(.caption).foregroundStyle(.secondary)
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Notes").font(.subheadline.bold())

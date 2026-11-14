@@ -413,7 +413,7 @@ enum LargeText {
 
 enum MoreMacroActions {
     static let kinds: Set<MacroAction.Kind> = [.app, .window, .file, .browser, .download, .speak, .playSound, .largeText,
-                                               .setVolume, .desktopPicture, .keyboardLayout]
+                                               .setVolume, .desktopPicture, .keyboardLayout, .monitorBrightness]
 
     /// Restart, shut down and log out show macOS's own "Are you sure?" window.
     static func loginWindowScript(_ control: SystemControl) -> String? {
@@ -505,6 +505,8 @@ enum MoreMacroActions {
             return true
         case .keyboardLayout:
             return KeyboardLayouts.select(action.value)
+        case .monitorBrightness:
+            return MonitorBrightness.shared.change(action.value)
         default:
             return false
         }
@@ -599,6 +601,10 @@ struct MoreActionFields: View {
                 Text("Choose…").tag("")
                 ForEach(KeyboardLayouts.names, id: \.self) { Text($0).tag($0) }
             }
+        case .monitorBrightness:
+            TextField("Brightness: 70 to set it, +10 or -10 to change it", text: $action.value)
+            Text("For monitors plugged into the Mac (not the built-in screen). Most monitors understand it; some TVs and docks don't.")
+                .font(.caption).foregroundStyle(.secondary)
         default:
             EmptyView()
         }

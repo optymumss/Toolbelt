@@ -140,18 +140,26 @@ final class GesturesModule: ToolbeltModule {
             return store.presets.first { $0.id == store.activePreset }?.name ?? ""
         }
         TriggersWindowController.stopLiveView = { [weak self] in self?.updateListening() }
+        MouseTuner.registerTestHooks()
+        UsageStats.sources["rules"] = { [weak self] in
+            self?.store.rules.map { rule in
+                (key: UsageStats.ruleKey(rule.id), kind: "Trigger", name: rule.hasNotes ? rule.notes ?? "" : "\(rule.gesture.title) → \(rule.summary)")
+            } ?? []
+        }
     }
 
     func start() {
         running = true
         updateListening()
         KeyRemapper.shared.update(running: true)
+        MouseTuner.shared.update(running: true)
     }
 
     func stop() {
         running = false
         updateListening()
         KeyRemapper.shared.update(running: false)
+        MouseTuner.shared.update(running: false)
     }
 
     /// The Triggers window: every gesture, shortcut and key trigger, with its actions and conditions.
@@ -266,6 +274,7 @@ final class GesturesModule: ToolbeltModule {
         // A keyboard trigger whose action presses its own keys mustn't set itself off again and again.
         if rule.isKeyboard, rule.preventRecursion != false, let last = lastRun[rule.id], Date().timeIntervalSince(last) < 0.3 { return }
         lastRun[rule.id] = Date()
+        UsageStats.shared.record(UsageStats.ruleKey(rule.id))
         log.append(gesture)
         if log.count > 50 { log.removeFirst() }
         if rule.showHUD == true {
@@ -449,6 +458,7 @@ struct GesturesSettingsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             KeyRemapSettings()
+            MouseTuningSettings()
             Section {
                 LabeledContent("Sensitivity") {
                     HStack {
